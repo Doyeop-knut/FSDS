@@ -1,0 +1,1 @@
+time[sec],ax[m/s^2],ay[m/s^2],az[m/s^2],roll_rate[deg/s],pitch_rate[deg/s],yaw_rate[deg/s],roll[deg],pitch[deg],yaw[deg],x[m],y[m],z[m],gps_vel_x,gps_vel_y,gps_vel_z,desired_speed[km/h],current_speed[km/h],drive_pwm[-],desired_angle[deg],current_angle[deg],steer_pwm[-]
