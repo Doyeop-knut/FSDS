@@ -68,7 +68,7 @@ perception:
 
   camera_image_processing:
     # Image preprocessing settings
-    enable_preprocessing: false
+    enable_preprocessing: true
     gaussian_blur_sigma: 1.0
     bilateral_filter_diameter: 9
 

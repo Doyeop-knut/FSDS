@@ -842,6 +842,7 @@ public: // Function components
              fs_msgs::GoSignal& go_signal_msg,
              fs_msgs::ControlCommand& control_command_msg,
              std_msgs::String& autonomous_mode_msg);
+    
 private:
     void getLidarPointCloud(sensor_msgs::PointCloud2& msg, pcl::PointCloud<pcl::PointXYZ>::Ptr& point_cloud);
     void getCameraImage(sensor_msgs::Image& msg, cv::Mat& image);
