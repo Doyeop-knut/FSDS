@@ -1020,12 +1020,19 @@ std::vector<TrajectoryPoint> TrajectoryGenerator::generateConesTrajectory(const 
         if (cone_pos.x() > 0.0) {
             if (cone.color == "blue") {
                 blue_cones_local.push_back(cone_pos);
+                
             } else if (cone.color == "yellow") {
                 yellow_cones_local.push_back(cone_pos);
             }
         }
+        
     }
-    
+    if (!blue_cones_local.empty() || yellow_cones_local.empty()){
+            std::cout << "blue_cones_local (x) : " << blue_cones_local[0][0] << std::endl;
+            std::cout << "blue_cones_Local (y) : " << blue_cones_local[0][1] << std::endl;
+            
+        }
+        
     if (blue_cones_local.empty() && yellow_cones_local.empty()) {
         // 콘이 없으면 직진 경로 생성
         int num_points = static_cast<int>(params_->lookahead_distance_ / params_->waypoint_spacing_) + 1;
@@ -1434,10 +1441,12 @@ bool FormulaAutonomousSystem::run(sensor_msgs::PointCloud2& lidar_msg,
         }
         return false;
     }
+    
+
 
     // State machine: System initialization
     state_machine_->injectSystemInit();
-
+    
     // Point cloud Update
     bool cone_updated = false;
     // Perception
@@ -1478,7 +1487,7 @@ bool FormulaAutonomousSystem::run(sensor_msgs::PointCloud2& lidar_msg,
 
     // Local planning: Trajectory generator
     trajectory_points_ = trajectory_generator_->generateTrajectory(cones_, planning_state_);
-    
+
     // Control
     // 1. 측위 모듈로부터 현재 차량 상태를 가져옵니다.
     auto current_pose = localization_->getCurrentPose(); // return type: Eigen::Vector3d(x, y, yaw)
@@ -1505,22 +1514,37 @@ bool FormulaAutonomousSystem::run(sensor_msgs::PointCloud2& lidar_msg,
     // State machine: Autonomous mode
     std::string autonomous_mode = state_machine_->getCurrentStateString();
     autonomous_mode_msg.data = autonomous_mode;
-    
     // Debug
-    static int count = 0;
-    count++;
-    if(count % 10 == 0){
-        static std::chrono::steady_clock::time_point last_time = std::chrono::steady_clock::now();
-        std::chrono::steady_clock::time_point current_time = std::chrono::steady_clock::now();
-        std::chrono::duration<double> duration = current_time - last_time;
-        double fps = (duration.count() > 0.0) ? (10.0 / duration.count()) : 0.0;
-        std::cout << "count: " << count << ", \tavg time: " << duration.count()*1000 / 10 << "ms, \tavg FPS: " << fps << " Hz" << std::endl;
-        last_time = current_time;
+    // std::cout << cones_.size() << std::endl;
+    // static int count = 0;
+    // count++;
+    // if(count % 10 == 0){
+    //     static std::chrono::steady_clock::time_point last_time = std::chrono::steady_clock::now();
+    //     std::chrono::steady_clock::time_point current_time = std::chrono::steady_clock::now();
+    //     std::chrono::duration<double> duration = current_time - last_time;
+    //     double fps = (duration.count() > 0.0) ? (10.0 / duration.count()) : 0.0;
+    //     std::cout << "count: " << count << ", \tavg time: " << duration.count()*1000 / 10 << "ms, \tavg FPS: " << fps << " Hz" << std::endl;
+    //     last_time = current_time;
+    // }
+    // if(count > 1000){
+    //     count = 0;
+    // }
+    
+    // DEBUG
+    if (!camera1_image.empty()){
+        cv::imshow("projected_cones_image",camera1_image);
+        cv::waitKey(1);
     }
-    if(count > 1000){
-        count = 0;
-    }
+    // std::cout << "autonomous_mode" << autonomous_mode << std::endl;
+    
+    // =========== DEBUG Function (250814)===============
+    // state_machine_->printStateInfo();
+    // trajectory_generator_->printTrajectoryStats();
 
+    // =========== PARAMETER DEBUG (250814) =============
+    // perception_params_->print();
+    // localization_params_->print();
+    // local_planning_params_->print();
     return true;
 }
 
