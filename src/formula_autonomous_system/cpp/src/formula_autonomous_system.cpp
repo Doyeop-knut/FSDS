@@ -1486,21 +1486,21 @@ bool FormulaAutonomousSystem::run(sensor_msgs::PointCloud2& lidar_msg,
     VehicleState vehicle_state(current_pose.x(), current_pose.y(), current_pose.z(), current_vel);
 
     // 2. 횡방향 제어: 경로와 현재 상태를 기반으로 조향각 계산
-    double steering_angle = lateral_controller_->calculateSteeringAngle(vehicle_state, trajectory_points_);
+    // double steering_angle = lateral_controller_->calculateSteeringAngle(vehicle_state, trajectory_points_);
 
     // 3. 종방향 제어: 목표 속도와 현재 속도를 기반으로 스로틀 계산
-    double throttle = longitudinal_controller_->calculate(trajectory_points_[0].speed, vehicle_state.speed);
+    // double throttle = longitudinal_controller_->calculate(trajectory_points_[0].speed, vehicle_state.speed);
 
     // 4. 계산된 제어 명령을 멤버 변수에 저장
-    control_command_msg.steering = -steering_angle; // FSDS 좌표계에 맞게 음수(-) 적용
-    if (throttle > 0.0){
-        control_command_msg.throttle = throttle;
-        control_command_msg.brake = 0.0;
-    }
-    else{
-        control_command_msg.throttle = 0.0;
-        control_command_msg.brake = -throttle;
-    }
+    // control_command_msg.steering = -steering_angle; // FSDS 좌표계에 맞게 음수(-) 적용
+    // if (throttle > 0.0){
+    //     control_command_msg.throttle = throttle;
+    //     control_command_msg.brake = 0.0;
+    // }
+    // else{
+    //     control_command_msg.throttle = 0.0;
+    //     control_command_msg.brake = -throttle;
+    // }
 
     // State machine: Autonomous mode
     std::string autonomous_mode = state_machine_->getCurrentStateString();
