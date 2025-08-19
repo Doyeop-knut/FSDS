@@ -1499,16 +1499,17 @@ bool FormulaAutonomousSystem::run(sensor_msgs::PointCloud2& lidar_msg,
 
     // Planning
     planning_state_ = state_machine_->getCurrentState();
-
+    
     // Local planning: Trajectory generator
     trajectory_points_ = trajectory_generator_->generateTrajectory(cones_, planning_state_);
-
+    
     // Control
     // 1. 측위 모듈로부터 현재 차량 상태를 가져옵니다.
     auto current_pose = localization_->getCurrentPose(); // return type: Eigen::Vector3d(x, y, yaw)
     auto current_vel = localization_->getCurrentVelocity(); // 이 함수가 속력(double)을 반환함
     VehicleState vehicle_state(current_pose.x(), current_pose.y(), current_pose.z(), current_vel);
 
+    
     // 2. 횡방향 제어: 경로와 현재 상태를 기반으로 조향각 계산
     // double steering_angle = lateral_controller_->calculateSteeringAngle(vehicle_state, trajectory_points_);
 
