@@ -865,9 +865,11 @@ public:
     
     std::unique_ptr<Clustering> clustering_;
     std::vector<Cone> cones_;
+    std::vector<Cone> cones_right;
     
     std::unique_ptr<ColorDetection> color_detection_;
     cv::Mat projected_cones_image_;
+    cv::Mat projected_right_cones_image_;
 
     std::shared_ptr<LocalizationParams> localization_params_;
     std::unique_ptr<Localization> localization_;
@@ -884,6 +886,7 @@ public:
     std::shared_ptr<TrajectoryParams> local_planning_params_;
     std::unique_ptr<TrajectoryGenerator> trajectory_generator_;
     std::vector<TrajectoryPoint> trajectory_points_;   
+    
 
     // Control
     std::shared_ptr<ControlParams> control_params_;

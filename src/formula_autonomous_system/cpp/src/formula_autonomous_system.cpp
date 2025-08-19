@@ -1441,11 +1441,9 @@ bool FormulaAutonomousSystem::run(sensor_msgs::PointCloud2& lidar_msg,
         }
         return false;
     }
-    
-
 
     // State machine: System initialization
-    state_machine_->injectSystemInit();
+    // state_machine_->injectSystemInit();
     
     // Point cloud Update
     bool cone_updated = false;
@@ -1464,25 +1462,40 @@ bool FormulaAutonomousSystem::run(sensor_msgs::PointCloud2& lidar_msg,
 
     // Color detection
     cv::Mat camera1_image;
+    cv::Mat camera2_image;
+    //Left Camera Activate!
     getCameraImage(camera1_msg, camera1_image);
     cones_ = color_detection_->classifyConesColor(cones_, camera1_image);
     projected_cones_image_ = color_detection_->visualizeProjection(cones_, camera1_image);  // For Debugging
-    
-    // color cone array @Doyeop-knut
-    std::vector<Cone> blue_c, yellow_c;
-    for (const auto& c : cones_){
-        // std::cout << "blue cone" << c.x << c.y << std::endl;
-        if (c.color == "blue")
-        {
-            blue_c.push_back(c);
-            std::cout << "BLUE input cone " << c.center.x << c.center.y << std::endl;
-        }
-        if (c.color == "yellow")
-        {
-            yellow_c.push_back(c);
-            std::cout << "Yellow input cone " << c.center.x << c.center.y << std::endl;
-        }
+    //Right Camera Activate!
+    getCameraImage(camera2_msg, camera2_image);
+    // cones_right = color_detection_->classifyConesColor(cones_right, camera2_image);
+    // projected_right_cones_image_ = color_detection_->visualizeProjection(cones_right, camera2_image);  // For Debugging
+
+    // DEBUG
+    if (!camera1_image.empty()){
+        cv::imshow("left_camera",projected_cones_image_);
     }
+    if (!camera2_image.empty()){
+        cv::imshow("right_camera",projected_right_cones_image_);
+    }
+    cv::waitKey(1);
+    // // Debug array @Doyeop-knut
+    // std::vector<Cone> blue_c, yellow_c;
+    // for (const auto& c : cones_){
+    //     // std::cout << "blue cone" << c.x << c.y << std::endl;
+    //     if (c.color == "blue")
+    //     {
+    //         blue_c.push_back(c);
+    //         std::cout << "BLUE input cone " << c.center.x << c.center.y << std::endl;
+    //     }
+    //     if (c.color == "yellow")
+    //     {
+    //         yellow_c.push_back(c);
+    //         std::cout << "Yellow input cone " << c.center.x << c.center.y << std::endl;
+    //     }
+    // }
+    
     // Localization
     Eigen::Vector3d acc;    
     Eigen::Vector3d gyro;
@@ -1502,6 +1515,8 @@ bool FormulaAutonomousSystem::run(sensor_msgs::PointCloud2& lidar_msg,
     
     // Local planning: Trajectory generator
     trajectory_points_ = trajectory_generator_->generateTrajectory(cones_, planning_state_);
+
+    //right
     
     // Control
     // 1. 측위 모듈로부터 현재 차량 상태를 가져옵니다.
@@ -1511,25 +1526,26 @@ bool FormulaAutonomousSystem::run(sensor_msgs::PointCloud2& lidar_msg,
 
     
     // 2. 횡방향 제어: 경로와 현재 상태를 기반으로 조향각 계산
-    // double steering_angle = lateral_controller_->calculateSteeringAngle(vehicle_state, trajectory_points_);
+    double steering_angle = lateral_controller_->calculateSteeringAngle(vehicle_state, trajectory_points_);
 
     // 3. 종방향 제어: 목표 속도와 현재 속도를 기반으로 스로틀 계산
-    // double throttle = longitudinal_controller_->calculate(trajectory_points_[0].speed, vehicle_state.speed);
+    double throttle = longitudinal_controller_->calculate(trajectory_points_[0].speed, vehicle_state.speed);
 
     // 4. 계산된 제어 명령을 멤버 변수에 저장
-    // control_command_msg.steering = -steering_angle; // FSDS 좌표계에 맞게 음수(-) 적용
-    // if (throttle > 0.0){
-    //     control_command_msg.throttle = throttle;
-    //     control_command_msg.brake = 0.0;
-    // }
-    // else{
-    //     control_command_msg.throttle = 0.0;
-    //     control_command_msg.brake = -throttle;
-    // }
+    control_command_msg.steering = -steering_angle; // FSDS 좌표계에 맞게 음수(-) 적용
+    if (throttle > 0.0){
+        control_command_msg.throttle = throttle;
+        control_command_msg.brake = 0.0;
+    }
+    else{
+        control_command_msg.throttle = 0.0;
+        control_command_msg.brake = -throttle;
+    }
 
     // State machine: Autonomous mode
     std::string autonomous_mode = state_machine_->getCurrentStateString();
     autonomous_mode_msg.data = autonomous_mode;
+
     // Debug
     // std::cout << cones_.size() << std::endl;
     // static int count = 0;
@@ -1546,11 +1562,6 @@ bool FormulaAutonomousSystem::run(sensor_msgs::PointCloud2& lidar_msg,
     //     count = 0;
     // }
     
-    // DEBUG
-    if (!camera1_image.empty()){
-        cv::imshow("projected_cones_image",camera1_image);
-        cv::waitKey(1);
-    }
     // std::cout << "autonomous_mode" << autonomous_mode << std::endl;
     
     // =========== DEBUG Function (250814)===============
