@@ -436,7 +436,6 @@ std::vector<Cone> ColorDetection::classifyConesColor(const std::vector<Cone>& co
     for (auto& cone : classified_cones) {
         cone.color = detectConeColor(cone, rgb_image);
     }
-    
     return classified_cones;
 }
 
@@ -1026,12 +1025,13 @@ std::vector<TrajectoryPoint> TrajectoryGenerator::generateConesTrajectory(const 
             }
         }
         
+        
     }
-    if (!blue_cones_local.empty() || yellow_cones_local.empty()){
-            std::cout << "blue_cones_local (x) : " << blue_cones_local[0][0] << std::endl;
-            std::cout << "blue_cones_Local (y) : " << blue_cones_local[0][1] << std::endl;
+    // if (!blue_cones_local.empty() || !yellow_cones_local.empty()){
+    //         std::cout << "blue_cones_local (x) : " << blue_cones_local[0][0] << std::endl;
+    //         std::cout << "blue_cones_Local (y) : " << blue_cones_local[0][1] << std::endl;
             
-        }
+    //     }
         
     if (blue_cones_local.empty() && yellow_cones_local.empty()) {
         // 콘이 없으면 직진 경로 생성
@@ -1467,7 +1467,22 @@ bool FormulaAutonomousSystem::run(sensor_msgs::PointCloud2& lidar_msg,
     getCameraImage(camera1_msg, camera1_image);
     cones_ = color_detection_->classifyConesColor(cones_, camera1_image);
     projected_cones_image_ = color_detection_->visualizeProjection(cones_, camera1_image);  // For Debugging
-
+    
+    // color cone array @Doyeop-knut
+    std::vector<Cone> blue_c, yellow_c;
+    for (const auto& c : cones_){
+        // std::cout << "blue cone" << c.x << c.y << std::endl;
+        if (c.color == "blue")
+        {
+            blue_c.push_back(c);
+            std::cout << "BLUE input cone " << c.center.x << c.center.y << std::endl;
+        }
+        if (c.color == "yellow")
+        {
+            yellow_c.push_back(c);
+            std::cout << "Yellow input cone " << c.center.x << c.center.y << std::endl;
+        }
+    }
     // Localization
     Eigen::Vector3d acc;    
     Eigen::Vector3d gyro;

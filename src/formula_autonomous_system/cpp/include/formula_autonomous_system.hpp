@@ -691,7 +691,6 @@ public:
     std::vector<TrajectoryPoint> generateTrajectory(const std::vector<Cone>& cones, ASState planning_state);
     std::vector<TrajectoryPoint> generateConesTrajectory(const std::vector<Cone>& cones);
     std::vector<TrajectoryPoint> generateStopTrajectory();
-    
     /**
      * @brief Update trajectory parameters
      * @param params New parameters

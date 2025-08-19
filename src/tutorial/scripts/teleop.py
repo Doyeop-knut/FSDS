@@ -12,14 +12,15 @@ class ControlTest:
         # 상태 변수
         self.throttle = 0.0
         self.brake = 0.0
+        # self.steering = 0.0
         self.steering = 0.0
 
         # Steering 조정 단계 (0.05 radian per keypress)
-        self.steer_step = 0.05
+        self.steer_step = 0.1
         self.steer_limit = 1.0
 
         self.settings = termios.tcgetattr(sys.stdin)
-        rospy.Timer(rospy.Duration(0.1), self.publish_control)  # 10Hz publish rate
+        rospy.Timer(rospy.Duration(1/150), self.publish_control)  # 10Hz publish rate
 
         self.run()
 
@@ -29,10 +30,10 @@ class ControlTest:
             while not rospy.is_shutdown():
                 key = self.getKey()
                 if key == 'w':
-                    self.throttle = 1.0
+                    self.throttle = 0.5
                     self.brake = 0.0
                 elif key == 's':
-                    self.brake = 1.0
+                    self.brake = 0.5
                     self.throttle = 0.0
                 elif key == 'a':
                     self.steering = max(self.steering - self.steer_step, -self.steer_limit)
@@ -48,13 +49,16 @@ class ControlTest:
                     # No key pressed, release Throttle/Brake (Steering holds position)
                     self.throttle = 0.0
                     self.brake = 0.0
+                    
+
 
         except rospy.ROSInterruptException:
             pass
         finally:
             self.reset_terminal()
-            self.reset_control()
             self.publish_control(None)
+
+            # self.reset_control()
             print("\nExiting...")
 
     def reset_control(self):

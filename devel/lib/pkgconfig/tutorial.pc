@@ -1,0 +1,8 @@
+prefix=/home/user/fsds_ws/devel
+
+Name: tutorial
+Description: Description of tutorial
+Version: 0.0.0
+Cflags: -I/home/user/fsds_ws/src/tutorial/include
+Libs: -L${prefix}/lib -ltutorial
+Requires: fs_msgs roscpp rospy std_msgs geometry_msgs message_runtime

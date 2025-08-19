@@ -1,0 +1,8 @@
+prefix=/home/user/fsds_ws/install
+
+Name: fs_msgs
+Description: Description of fs_msgs
+Version: 0.1.0
+Cflags: -I${prefix}/include
+Libs: -L${prefix}/lib 
+Requires: geometry_msgs message_runtime
