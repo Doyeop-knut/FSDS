@@ -1,0 +1,156 @@
+Panels:
+  - Class: rviz/Displays
+    Help Height: 78
+    Name: Displays
+    Property Tree Widget:
+      Expanded:
+        - /Global Options[0]
+        - /Grid[1]
+        - /TF[2]
+        - /Stereo[3]
+        - /Stereo[3]/Left Image[0]
+        - /Stereo[3]/Right Image[1]
+        - /Stereo[3]/Disparity[2]
+        - /Point Cloud[4]
+      Splitter Ratio: 0.5
+    Tree Height: 641
+  - Class: rviz/Selection
+    Name: Selection
+  - Class: rviz/Tool Properties
+    Expanded:
+      - /2D Nav Goal[0]
+      - /2D Pose Estimate[1]
+      - /Publish Point[2]
+    Name: Tool Properties
+    Splitter Ratio: 0.588679
+  - Class: rviz/Views
+    Expanded:
+      - /Current View[0]
+    Name: Views
+    Splitter Ratio: 0.5
+  - Class: rviz/Time
+    Name: Time
+    SyncMode: 0
+    SyncSource: Point Cloud
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Alpha: 0.5
+      Cell Size: 1
+      Class: rviz/Grid
+      Color: 160; 160; 164
+      Enabled: true
+      Line Style:
+        Line Width: 0.03
+        Value: Lines
+      Name: Grid
+      Normal Cell Count: 0
+      Offset: -1; 0; 0
+      Plane: XY
+      Plane Cell Count: 10
+      Reference Frame: <Fixed Frame>
+      Value: true
+    - Class: rviz/TF
+      Enabled: true
+      Frame Timeout: 15
+      Frames:
+        All Enabled: false
+      Marker Scale: 1
+      Name: TF
+      Show Arrows: true
+      Show Axes: true
+      Show Names: true
+      Tree:
+        {} 
+      Update Interval: 0
+      Value: true
+    - Class: rviz/Group
+      Displays:
+        - Class: rviz/Image
+          Enabled: true
+          Image Topic: /stereo/left/image_rect_color
+          Max Value: 1
+          Median window: 5
+          Min Value: 0
+          Name: Left Image
+          Normalize Range: true
+          Value: true
+        - Class: rviz/Image
+          Enabled: true
+          Image Topic: /stereo/right/image_rect_color
+          Max Value: 1
+          Median window: 5
+          Min Value: 0
+          Name: Right Image
+          Normalize Range: true
+          Value: true
+        - Class: rviz/Image
+          Enabled: true
+          Image Topic: /stereo/disparity_image
+          Max Value: 1
+          Median window: 5
+          Min Value: 0
+          Name: Disparity
+          Normalize Range: true
+          Value: true
+      Enabled: true
+      Name: Stereo
+    - Class: rviz/PointCloud2
+      Alpha: 1
+      Channel Name: intensity
+      Color: 255; 255; 255
+      Color Transformer: Intensity
+      Decay Time: 0
+      Enabled: true
+      Invert Rainbow: false
+      Max Color: 255; 255; 255
+      Max Intensity: 4096
+      Min Color: 0; 0; 0
+      Min Intensity: 0
+      Name: Point Cloud
+      Position Transformer: XYZ
+      Queue Size: 10
+      Selectable: true
+      Size (Pixels): 3
+      Size (m): 0.01
+      Style: Points
+      Topic: /stereo/points2
+      Use Fixed Frame: true
+      Use rainbow: true
+      Value: true
+  Enabled: true
+  Global Options:
+    Background Color: 48; 48; 48
+    Fixed Frame: stereo_link
+    Frame Rate: 30
+  Name: root
+  Tools:
+    - Class: rviz/Interact
+      Hide Inactive Objects: true
+    - Class: rviz/MoveCamera
+    - Class: rviz/Select
+    - Class: rviz/FocusCamera
+    - Class: rviz/Measure
+    - Class: rviz/SetInitialPose
+      Topic: /initialpose
+    - Class: rviz/SetGoal
+      Topic: /move_base_simple/goal
+    - Class: rviz/PublishPoint
+      Single click: true
+      Topic: /clicked_point
+  Value: true
+  Views:
+    Current:
+      Class: rviz/XYOrbit
+      Distance: 3
+      Focal Point:
+        X: 0
+        Y: 0
+        Z: 0
+      Name: Current View
+      Near Clip Distance: 0.01
+      Pitch: 0.785
+      Target Frame: <Fixed Frame>
+      Value: XYOrbit (rviz)
+      Yaw: 0.785
+    Saved: ~

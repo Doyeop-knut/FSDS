@@ -8,3 +8,4 @@
 - [Cone Detection] @Doyeop-knut | 250819 Camera 2 메세지 수신
 - [Optimal Trajectory] @Doyeop-knut | 250819 기본 map 파일 복사 및 RRT* 기초 코드
 - [Optimal Trajectory] @Doyeop-knut | 250820 동적 RRT* 알고리즘을 활용한 경로 생성
+- [Cone Detection] @Doyeop-knut | 250820 stereo 이미지 생성
