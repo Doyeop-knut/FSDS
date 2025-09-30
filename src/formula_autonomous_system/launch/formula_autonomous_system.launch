@@ -1,6 +1,6 @@
 <launch>
     <!-- Launch argument to choose between cpp or python implementation -->
-    <arg name="use_cpp" default="true" doc="Use C++ implementation if true, Python implementation if false" />
+    <arg name="use_cpp" default="false" doc="Use C++ implementation if true, Python implementation if false" />
 
     <!-- Load parameters -->
     <rosparam file="$(find formula_autonomous_system)/config/config.yaml" command="load" />

@@ -1443,7 +1443,7 @@ bool FormulaAutonomousSystem::run(sensor_msgs::PointCloud2& lidar_msg,
     }
 
     // State machine: System initialization
-    // state_machine_->injectSystemInit();
+    state_machine_->injectSystemInit();
     
     // Point cloud Update
     bool cone_updated = false;
@@ -1469,8 +1469,8 @@ bool FormulaAutonomousSystem::run(sensor_msgs::PointCloud2& lidar_msg,
     projected_cones_image_ = color_detection_->visualizeProjection(cones_, camera1_image);  // For Debugging
     //Right Camera Activate!
     getCameraImage(camera2_msg, camera2_image);
-    // cones_right = color_detection_->classifyConesColor(cones_right, camera2_image);
-    // projected_right_cones_image_ = color_detection_->visualizeProjection(cones_right, camera2_image);  // For Debugging
+    cones_ = color_detection_->classifyConesColor(cones_, camera2_image);
+    projected_right_cones_image_ = color_detection_->visualizeProjection(cones_, camera2_image);  // For Debugging
 
     // DEBUG
     if (!camera1_image.empty()){

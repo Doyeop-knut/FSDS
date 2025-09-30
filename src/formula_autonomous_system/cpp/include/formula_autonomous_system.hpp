@@ -104,8 +104,8 @@ enum class ASState {
 
 // Event types that can trigger state transitions
 enum class ASEvent {
-    SYSTEM_INIT,        // 시스템 초기화 완료
-    SYSTEM_READY,       // 모든 서브시스템 준비 완료
+    SYSTEM_INIT,
+    SYSTEM_READY,
     GO_SIGNAL          // 오퍼레이터 GO 신호 수신
 };
 
@@ -434,6 +434,28 @@ struct ControlParams {
 
         if(!pnh.getParam("/control/Vehicle/wheel_base", vehicle_length_)){std::cerr<<"Param control/Vehicle/wheel_base has error" << std::endl; return false;}
         
+        return true;
+    }
+};
+
+// ==================== SLAM ====================
+
+struct SlamParams {
+    // EKF-SLAM noise parameters
+    double process_noise_v_;
+    double process_noise_yaw_rate_;
+    double measurement_noise_range_;
+    double measurement_noise_bearing_;
+
+    // Data association
+    double mahalanobis_dist_threshold_;
+
+    bool getParameters(ros::NodeHandle& pnh) {
+        if(!pnh.getParam("/slam/process_noise/v", process_noise_v_)){std::cerr<<"Param /slam/process_noise/v has error" << std::endl; return false;}
+        if(!pnh.getParam("/slam/process_noise/yaw_rate", process_noise_yaw_rate_)){std::cerr<<"Param /slam/process_noise/yaw_rate has error" << std::endl; return false;}
+        if(!pnh.getParam("/slam/measurement_noise/range", measurement_noise_range_)){std::cerr<<"Param /slam/measurement_noise/range has error" << std::endl; return false;}
+        if(!pnh.getParam("/slam/measurement_noise/bearing", measurement_noise_bearing_)){std::cerr<<"Param /slam/measurement_noise/bearing has error" << std::endl; return false;}
+        if(!pnh.getParam("/slam/data_association/mahalanobis_dist", mahalanobis_dist_threshold_)){std::cerr<<"Param /slam/data_association/mahalanobis_dist has error" << std::endl; return false;}
         return true;
     }
 };
@@ -886,6 +908,8 @@ public:
     std::shared_ptr<TrajectoryParams> local_planning_params_;
     std::unique_ptr<TrajectoryGenerator> trajectory_generator_;
     std::vector<TrajectoryPoint> trajectory_points_;   
+    std::vector<TrajectoryPoint> trajectory_points_right;   
+
     
 
     // Control
