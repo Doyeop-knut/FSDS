@@ -124,7 +124,6 @@ class FormulaAutonomousSystem:
         longitude = msg.longitude
         altitude = msg.altitude
         return latitude, longitude, altitude
-
     
 class LiDARProcessor:
     def __init__(self):
@@ -182,6 +181,12 @@ class LiDARProcessor:
         
         return clusters
     
+    def left_right_split(self, points: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+        """Split points into left and right based on y-coordinate"""
+        left_points = points[points[:, 1] > 0]
+        right_points = points[points[:, 1] <= 0]
+        return left_points, right_points
+    
     ### For Debugging: Publish Processed Point Cloud ###
     def publish_point_cloud(self, points: np.ndarray):
         """Publish processed point cloud"""
@@ -189,6 +194,8 @@ class LiDARProcessor:
         filtered = self.filtering_points(points, (0, 50), (-30, 30), (-10, 10))
         removal = self.ransac_plane_removal(filtered, threshold=0.01, max_trials=30)
         clusters = self.cluster_points(removal, eps=0.5, min_samples=5)
+        left, right = self.left_right_split(np.array(clusters))
+        rospy.loginfo_throttle(1.0, f"left = {left}, right = {right}")
         header = rospy.Header()
         header.stamp = rospy.Time.now()
         header.frame_id = "fsds/FSCar"
