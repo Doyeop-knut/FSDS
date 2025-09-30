@@ -46,9 +46,19 @@ class FormulaAutonomousSystem:
     def __init__(self):
         self.is_initialized = False
         
+        # ==================== 데이터 로거 추가 ====================
+        self.data_logger = DataLogger(
+        log_directory="/home/user/fsds_ws/src/tutorial/log",
+        session_name=datetime.datetime.now().strftime("%Y%m%d_%H%M%S"),
+        max_lidar_points=50  # 필요시 이 값을 조절
+        )
+        # =========================================================
+
     def init(self):
         """Initialize the system"""
         self.is_initialized = True
+
+        
         return True
 
     def get_parameters(self):
@@ -66,10 +76,19 @@ class FormulaAutonomousSystem:
         """
         cv2.imshow("Camera1", self.get_camera_image(camera1_msg))
         cv2.imshow("Camera2", self.get_camera_image(camera2_msg))
+        acc, gyro, orientation = self.get_imu_data(imu_msg)
+        lat, lon, alt = self.get_gps_data(gps_msg)
+        image1 = self.get_camera_image(camera1_msg)
+        image2 = self.get_camera_image(camera2_msg)
         cv2.waitKey(1)
 
         points=self.get_lidar_point_cloud(lidar_msg)
+        LiDARProcessor().filtering_points(points, (1.0, 20.0), (-10.0, 10.0), (-0.5, 0.5))
+        LiDARProcessor().ransac_plane_removal(points, threshold=0.05, max_trials=100)
+        cluster = LiDARProcessor().cluster_points(points, eps=0.5, min_samples=5)
         LiDARProcessor().publish_point_cloud(points)
+
+        print(len(cluster))
         # filtered_points = LiDARProcessor().filtering_points(np.array([[x,y,z]]), (1.0, 20.0), (-10.0, 10.0), (-0.5, 0.5))
         # print("Filtered Points:", filtered_points)
 
@@ -83,7 +102,19 @@ class FormulaAutonomousSystem:
         # State machine: Autonomous mode
         autonomous_mode = String()
         autonomous_mode.data = "AS_OFF"
+        self.data_logger.log_entry(
+            autonomous_mode=autonomous_mode.data,
+            control_command=control_command_msg,
+            imu_acc=acc,
+            imu_gyro=gyro,
+            gps_data=(lat, lon, alt),
+            camera1_image=image1,
+            camera2_image=image2,
+            lidar_points=cluster
+        )
+        # =========================================================
         
+
         return True, control_command_msg, autonomous_mode
 
     def get_lidar_point_cloud(self, msg):
@@ -179,7 +210,7 @@ class LiDARProcessor:
             center = np.mean(cluster, axis=0)
             clusters.append(center[:3])  # Append only x, y, z
         
-        return clusters
+        return np.array(clusters)
     
     def left_right_split(self, points: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
         """Split points into left and right based on y-coordinate"""
@@ -210,19 +241,111 @@ class LiDARProcessor:
 
 # ==================== Utility Classes ====================
 
-class Logging:
-    def __init__(self):
-        self.start_time = time.time()
-        self.logs = []
+import os
+import csv
+import cv2
+import rospy
+import datetime
+import numpy as np
+from std_msgs.msg import String
+from fs_msgs.msg import ControlCommand
 
-    def log(self, message: str):
-        elapsed = time.time() - self.start_time
-        log_entry = f"[{elapsed:.2f}s] {message}"
-        self.logs.append(log_entry)
-        rospy.loginfo(log_entry)
+class DataLogger:
+    """
+    주행 데이터를 체계적으로 저장하는 클래스 (최종 추천안).
+    - 메타데이터: `log.csv`에 IMU, GPS, 제어값 및 실제 LiDAR 포인트 개수 기록
+    - LiDAR: `lidar.csv`에 고정된 최대 너비로 포인트 좌표 기록
+    - 카메라: `cameraX.avi` 동영상 파일로 저장
+    """
+    def __init__(self, log_directory: str, session_name: str, video_fps: float = 10.0, max_lidar_points: int = 500):
+        self.session_path = os.path.join(log_directory, session_name)
+        os.makedirs(self.session_path, exist_ok=True)
 
-    def save(self, filename: str):
-        with open(filename, 'w') as f:
-            for log in self.logs:
-                f.write(log + '\n')
-        rospy.loginfo(f"Logs saved to {filename}")
+        # 1. 메타데이터 CSV 설정
+        self.csv_path = os.path.join(self.session_path, "log.csv")
+        # 헤더에 'lidar_point_count' 필드 추가
+        self.csv_header = [
+            'timestamp', 'frame_id', 'autonomous_mode',
+            'control_steering', 'control_throttle', 'control_brake',
+            'imu_acc_x', 'imu_acc_y', 'imu_acc_z',
+            'imu_gyro_x', 'imu_gyro_y', 'imu_gyro_z',
+            'gps_latitude', 'gps_longitude', 'gps_altitude',
+            'lidar_point_count'  # <--- 추가된 필드
+        ]
+        self.metadata_csv_file = open(self.csv_path, 'w', newline='')
+        self.metadata_csv_writer = csv.DictWriter(self.metadata_csv_file, fieldnames=self.csv_header)
+        self.metadata_csv_writer.writeheader()
+
+        # 2. 비디오 녹화 설정
+        self.video_paths = {'cam1': os.path.join(self.session_path, "camera1.avi"), 'cam2': os.path.join(self.session_path, "camera2.avi")}
+        self.video_writers = {'cam1': None, 'cam2': None}
+        self.video_fps = video_fps
+        self.fourcc = cv2.VideoWriter_fourcc(*'XVID')
+
+        # 3. LiDAR CSV 설정 (고정 너비 방식)
+        self.max_lidar_points = max_lidar_points
+        self.lidar_csv_path = os.path.join(self.session_path, "lidar.csv")
+        self.lidar_csv_file = open(self.lidar_csv_path, 'w', newline='')
+        self.lidar_csv_writer = csv.writer(self.lidar_csv_file)
+        lidar_header = ['frame_id']
+        for i in range(self.max_lidar_points):
+            lidar_header.extend([f'p{i}_x', f'p{i}_y', f'p{i}_z'])
+        self.lidar_csv_writer.writerow(lidar_header)
+
+        self.frame_count = 0
+        rospy.loginfo(f"DataLogger initialized. Saving logs to: {self.session_path}")
+
+    def log_entry(self, autonomous_mode: str, control_command: ControlCommand,
+                  imu_acc: list, imu_gyro: list, gps_data: tuple,
+                  camera1_image: np.ndarray, camera2_image: np.ndarray, lidar_points: np.ndarray):
+        timestamp = rospy.Time.now().to_sec()
+
+        # 각 프레임의 실제 LiDAR 포인트 개수 계산
+        point_count = len(lidar_points) if lidar_points is not None else 0  # <--- 실제 포인트 개수 계산
+
+        # 메타데이터 로깅 (point_count 포함)
+        log_row = {
+            'timestamp': timestamp, 'frame_id': self.frame_count, 'autonomous_mode': autonomous_mode,
+            'control_steering': control_command.steering, 'control_throttle': control_command.throttle, 'control_brake': control_command.brake,
+            'imu_acc_x': imu_acc[0], 'imu_acc_y': imu_acc[1], 'imu_acc_z': imu_acc[2],
+            'imu_gyro_x': imu_gyro[0], 'imu_gyro_y': imu_gyro[1], 'imu_gyro_z': imu_gyro[2],
+            'gps_latitude': gps_data[0], 'gps_longitude': gps_data[1], 'gps_altitude': gps_data[2],
+            'lidar_point_count': point_count  # <--- 포인트 개수 추가
+        }
+        self.metadata_csv_writer.writerow(log_row)
+
+        # 카메라 데이터 로깅
+        images = {'cam1': camera1_image, 'cam2': camera2_image}
+        for cam_id, img in images.items():
+            if img is None: continue
+            if self.video_writers[cam_id] is None:
+                h, w, _ = img.shape
+                self.video_writers[cam_id] = cv2.VideoWriter(self.video_paths[cam_id], self.fourcc, self.video_fps, (w, h))
+            self.video_writers[cam_id].write(img)
+
+        # LiDAR 데이터 로깅 (고정 너비 + 패딩)
+        lidar_row = [self.frame_count]
+        if point_count > 0:
+            points_flat = lidar_points[:self.max_lidar_points, :3].flatten().tolist()
+            lidar_row.extend(points_flat)
+        
+        expected_len = 1 + self.max_lidar_points * 3
+        padding_len = expected_len - len(lidar_row)
+        if padding_len > 0:
+            lidar_row.extend([''] * padding_len)
+        self.lidar_csv_writer.writerow(lidar_row)
+
+        self.frame_count += 1
+
+    def close(self):
+        """프로그램 종료 시 호출되어 모든 파일 핸들을 안전하게 닫습니다."""
+        self.metadata_csv_file.close()
+        rospy.loginfo(f"Successfully saved metadata to {self.csv_path}")
+
+        for cam_id, writer in self.video_writers.items():
+            if writer is not None:
+                writer.release()
+                rospy.loginfo(f"Successfully saved video to {self.video_paths[cam_id]}")
+
+        self.lidar_csv_file.close()
+        rospy.loginfo(f"Successfully saved LiDAR data to {self.lidar_csv_path}")
