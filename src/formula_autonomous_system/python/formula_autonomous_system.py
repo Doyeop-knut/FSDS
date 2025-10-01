@@ -88,7 +88,6 @@ class FormulaAutonomousSystem:
         cluster = LiDARProcessor().cluster_points(points, eps=0.5, min_samples=5)
         LiDARProcessor().publish_point_cloud(points)
 
-        print(len(cluster))
         # filtered_points = LiDARProcessor().filtering_points(np.array([[x,y,z]]), (1.0, 20.0), (-10.0, 10.0), (-0.5, 0.5))
         # print("Filtered Points:", filtered_points)
 
