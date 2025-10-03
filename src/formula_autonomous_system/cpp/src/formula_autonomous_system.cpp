@@ -801,8 +801,6 @@ Eigen::Vector2d Localization::wgs84ToEnu(const Eigen::Vector2d& wgs84_pos) const
 }
 
 // ==================== Planning ====================
-
-
 StateMachine::StateMachine()
     : current_state_(ASState::AS_OFF)
     , previous_state_(ASState::AS_OFF)
