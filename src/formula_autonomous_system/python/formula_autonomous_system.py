@@ -18,7 +18,7 @@ import random
 from enum import Enum
 from typing import List, Tuple, Optional
 import time
-from collections import deque
+from collections import deque, namedtuple
 
 # ROS
 from std_msgs.msg import String
@@ -395,12 +395,6 @@ class DataLogger:
         self.lidar_csv_file.close()
         rospy.loginfo(f"Successfully saved LiDAR data to {self.lidar_csv_path}")
 
-import time
-from enum import Enum, auto
-from collections import namedtuple
-
-# 상태 전환 결과를 저장하기 위한 namedtuple
-# C++의 StateTransitionResult 구조체와 유사한 역할
 StateTransitionResult = namedtuple(
     'StateTransitionResult', 
     ['success', 'from_state', 'to_state', 'reason']
@@ -413,7 +407,6 @@ class StateMachine:
     def __init__(self):
         self.current_state = AutonomousMode.AS_OFF
         self.previous_state = AutonomousMode.AS_OFF
-        # time.monotonic()은 시스템 시간 변경에 영향을 받지 않음
         self.state_entry_time = time.monotonic()
         self.last_update_time = time.monotonic()
         
@@ -421,14 +414,12 @@ class StateMachine:
         self.mission_track = ""
         self.mission_active = False
         
-        # 유효한 상태 전환 규칙을 저장하는 딕셔너리
         self.valid_transitions = {}
         self._initialize_valid_transitions()
         
         print("StateMachine: Initialized in AS_OFF state")
 
     def _initialize_valid_transitions(self):
-        """유효한 상태 전환 규칙을 초기화합니다."""
         self.valid_transitions.clear()
         
         # AS_OFF -> AS_READY
@@ -442,11 +433,9 @@ class StateMachine:
         self.valid_transitions[(AutonomousMode.AS_DRIVING, AutonomousMode.AS_OFF)] = True
 
     def is_valid_transition(self, from_state: AutonomousMode, to_state: AutonomousMode) -> bool:
-        """주어진 상태 전환이 유효한지 확인합니다."""
         return (from_state, to_state) in self.valid_transitions
 
     def process_event(self, event: AutonomousEvent) -> StateTransitionResult:
-        """이벤트를 처리하여 상태를 전환합니다."""
         target_state = self.current_state
         reason = self._event_to_string(event)
         
@@ -473,40 +462,33 @@ class StateMachine:
         return StateTransitionResult(True, self.current_state, self.current_state, "No transition needed")
 
     def _perform_state_transition(self, new_state: AutonomousMode, reason: str) -> bool:
-        """실제 상태 전환을 수행합니다."""
         if not self.is_valid_transition(self.current_state, new_state):
             print(f"StateMachine: Invalid transition from {self._state_to_string(self.current_state)} "
                   f"to {self._state_to_string(new_state)}")
             return False
         
-        # 현재 상태 나가기
         exit_success = self._exit_state(self.current_state)
         if not exit_success:
             print(f"StateMachine: Failed to exit state {self._state_to_string(self.current_state)}")
             return False
         
-        # 상태 업데이트
         self.previous_state = self.current_state
         self.current_state = new_state
         self.state_entry_time = time.monotonic()
         
-        # 새 상태 진입
         enter_success = self._enter_state(new_state)
         
         self._log_state_transition(self.previous_state, self.current_state, reason)
         
         return enter_success
 
-    # -- 상태 진입/나가기 함수들 --
     def _enter_state(self, state: AutonomousMode) -> bool:
-        """특정 상태에 진입할 때 호출될 함수를 실행합니다."""
         if state == AutonomousMode.AS_OFF: return self._enter_as_off()
         if state == AutonomousMode.AS_READY: return self._enter_as_ready()
         if state == AutonomousMode.AS_DRIVING: return self._enter_as_driving()
         return False
         
     def _exit_state(self, state: AutonomousMode) -> bool:
-        """특정 상태에서 나갈 때 호출될 함수를 실행합니다."""
         if state == AutonomousMode.AS_OFF: return self._exit_as_off()
         if state == AutonomousMode.AS_READY: return self._exit_as_ready()
         if state == AutonomousMode.AS_DRIVING: return self._exit_as_driving()
@@ -530,20 +512,15 @@ class StateMachine:
     def _exit_as_ready(self) -> bool: return True
     def _exit_as_driving(self) -> bool: return True
 
-    # -- 이벤트 주입 함수들 --
     def inject_system_init(self):
-        """SYSTEM_INIT 이벤트를 주입합니다."""
         self.process_event(AutonomousEvent.SYSTEM_INIT)
 
     def inject_go_signal(self, mission: str, track: str):
-        """GO_SIGNAL 이벤트를 주입하고 미션 정보를 설정합니다."""
         self.current_mission = mission
         self.mission_track = track
         self.process_event(AutonomousEvent.GO_SIGNAL)
 
-    # -- 정보 출력 및 유틸리티 함수들 --
     def print_state_info(self):
-        """현재 상태 머신의 정보를 출력합니다."""
         print("=== State Machine Status ===")
         print(f"Current State: {self.get_current_state_string()}")
         print(f"Previous State: {self._state_to_string(self.previous_state)}")
@@ -553,17 +530,13 @@ class StateMachine:
         print("==========================")
 
     def get_time_in_current_state(self) -> float:
-        """현재 상태에 머문 시간을 초 단위로 반환합니다."""
         return time.monotonic() - self.state_entry_time
 
     def get_current_state_string(self) -> str:
-        """현재 상태를 문자열로 반환합니다."""
         return self._state_to_string(self.current_state)
 
-    # -- 내부 헬퍼 함수들 --
     @staticmethod
     def _state_to_string(state: AutonomousMode) -> str:
-        # Enum의 name 속성을 사용하면 간단하게 문자열로 변환 가능
         return state.name if state in AutonomousMode else "UNKNOWN"
 
     @staticmethod
