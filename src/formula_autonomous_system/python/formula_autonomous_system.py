@@ -104,7 +104,10 @@ class FormulaAutonomousSystem:
         # print(cluster)
         LiDARProcessor().publish_point_cloud(points)
 
+<<<<<<< HEAD
         # print(len(cluster))
+=======
+>>>>>>> aeb9eb1ecd2808d0a80b3de9ff2ec892448a3482
         # filtered_points = LiDARProcessor().filtering_points(np.array([[x,y,z]]), (1.0, 20.0), (-10.0, 10.0), (-0.5, 0.5))
         # print("Filtered Points:", filtered_points)
     
