@@ -18,7 +18,7 @@ import random
 from enum import Enum
 from typing import List, Tuple, Optional
 import time
-from collections import deque
+from collections import deque, namedtuple
 
 # ROS
 from std_msgs.msg import String
@@ -39,17 +39,25 @@ import datetime
 # ==================== Enums ====================
 class AutonomousMode(Enum):
     AS_OFF = 0
-    AS_INIT = 1
-    AS_READY = 2
-    AS_DRIVE = 3
-    AS_STOP = 4
-    AS_EMERGENCY = 5
+    AS_READY = 1
+    AS_DRIVING = 2
 
+class AutonomousEvent(Enum):
+    SYSTEM_INIT = 0
+    SYSTEM_READY = 1
+    GO_SIGNAL = 2
 # ==================== Main System ====================
 
 class FormulaAutonomousSystem:
     def __init__(self):
         self.is_initialized = False
+        self.x_min, self.x_max = 0,0
+        self.y_min, self.y_max = 0,0
+        self.z_min, self.z_max = 0,0
+        self.ransac_iter = 0
+        self.ransac_distance = 0
+        self.dbscan_eps = float()
+        self.dbscan_points = 0
         
         # ==================== 데이터 로거 추가 ====================
         self.data_logger = DataLogger(
@@ -59,8 +67,10 @@ class FormulaAutonomousSystem:
         )
         # =========================================================
 
+        # State machine: Autonomous mode
         self.gps_util = GPSProcessor()
-
+        self.state_machine = StateMachine()
+        
     def init(self):
         """Initialize the system"""
         self.is_initialized = True
@@ -68,6 +78,13 @@ class FormulaAutonomousSystem:
 
     def get_parameters(self):
         """Get parameters from ROS parameter server"""
+        self.x_min, self.x_max = rospy.get_param("/perception/lidar_roi_extraction/x_min") , rospy.get_param("/perception/lidar_roi_extraction/x_max")
+        self.y_min, self.y_max = rospy.get_param("/perception/lidar_roi_extraction/y_min") , rospy.get_param("/perception/lidar_roi_extraction/y_max")
+        self.z_min, self.z_max = rospy.get_param("/perception/lidar_roi_extraction/z_min") , rospy.get_param("/perception/lidar_roi_extraction/z_max")
+        self.ransac_iter = rospy.get_param("/perception/lidar_ground_removal/ransac_iterations")
+        self.ransac_distance = rospy.get_param("/perception/lidar_ground_removal/ransac_distance_threshold")
+        self.dbscan_eps = rospy.get_param("/perception/lidar_clustering/dbscan_eps")
+        self.dbscan_points = rospy.get_param("/perception/lidar_clustering/dbscan_min_points")
         return True
 
     def run(self, lidar_msg, camera1_msg, camera2_msg, imu_msg, gps_msg, go_signal_msg):
@@ -80,11 +97,19 @@ class FormulaAutonomousSystem:
                 - autonomous_mode (String): 자율주행 모드 상태
         """
         
+
+        # print(self.state_machine.state)
+
          # 시스템 초기화 확인
         if not self.is_initialized:
             rospy.logwarn_throttle(1.0, "FormulaAutonomousSystem: Not initialized")
             return False
-        
+        self.get_parameters()
+
+        autonomous_mode = String()
+        autonomous_mode.data = "AS_OFF"
+        self.state_machine.inject_system_init()
+
         cv2.imshow("Camera1", self.get_camera_image(camera1_msg))
         cv2.imshow("Camera2", self.get_camera_image(camera2_msg))
         acc, gyro, orientation = self.get_imu_data(imu_msg)
@@ -92,26 +117,34 @@ class FormulaAutonomousSystem:
         # self.gps_util.set_origin(lat, lon, alt)  # 최초 GPS 좌표를 원점으로 설정
         self.gps_util.origin_set = True
         x,y,z = self.gps_util.gps_to_local(lat, lon, alt)
-        print(x,y,z)
+        offset = np.array([x,y,z])
+        # print(offset[:2])
         image1 = self.get_camera_image(camera1_msg)
         image2 = self.get_camera_image(camera2_msg)
         cv2.waitKey(1)
-        points=self.get_lidar_point_cloud(lidar_msg)
-        LiDARProcessor().filtering_points(points, (1.0, 20.0), (-10.0, 10.0), (-0.5, 0.5))
-        LiDARProcessor().ransac_plane_removal(points, threshold=0.05, max_trials=100)
-        cluster = LiDARProcessor().cluster_points(points, eps=0.5, min_samples=5)
-        LiDARProcessor().publish_point_cloud(points)
 
-        # print(len(cluster))
+        ## LiDAR Processed
+        # print(f"parameters = {self.dbscan_eps, self.dbscan_points, self.ransac_distance, self.ransac_iter, self.x_min, self.x_max}")
+        points=self.get_lidar_point_cloud(lidar_msg)
+        LiDARProcessor().filtering_points(points, (self.x_min, self.x_max), (self.y_min, self.y_max), (self.z_min, self.z_max))
+        LiDARProcessor().ransac_plane_removal(points, threshold=self.ransac_distance, max_trials=self.ransac_iter)
+        # print(self.dbscan_eps)
+        cluster = LiDARProcessor().cluster_points(points, eps=self.dbscan_eps, min_samples=self.dbscan_points)
+        # print(cluster[:,:2])
+        LiDARProcessor().publish_point_cloud(points)
+        # print(go_signal_msg.mission, go_signal_msg.track)
+
+        ## GO_SIGNAL
+        if go_signal_msg.mission != "None" and go_signal_msg.mission != "":
+            self.state_machine.inject_go_signal(go_signal_msg.mission, go_signal_msg.track)
+        autonomous_mode.data = self.state_machine.get_current_state_string()
+
         # filtered_points = LiDARProcessor().filtering_points(np.array([[x,y,z]]), (1.0, 20.0), (-10.0, 10.0), (-0.5, 0.5))
         # print("Filtered Points:", filtered_points)
     
         # Control
         control_command_msg = ControlCommand()
-        
-        # State machine: Autonomous mode
-        autonomous_mode = String()
-        autonomous_mode.data = "AS_OFF"
+        # print(go_signal_msg)
 
         # ==================== Data Logger (Test) ====================
         self.data_logger.log_entry(
@@ -119,10 +152,10 @@ class FormulaAutonomousSystem:
             control_command=control_command_msg,
             imu_acc=acc,
             imu_gyro=gyro,
-            gps_data=(lat, lon, alt),
+            gps_data=(x, y, z),
             camera1_image=image1,
             camera2_image=image2,
-            lidar_points=cluster
+            lidar_points=cluster[:,:2] + offset[:2]
         )
         # =========================================================
         
@@ -171,6 +204,13 @@ class FormulaAutonomousSystem:
 class LiDARProcessor:
     def __init__(self):
         self.lidar_publisher = rospy.Publisher("/processed_lidar", PointCloud2, queue_size=1)
+        self.x_min, self.x_max = rospy.get_param("/perception/lidar_roi_extraction/x_min") , rospy.get_param("/perception/lidar_roi_extraction/x_max")
+        self.y_min, self.y_max = rospy.get_param("/perception/lidar_roi_extraction/y_min") , rospy.get_param("/perception/lidar_roi_extraction/y_max")
+        self.z_min, self.z_max = rospy.get_param("/perception/lidar_roi_extraction/z_min") , rospy.get_param("/perception/lidar_roi_extraction/z_max")
+        self.ransac_iter = rospy.get_param("/perception/lidar_ground_removal/ransac_iterations")
+        self.ransac_distance = rospy.get_param("/perception/lidar_ground_removal/ransac_distance_threshold")
+        self.dbscan_eps = rospy.get_param("/perception/lidar_clustering/dbscan_eps")
+        self.dbscan_points = rospy.get_param("/perception/lidar_clustering/dbscan_min_points")
 
     def filtering_points(self, points: np.ndarray, x_range: Tuple[float, float], y_range: Tuple[float, float], z_range: Tuple[float, float]) -> np.ndarray:
         """Filter points within specified ranges"""
@@ -234,9 +274,9 @@ class LiDARProcessor:
     def publish_point_cloud(self, points: np.ndarray):
         """Publish processed point cloud"""
 
-        filtered = self.filtering_points(points, (0, 50), (-30, 30), (-10, 10))
-        removal = self.ransac_plane_removal(filtered, threshold=0.01, max_trials=30)
-        clusters = self.cluster_points(removal, eps=0.5, min_samples=5)
+        filtered = self.filtering_points(points, (self.x_min, self.x_max), (self.y_min, self.y_max), (self.z_min, self.z_max))
+        removal = self.ransac_plane_removal(filtered, threshold=self.ransac_distance, max_trials=self.ransac_iter)
+        clusters = self.cluster_points(removal, eps=self.dbscan_eps, min_samples=self.dbscan_points)
         left, right = self.left_right_split(np.array(clusters))
         # rospy.loginfo_throttle(1.0, f"left = {left}, right = {right}")
         header = rospy.Header()
@@ -256,9 +296,9 @@ class LiDARProcessor:
 class GPSProcessor:
     def __init__(self):
         self.origin_set = False
-        self.origin_lat = 0.0
-        self.origin_lon = 0.0
-        self.origin_alt = 0.0
+        self.origin_lat = rospy.get_param("/localization/localization/ref_wgs84_latitude", 0.0)
+        self.origin_lon = rospy.get_param("/localization/localization/ref_wgs84_longitude", 0.0)
+        self.origin_alt = rospy.get_param("/localization/localization/ref_wgs84_altitude", 0.0)
         self.R = 6378137.0  # WGS84 타원체의 반경 (미터 단위)
 
     ## Set origin GPS coordinates (relative to this point)
@@ -323,7 +363,7 @@ class DataLogger:
         self.lidar_csv_writer = csv.writer(self.lidar_csv_file)
         lidar_header = ['frame_id']
         for i in range(self.max_lidar_points):
-            lidar_header.extend([f'p{i}_x', f'p{i}_y', f'p{i}_z'])
+            lidar_header.extend([f'p{i}_x', f'p{i}_y'])
         self.lidar_csv_writer.writerow(lidar_header)
 
         self.frame_count = 0
@@ -383,3 +423,163 @@ class DataLogger:
 
         self.lidar_csv_file.close()
         rospy.loginfo(f"Successfully saved LiDAR data to {self.lidar_csv_path}")
+
+StateTransitionResult = namedtuple(
+    'StateTransitionResult', 
+    ['success', 'from_state', 'to_state', 'reason']
+)
+
+class StateMachine:
+    """
+    차량의 자율주행 시스템 상태를 관리하는 상태 머신 클래스입니다.
+    """
+    def __init__(self):
+        self.current_state = AutonomousMode.AS_OFF
+        self.previous_state = AutonomousMode.AS_OFF
+        self.state_entry_time = time.monotonic()
+        self.last_update_time = time.monotonic()
+        
+        self.current_mission = ""
+        self.mission_track = ""
+        self.mission_active = False
+        
+        self.valid_transitions = {}
+        self._initialize_valid_transitions()
+        
+        print("StateMachine: Initialized in AS_OFF state")
+
+    def _initialize_valid_transitions(self):
+        self.valid_transitions.clear()
+        
+        # AS_OFF -> AS_READY
+        self.valid_transitions[(AutonomousMode.AS_OFF, AutonomousMode.AS_READY)] = True
+        
+        # AS_READY -> AS_DRIVING, AS_OFF
+        self.valid_transitions[(AutonomousMode.AS_READY, AutonomousMode.AS_DRIVING)] = True
+        self.valid_transitions[(AutonomousMode.AS_READY, AutonomousMode.AS_OFF)] = True
+        
+        # AS_DRIVING -> AS_OFF
+        self.valid_transitions[(AutonomousMode.AS_DRIVING, AutonomousMode.AS_OFF)] = True
+
+    def is_valid_transition(self, from_state: AutonomousMode, to_state: AutonomousMode) -> bool:
+        return (from_state, to_state) in self.valid_transitions
+
+    def process_event(self, event: AutonomousEvent) -> StateTransitionResult:
+        target_state = self.current_state
+        reason = self._event_to_string(event)
+        
+        if event == AutonomousEvent.SYSTEM_INIT:
+            if self.current_state == AutonomousMode.AS_OFF:
+                target_state = AutonomousMode.AS_READY
+        elif event == AutonomousEvent.GO_SIGNAL:
+            if self.current_state == AutonomousMode.AS_READY:
+                target_state = AutonomousMode.AS_DRIVING
+                self.mission_active = True
+        else:
+            return StateTransitionResult(False, self.current_state, self.current_state,
+                                         f"Unknown event: {reason}")
+        
+        # 상태가 변경되어야 하는 경우
+        if target_state != self.current_state:
+            if self._perform_state_transition(target_state, reason):
+                return StateTransitionResult(True, self.previous_state, self.current_state, reason)
+            else:
+                return StateTransitionResult(False, self.current_state, self.current_state,
+                                             f"Transition failed: {reason}")
+        
+        # 상태 변경이 필요 없는 경우
+        return StateTransitionResult(True, self.current_state, self.current_state, "No transition needed")
+
+    def _perform_state_transition(self, new_state: AutonomousMode, reason: str) -> bool:
+        if not self.is_valid_transition(self.current_state, new_state):
+            print(f"StateMachine: Invalid transition from {self._state_to_string(self.current_state)} "
+                  f"to {self._state_to_string(new_state)}")
+            return False
+        
+        exit_success = self._exit_state(self.current_state)
+        if not exit_success:
+            print(f"StateMachine: Failed to exit state {self._state_to_string(self.current_state)}")
+            return False
+        
+        self.previous_state = self.current_state
+        self.current_state = new_state
+        self.state_entry_time = time.monotonic()
+        
+        enter_success = self._enter_state(new_state)
+        
+        self._log_state_transition(self.previous_state, self.current_state, reason)
+        
+        return enter_success
+
+    def _enter_state(self, state: AutonomousMode) -> bool:
+        if state == AutonomousMode.AS_OFF: return self._enter_as_off()
+        if state == AutonomousMode.AS_READY: return self._enter_as_ready()
+        if state == AutonomousMode.AS_DRIVING: return self._enter_as_driving()
+        return False
+        
+    def _exit_state(self, state: AutonomousMode) -> bool:
+        if state == AutonomousMode.AS_OFF: return self._exit_as_off()
+        if state == AutonomousMode.AS_READY: return self._exit_as_ready()
+        if state == AutonomousMode.AS_DRIVING: return self._exit_as_driving()
+        return True # 기본적으로 성공
+
+    def _enter_as_off(self) -> bool:
+        print("StateMachine: Entering AS_OFF state")
+        self.mission_active = False
+        return True
+
+    def _enter_as_ready(self) -> bool:
+        print("StateMachine: Entering AS_READY state")
+        return True
+
+    def _enter_as_driving(self) -> bool:
+        print("StateMachine: Entering AS_DRIVING state")
+        self.mission_active = True
+        return True
+
+    def _exit_as_off(self) -> bool: return True
+    def _exit_as_ready(self) -> bool: return True
+    def _exit_as_driving(self) -> bool: return True
+
+    def inject_system_init(self):
+        self.process_event(AutonomousEvent.SYSTEM_INIT)
+
+    def inject_go_signal(self, mission: str, track: str):
+        self.current_mission = mission
+        self.mission_track = track
+        self.process_event(AutonomousEvent.GO_SIGNAL)
+
+    def print_state_info(self):
+        print("=== State Machine Status ===")
+        print(f"Current State: {self.get_current_state_string()}")
+        print(f"Previous State: {self._state_to_string(self.previous_state)}")
+        print(f"Time in State: {self.get_time_in_current_state():.3f} seconds")
+        active_str = "Yes" if self.mission_active else "No"
+        print(f"Mission: {self.current_mission} (Active: {active_str})")
+        print("==========================")
+
+    def get_time_in_current_state(self) -> float:
+        return time.monotonic() - self.state_entry_time
+
+    def get_current_state_string(self) -> str:
+        return self._state_to_string(self.current_state)
+
+    @staticmethod
+    def _state_to_string(state: AutonomousMode) -> str:
+        return state.name if state in AutonomousMode else "UNKNOWN"
+
+    @staticmethod
+    def _event_to_string(event: AutonomousEvent) -> str:
+        return event.name if event in AutonomousEvent else "UNKNOWN_EVENT"
+
+    def _log_state_transition(self, from_state: AutonomousMode, to_state: AutonomousMode, reason: str):
+        print(f"StateMachine: {self._state_to_string(from_state)} -> "
+              f"{self._state_to_string(to_state)} (Reason: {reason})")
+
+class Control:
+    def __init__(self):
+        pass
+
+    def compute_control(self, current_state, target_state):
+        # 제어 알고리즘 구현
+        pass
