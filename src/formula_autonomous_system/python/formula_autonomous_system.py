@@ -31,6 +31,11 @@ from cv_bridge import CvBridge
 from sklearn.cluster import DBSCAN
 from sklearn.linear_model import RANSACRegressor
 
+# Data Logger
+import os
+import csv
+import datetime
+ 
 # ==================== Enums ====================
 class AutonomousMode(Enum):
     AS_OFF = 0
@@ -54,11 +59,11 @@ class FormulaAutonomousSystem:
         )
         # =========================================================
 
+        self.gps_util = GPSProcessor()
+
     def init(self):
         """Initialize the system"""
         self.is_initialized = True
-
-        
         return True
 
     def get_parameters(self):
@@ -74,27 +79,34 @@ class FormulaAutonomousSystem:
                 - control_command (ControlCommand): 제어 명령
                 - autonomous_mode (String): 자율주행 모드 상태
         """
+        
+         # 시스템 초기화 확인
+        if not self.is_initialized:
+            rospy.logwarn_throttle(1.0, "FormulaAutonomousSystem: Not initialized")
+            return False
+        
         cv2.imshow("Camera1", self.get_camera_image(camera1_msg))
         cv2.imshow("Camera2", self.get_camera_image(camera2_msg))
         acc, gyro, orientation = self.get_imu_data(imu_msg)
         lat, lon, alt = self.get_gps_data(gps_msg)
+        # self.gps_util.set_origin(lat, lon, alt)  # 최초 GPS 좌표를 원점으로 설정
+        self.gps_util.origin_set = True
+        x,y,z = self.gps_util.gps_to_local(lat, lon, alt)
+        offset = np.array([x,y,z])
+
         image1 = self.get_camera_image(camera1_msg)
         image2 = self.get_camera_image(camera2_msg)
         cv2.waitKey(1)
-
         points=self.get_lidar_point_cloud(lidar_msg)
         LiDARProcessor().filtering_points(points, (1.0, 20.0), (-10.0, 10.0), (-0.5, 0.5))
         LiDARProcessor().ransac_plane_removal(points, threshold=0.05, max_trials=100)
         cluster = LiDARProcessor().cluster_points(points, eps=0.5, min_samples=5)
+        # print(cluster)
         LiDARProcessor().publish_point_cloud(points)
 
-        print(len(cluster))
+        # print(len(cluster))
         # filtered_points = LiDARProcessor().filtering_points(np.array([[x,y,z]]), (1.0, 20.0), (-10.0, 10.0), (-0.5, 0.5))
         # print("Filtered Points:", filtered_points)
-
-        if not self.is_initialized:
-            rospy.logwarn_throttle(1.0, "FormulaAutonomousSystem: Not initialized")
-            return False
     
         # Control
         control_command_msg = ControlCommand()
@@ -102,15 +114,17 @@ class FormulaAutonomousSystem:
         # State machine: Autonomous mode
         autonomous_mode = String()
         autonomous_mode.data = "AS_OFF"
+
+        # ==================== Data Logger (Test) ====================
         self.data_logger.log_entry(
             autonomous_mode=autonomous_mode.data,
             control_command=control_command_msg,
             imu_acc=acc,
             imu_gyro=gyro,
-            gps_data=(lat, lon, alt),
+            gps_data=(x, y, z),
             camera1_image=image1,
             camera2_image=image2,
-            lidar_points=cluster
+            lidar_points=cluster + offset
         )
         # =========================================================
         
@@ -226,7 +240,7 @@ class LiDARProcessor:
         removal = self.ransac_plane_removal(filtered, threshold=0.01, max_trials=30)
         clusters = self.cluster_points(removal, eps=0.5, min_samples=5)
         left, right = self.left_right_split(np.array(clusters))
-        rospy.loginfo_throttle(1.0, f"left = {left}, right = {right}")
+        # rospy.loginfo_throttle(1.0, f"left = {left}, right = {right}")
         header = rospy.Header()
         header.stamp = rospy.Time.now()
         header.frame_id = "fsds/FSCar"
@@ -241,14 +255,36 @@ class LiDARProcessor:
 
 # ==================== Utility Classes ====================
 
-import os
-import csv
-import cv2
-import rospy
-import datetime
-import numpy as np
-from std_msgs.msg import String
-from fs_msgs.msg import ControlCommand
+class GPSProcessor:
+    def __init__(self):
+        self.origin_set = False
+        self.origin_lat = rospy.get_param("/localization/localization/ref_wgs84_latitude", 0.0)
+        self.origin_lon = rospy.get_param("/localization/localization/ref_wgs84_longitude", 0.0)
+        self.origin_alt = rospy.get_param("/localization/localization/ref_wgs84_altitude", 0.0)
+        self.R = 6378137.0  # WGS84 타원체의 반경 (미터 단위)
+
+    ## Set origin GPS coordinates (relative to this point)
+    def set_origin(self, lat: float, lon: float, alt: float):
+        self.origin_lat = lat
+        self.origin_lon = lon
+        self.origin_alt = alt
+        self.origin_set = True
+
+    def gps_to_local(self, lat: float, lon: float, alt: float) -> Tuple[float, float, float]:
+        if not self.origin_set:
+            raise ValueError("Origin GPS coordinates not set.")
+        
+        # print(self.origin_lat, self.origin_lon, self.origin_alt)
+        # print(lat,lon,alt)
+        
+        d_lat = math.radians(lat - self.origin_lat)
+        d_lon = math.radians(lon - self.origin_lon)
+        
+        x = d_lon * self.R * math.cos(math.radians(self.origin_lat))
+        y = d_lat * self.R
+        z = alt - self.origin_alt
+        
+        return x, y, z
 
 class DataLogger:
     """
