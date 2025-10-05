@@ -122,7 +122,12 @@ class FormulaAutonomousSystem:
         imu_data = [acc[0], acc[1], gyro[2]]
         roll, pitch, yaw = self.gps_util.Quat_to_Euler(orientation)
         lat, lon, alt = self.get_gps_data(gps_msg)
+<<<<<<< HEAD
         
+=======
+        vtL = self.lidar_util.vehicle_to_lidar_Transform()
+        # print(vtL)
+>>>>>>> 2d2ee6a... [ConeDetection] 251005 @Doyeop-knut | LiDAR 회전/이동 변환행렬 생성 및 적용
         gps_data = self.gps_util.gps_to_local(lat, lon)
         self.gps_util.updateIMU(imu_data, yaw, imu_msg.header.stamp.secs)
         self.gps_util.updateGPS(gps_data, gps_msg.header.stamp.secs)
@@ -135,6 +140,34 @@ class FormulaAutonomousSystem:
         filtered = self.lidar_util.filtering_points(points, (self.x_min, self.x_max), (self.y_min, self.y_max), (self.z_min, self.z_max))
         removal = self.lidar_util.ransac_plane_removal(filtered, threshold=self.ransac_distance, max_trials=self.ransac_iter)
         cluster = self.lidar_util.cluster_points(removal, eps=self.dbscan_eps, min_samples=self.dbscan_points)
+<<<<<<< HEAD
+=======
+        # print(cluster*math.sin(yaw))
+        left, right = self.lidar_util.left_right_split(np.array(cluster))
+
+        ## LiDAR Cone mean point calculate
+        # min_left, min_right = math.inf, math.inf
+        # for p in left:
+        #     # print(f"distance  = {math.sqrt(r[0]**2+r[1]**2)}")
+        #     distance = math.sqrt(p[0]**2 + p[1] **2)
+        #     if min_left > distance:
+        #         min_left = distance
+        #         left_point = [p[0],p[1]]
+        #     # print(f"minimum_distance_left = {min_left}")
+        # for r in right:
+        #     # print(f"distance  = {math.sqrt(r[0]**2+r[1]**2)}")
+        #     distance = math.sqrt(r[0]**2 + r[1] **2)
+        #     if min_right > distance:
+        #         min_right = distance
+        #         right_point = [r[0],r[1]]
+        #     # print(f"minimum_distance_right  = {min_right}")
+
+        # mean_point = [(left_point[0] + right_point[0]) / 2, (left_point[1] + right_point[1])/ 2]
+        # # print(mean_point)
+        self.lidar_util.publish_point_cloud(cluster)
+        # print(len(cluster))
+        
+>>>>>>> 2d2ee6a... [ConeDetection] 251005 @Doyeop-knut | LiDAR 회전/이동 변환행렬 생성 및 적용
 
         if go_signal_msg.mission != "None" and go_signal_msg.mission != "":
             self.state_machine.inject_go_signal(go_signal_msg.mission, go_signal_msg.track)
@@ -179,9 +212,20 @@ class FormulaAutonomousSystem:
 
         # Logging
         self.data_logger.log_entry(
+<<<<<<< HEAD
             autonomous_mode=autonomous_mode.data, control_command=control_command_msg,
             imu_acc=acc, imu_gyro=gyro, state=self.gps_util.state,
             camera1_image=image1, camera2_image=image2, lidar_points=np.array(self.cone_map)
+=======
+            autonomous_mode=autonomous_mode.data,
+            control_command=control_command_msg,
+            imu_acc=acc,
+            imu_gyro=gyro,
+            state= self.gps_util.state,
+            camera1_image=image1,
+            camera2_image=image2,
+            lidar_points=cluster[:,:2]
+>>>>>>> 2d2ee6a... [ConeDetection] 251005 @Doyeop-knut | LiDAR 회전/이동 변환행렬 생성 및 적용
         )
 
         # # --- Delaunay Triangulation and Visualization ---
@@ -227,6 +271,11 @@ class LiDARProcessor:
         self.rot_r, self.rot_p, self.rot_yaw = rospy.get_param("/perception/lidar_extrinsics/rotation_roll"), rospy.get_param("/perception/lidar_extrinsics/rotation_pitch"), rospy.get_param("/perception/lidar_extrinsics/rotation_yaw")
 
     def vehicle_to_lidar_Transform(self):
+<<<<<<< HEAD
+=======
+
+        # print(self.trans_x)
+>>>>>>> 2d2ee6a... [ConeDetection] 251005 @Doyeop-knut | LiDAR 회전/이동 변환행렬 생성 및 적용
         veh_to_LiDAR = [
             [math.cos(self.rot_yaw)* math.cos(self.rot_p), math.cos(self.rot_yaw)*math.sin(self.rot_p)*math.sin(self.rot_r) - math.sin(self.rot_yaw)*math.cos(self.rot_r), math.cos(self.rot_yaw)*math.sin(self.rot_p)*math.cos(self.rot_r)+math.sin(self.rot_yaw)*math.sin(self.rot_r), self.trans_x],
             [math.sin(self.rot_yaw)* math.cos(self.rot_p), math.sin(self.rot_yaw)*math.sin(self.rot_p)*math.sin(self.rot_r) + math.cos(self.rot_yaw)*math.cos(self.rot_r), math.sin(self.rot_yaw)*math.sin(self.rot_p)*math.cos(self.rot_r)- math.cos(self.rot_yaw)*math.sin(self.rot_r), self.trans_y],
@@ -260,6 +309,7 @@ class LiDARProcessor:
         labels = db.labels_
         
         clusters = []
+<<<<<<< HEAD
         for label in set(labels):
             if label == -1: continue
             cluster_points = points[labels == label]
@@ -268,6 +318,18 @@ class LiDARProcessor:
             mat = self.vehicle_to_lidar_Transform()
             transform_lidar = np.dot(mat, center_4d)
             clusters.append(transform_lidar[:3])
+=======
+        for label in unique_labels:
+            if label == -1:
+                continue
+            cluster = points[labels == label]
+            center = np.mean(cluster, axis=0)
+            center_4d = np.array([center[0],center[1],center[2],1])
+            mat=self.vehicle_to_lidar_Transform()
+            transform_lidar = np.dot(mat, center_4d)
+            # print(f"transformed = {transform_lidar}")
+            clusters.append(transform_lidar[:3])  # Append transformed x, y, z
+>>>>>>> 2d2ee6a... [ConeDetection] 251005 @Doyeop-knut | LiDAR 회전/이동 변환행렬 생성 및 적용
         
         return np.array(clusters)
     
