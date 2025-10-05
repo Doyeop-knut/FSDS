@@ -4,7 +4,7 @@
 @file formula_autonomous_system.py
 @author Jiwon Seok (jiwonseok@hanyang.ac.kr)
 @brief Formula Student Driverless Autonomous System - Python Implementation
-@version 0.2
+@version 0.5
 @date 2025-10-05
 
 @copyright Copyright (c) 2025
@@ -31,225 +31,12 @@ from cv_bridge import CvBridge
 # 3D LiDAR
 from sklearn.cluster import DBSCAN
 from sklearn.linear_model import RANSACRegressor
+from scipy.spatial import Delaunay
 
-# Data Logger & Plotting
+# Data Logger
 import os
 import csv
 import datetime
-import multiprocessing as mp
-
-# ==================== Path Planning (RRT*) ====================
-
-# class RRTStarPlanner:
-#     """
-#     RRT* Path Planner
-#     """
-
-#     class Node:
-#         def __init__(self, x, y):
-#             self.x = x
-#             self.y = y
-#             self.parent = None
-#             self.cost = 0.0
-
-#     def __init__(self, start, goal, obstacles, obstacle_radius, play_area, max_iter=500, step_size=1.0, search_radius=5.0, goal_sample_rate=0.1):
-#         self.start = self.Node(start[0], start[1])
-#         self.goal = self.Node(goal[0], goal[1])
-#         self.obstacles = np.array(obstacles)
-#         self.obstacle_radius = obstacle_radius
-#         self.play_area = play_area  # [min_x, max_x, min_y, max_y]
-#         self.max_iter = max_iter
-#         self.step_size = step_size
-#         self.search_radius = search_radius
-#         self.goal_sample_rate = goal_sample_rate
-#         self.node_list = [self.start]
-
-#     def plan(self):
-#         """Main RRT* planning loop"""
-#         for i in range(self.max_iter):
-#             # 1. Sample a random point
-#             if random.random() > self.goal_sample_rate:
-#                 rnd_node = self.get_random_node()
-#             else:
-#                 rnd_node = self.Node(self.goal.x, self.goal.y)
-
-#             # 2. Find the nearest node in the tree
-#             nearest_node = self.get_nearest_node(rnd_node)
-
-#             # 3. Steer from nearest to random point
-#             new_node = self.steer(nearest_node, rnd_node)
-
-#             # 4. If the path to the new node is collision-free
-#             if self.is_collision_free(nearest_node, new_node):
-#                 # 5. Find near nodes and choose the best parent (lowest cost)
-#                 near_nodes_indices = self.find_near_nodes(new_node)
-#                 self.choose_parent(new_node, near_nodes_indices)
-                
-#                 self.node_list.append(new_node)
-
-#                 # 6. Rewire the tree
-#                 self.rewire(new_node, near_nodes_indices)
-
-#         # 7. Generate final path
-#         return self.generate_final_path()
-
-#     def get_random_node(self):
-#         return self.Node(
-#             random.uniform(self.play_area[0], self.play_area[1]),
-#             random.uniform(self.play_area[2], self.play_area[3])
-#         )
-
-#     def get_nearest_node(self, node):
-#         distances = [(n.x - node.x)**2 + (n.y - node.y)**2 for n in self.node_list]
-#         return self.node_list[np.argmin(distances)]
-
-#     def steer(self, from_node, to_node):
-#         d, theta = self.get_distance_and_angle(from_node, to_node)
-        
-#         new_node = self.Node(from_node.x, from_node.y)
-#         new_node.x += min(self.step_size, d) * math.cos(theta)
-#         new_node.y += min(self.step_size, d) * math.sin(theta)
-#         new_node.parent = from_node
-#         return new_node
-
-#     def is_collision_free(self, from_node, to_node):
-#         if not self.obstacles.any():
-#             return True
-        
-#         points = np.linspace([from_node.x, from_node.y], [to_node.x, to_node.y], num=10)
-#         for p in points:
-#             distances = np.sqrt(np.sum((self.obstacles - p)**2, axis=1))
-#             if np.any(distances < self.obstacle_radius):
-#                 return False
-#         return True
-
-#     def find_near_nodes(self, new_node):
-#         n_nodes = len(self.node_list)
-#         distances = [(node.x - new_node.x)**2 + (node.y - new_node.y)**2 for node in self.node_list]
-#         near_indices = [i for i, d in enumerate(distances) if d < self.search_radius**2]
-#         return near_indices
-
-#     def choose_parent(self, new_node, near_indices):
-#         if not near_indices:
-#             return
-
-#         costs = []
-#         for i in near_indices:
-#             near_node = self.node_list[i]
-#             d, _ = self.get_distance_and_angle(near_node, new_node)
-#             if self.is_collision_free(near_node, new_node):
-#                 costs.append(near_node.cost + d)
-#             else:
-#                 costs.append(float('inf'))
-        
-#         min_cost_idx = near_indices[np.argmin(costs)]
-#         min_cost_node = self.node_list[min_cost_idx]
-
-#         new_node.parent = min_cost_node
-#         new_node.cost = min_cost_node.cost + self.get_distance_and_angle(min_cost_node, new_node)[0]
-
-#     def rewire(self, new_node, near_indices):
-#         for i in near_indices:
-#             node = self.node_list[i]
-#             d, _ = self.get_distance_and_angle(new_node, node)
-#             if new_node.cost + d < node.cost and self.is_collision_free(new_node, node):
-#                 node.parent = new_node
-#                 node.cost = new_node.cost + d
-
-#     def generate_final_path(self):
-#         # Find the node in the tree closest to the goal
-#         distances_to_goal = [(n.x - self.goal.x)**2 + (n.y - self.goal.y)**2 for n in self.node_list]
-#         best_node_idx = np.argmin(distances_to_goal)
-#         best_node = self.node_list[best_node_idx]
-
-#         # If the best node is within a certain threshold of the goal, consider it reached
-#         if self.get_distance_and_angle(best_node, self.goal)[0] > self.step_size * 2:
-#             return None # Path not found
-
-#         path = []
-#         node = best_node
-#         while node.parent is not None:
-#             path.append((node.x, node.y))
-#             node = node.parent
-#         path.append((self.start.x, self.start.y))
-#         return path[::-1]
-
-#     @staticmethod
-#     def get_distance_and_angle(from_node, to_node):
-#         dx = to_node.x - from_node.x
-#         dy = to_node.y - from_node.y
-#         d = math.hypot(dx, dy)
-#         theta = math.atan2(dy, dx)
-#         return d, theta
-
-# def plot_process_func(queue):
-#     import matplotlib.pyplot as plt
-#     import math
-#     import numpy as np
-#     import matplotlib
-#     matplotlib.use('TkAgg')
-
-#     plt.ion()
-#     fig, ax = plt.subplots(figsize=(10, 10))
-    
-#     all_cones = set()
-#     vehicle_trajectory = []
-
-#     while True:
-#         try:
-#             data = queue.get()
-#             if data is None:
-#                 break
-            
-#             vehicle_state, cone_map, rrt_nodes, final_path = data
-            
-#             vehicle_x, vehicle_y = vehicle_state[0], vehicle_state[1]
-#             vehicle_trajectory.append((vehicle_x, vehicle_y))
-            
-#             for cone in cone_map:
-#                 all_cones.add(tuple(cone))
-
-#             ax.clear()
-            
-#             # Plot Cones
-#             if all_cones:
-#                 cones_array = np.array(list(all_cones))
-#                 ax.scatter(cones_array[:, 0], cones_array[:, 1], c='b', label='Cones')
-
-#             # Plot Trajectory
-#             if vehicle_trajectory:
-#                 traj_array = np.array(vehicle_trajectory)
-#                 ax.plot(traj_array[:, 0], traj_array[:, 1], c='g', linewidth=1.5, label='Trajectory')
-
-#             # Plot RRT Tree
-#             if rrt_nodes:
-#                 for node in rrt_nodes:
-#                     if node.parent:
-#                         ax.plot([node.x, node.parent.x], [node.y, node.parent.y], "-g", linewidth=0.5)
-
-#             # Plot Final Path
-#             if final_path:
-#                 path_arr = np.array(final_path)
-#                 ax.plot(path_arr[:, 0], path_arr[:, 1], "-r", linewidth=2, label="RRT* Path")
-
-#             # Plot Vehicle
-#             vehicle_yaw_rad = vehicle_state[2]
-#             ax.scatter(vehicle_x, vehicle_y, c='r', marker='x', s=100, label='Vehicle')
-#             ax.arrow(vehicle_x, vehicle_y, 2.0 * math.cos(vehicle_yaw_rad), 2.0 * math.sin(vehicle_yaw_rad), head_width=0.5, fc='r', ec='r')
-
-#             ax.set_xlabel("X coordinate (m)")
-#             ax.set_ylabel("Y coordinate (m)")
-#             ax.set_title("RRT* Path Planning")
-#             ax.legend()
-#             ax.grid(True)
-#             ax.set_aspect('equal', adjustable='box')
-            
-#             plt.draw()
-#             plt.pause(0.001)
-#         except (KeyboardInterrupt, ValueError):
-#             break
-#     plt.close(fig)
-#     print("Plotting process finished.")
 
 # ==================== Enums ====================
 class AutonomousMode(Enum):
@@ -275,7 +62,7 @@ class FormulaAutonomousSystem:
         self.dbscan_points = 0
         self.prev_x, self.prev_y, self.prev_z = 0,0,0
         
-        self.cone_map = set()
+        self.cone_map = [] # Use a list to store and update cone positions
 
         self.data_logger = DataLogger(
             log_directory="/home/user/fsds_ws/src/tutorial/log",
@@ -286,21 +73,28 @@ class FormulaAutonomousSystem:
         self.gps_util = GPSIMUProcessor()
         self.state_machine = StateMachine()
         self.lidar_util = LiDARProcessor()
-
-        self.plot_queue = mp.Queue(maxsize=1)
-        self.plot_process = mp.Process(target=plot_process_func, args=(self.plot_queue,))
-        self.plot_process.start()
-        rospy.on_shutdown(self.cleanup)
         
     def cleanup(self):
-        print("Shutting down plotting process...")
-        if self.plot_process.is_alive():
-            self.plot_queue.put(None)
-            self.plot_process.join(timeout=1)
-        print("Plotting process stopped.")
+        """Gracefully shutdown the node and save final data."""
+        print("Shutting down...")
+        cv2.destroyAllWindows()
+
+        # Save the final accumulated cone map
+        map_path = os.path.join(self.data_logger.session_path, "final_map.csv")
+        try:
+            with open(map_path, 'w', newline='') as f:
+                writer = csv.writer(f)
+                writer.writerow(['x', 'y'])  # Header
+                if self.cone_map:
+                    # Convert list of np.arrays to list of lists for writerows
+                    writer.writerows([cone.tolist() for cone in self.cone_map])
+            rospy.loginfo(f"Final map with {len(self.cone_map)} cones saved to {map_path}")
+        except Exception as e:
+            rospy.logerr(f"Error saving final map: {e}")
 
     def init(self):
         self.is_initialized = True
+        rospy.on_shutdown(self.cleanup)
         return True
 
     def get_parameters(self):
@@ -349,8 +143,7 @@ class FormulaAutonomousSystem:
 
         control_command_msg = ControlCommand()
 
-        # Transform cluster points to map frame
-        cluster_map_frame = np.empty((0, 2))
+        # Map Update with Data Association
         vehicle_x, vehicle_y, vehicle_yaw_rad = self.gps_util.state[0], self.gps_util.state[1], self.gps_util.state[2]
         if cluster.size > 0:
             cos_yaw = math.cos(vehicle_yaw_rad)
@@ -358,30 +151,70 @@ class FormulaAutonomousSystem:
             rot_mat = np.array([[cos_yaw, -sin_yaw], [sin_yaw, cos_yaw]])
             cluster_xy = cluster[:, :2]
             cluster_map_frame = (rot_mat @ cluster_xy.T).T + np.array([vehicle_x, vehicle_y])
-            for cone in cluster_map_frame:
-                self.cone_map.add(tuple(cone))
+            
+            # Data association and map update
+            association_radius = 1.0  # meters
+            alpha = 0.5 # Moving average weight
 
-        # RRT* Path Planning
-        start_point = (vehicle_x, vehicle_y)
-        # Simple goal: 15m ahead of the vehicle
-        goal_point = (vehicle_x + 15 * math.cos(vehicle_yaw_rad), vehicle_y + 15 * math.sin(vehicle_yaw_rad))
-        
-        # Define a search area around the vehicle
-        search_area = [vehicle_x - 5, vehicle_x + 20, vehicle_y - 10, vehicle_y + 10]
+            for new_cone in cluster_map_frame:
+                found_match = False
+                if self.cone_map:
+                    distances = np.sqrt(np.sum((np.array(self.cone_map) - new_cone)**2, axis=1))
+                    closest_idx = np.argmin(distances)
+                    if distances[closest_idx] < association_radius:
+                        self.cone_map[closest_idx] = (1 - alpha) * self.cone_map[closest_idx] + alpha * new_cone
+                        found_match = True
+                
+                if not found_match:
+                    self.cone_map.append(new_cone)
 
-        planner = RRTStarPlanner(start=start_point, goal=goal_point, obstacles=list(self.cone_map), obstacle_radius=0.5, play_area=search_area, max_iter=100)
-        final_path = planner.plan()
-
-        # Logging and Visualization
+        # Logging
         self.data_logger.log_entry(
             autonomous_mode=autonomous_mode.data, control_command=control_command_msg,
             imu_acc=acc, imu_gyro=gyro, state=self.gps_util.state,
-            camera1_image=image1, camera2_image=image2, lidar_points=cluster_map_frame
+            camera1_image=image1, camera2_image=image2, lidar_points=np.array(self.cone_map)
         )
 
-        if not self.plot_queue.full():
-            plot_data = (self.gps_util.state, self.cone_map, planner.node_list, final_path)
-            self.plot_queue.put(plot_data)
+        # # --- Delaunay Triangulation and Visualization ---
+        # vis_img_size = (800, 600, 3)
+        # vis_img = np.zeros(vis_img_size, dtype=np.uint8)
+        # scale = 15.0
+        # img_vehicle_u, img_vehicle_v = vis_img_size[1] // 2, vis_img_size[0] - 150
+
+        # def world_to_img(x, y):
+        #     dx, dy = x - vehicle_x, y - vehicle_y
+        #     rot_x = dx * math.cos(-vehicle_yaw_rad) - dy * math.sin(-vehicle_yaw_rad)
+        #     rot_y = dx * math.sin(-vehicle_yaw_rad) + dy * math.cos(-vehicle_yaw_rad)
+        #     u = int(img_vehicle_u + rot_y * scale)
+        #     v = int(img_vehicle_v - rot_x * scale)
+        #     return (u, v)
+
+        # if self.cone_map:
+        #     points = np.array(self.cone_map)
+        #     # Draw cones
+        #     for cone_pos in points:
+        #         u, v = world_to_img(cone_pos[0], cone_pos[1])
+        #         cv2.circle(vis_img, (u, v), 5, (0, 0, 255), -1)
+
+        #     # Perform and draw Delaunay Triangulation
+        #     if len(self.cone_map) >= 3:
+        #         try:
+        #             tri = Delaunay(points)
+        #             for simplex in tri.simplices:
+        #                 p1 = world_to_img(points[simplex[0]][0], points[simplex[0]][1])
+        #                 p2 = world_to_img(points[simplex[1]][0], points[simplex[1]][1])
+        #                 p3 = world_to_img(points[simplex[2]][0], points[simplex[2]][1])
+        #                 cv2.line(vis_img, p1, p2, (0, 255, 0), 1)
+        #                 cv2.line(vis_img, p2, p3, (0, 255, 0), 1)
+        #                 cv2.line(vis_img, p3, p1, (0, 255, 0), 1)
+        #         except Exception as e:
+        #             rospy.logwarn_throttle(1.0, f"Delaunay triangulation failed: {e}")
+
+        # # Draw vehicle
+        # cv2.arrowedLine(vis_img, (img_vehicle_u, img_vehicle_v + 10), (img_vehicle_u, img_vehicle_v - 20), (255, 0, 0), 3)
+
+        # cv2.imshow("Delaunay Triangulation", vis_img)
+        # # --- End of Visualization ---
 
         return True, control_command_msg, autonomous_mode
 
