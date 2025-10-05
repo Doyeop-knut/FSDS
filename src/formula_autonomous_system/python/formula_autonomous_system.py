@@ -4,8 +4,8 @@
 @file formula_autonomous_system.py
 @author Jiwon Seok (jiwonseok@hanyang.ac.kr)
 @brief Formula Student Driverless Autonomous System - Python Implementation
-@version 0.1
-@date 2025-07-25
+@version 0.2
+@date 2025-10-05
 
 @copyright Copyright (c) 2025
 """
@@ -20,7 +20,6 @@ from typing import List, Tuple, Optional
 import time
 from collections import deque, namedtuple
 
-
 # ROS
 from std_msgs.msg import String
 from fs_msgs.msg import ControlCommand
@@ -32,13 +31,226 @@ from cv_bridge import CvBridge
 # 3D LiDAR
 from sklearn.cluster import DBSCAN
 from sklearn.linear_model import RANSACRegressor
-import matplotlib.pyplot as plt
 
-# Data Logger
+# Data Logger & Plotting
 import os
 import csv
 import datetime
- 
+import multiprocessing as mp
+
+# ==================== Path Planning (RRT*) ====================
+
+# class RRTStarPlanner:
+#     """
+#     RRT* Path Planner
+#     """
+
+#     class Node:
+#         def __init__(self, x, y):
+#             self.x = x
+#             self.y = y
+#             self.parent = None
+#             self.cost = 0.0
+
+#     def __init__(self, start, goal, obstacles, obstacle_radius, play_area, max_iter=500, step_size=1.0, search_radius=5.0, goal_sample_rate=0.1):
+#         self.start = self.Node(start[0], start[1])
+#         self.goal = self.Node(goal[0], goal[1])
+#         self.obstacles = np.array(obstacles)
+#         self.obstacle_radius = obstacle_radius
+#         self.play_area = play_area  # [min_x, max_x, min_y, max_y]
+#         self.max_iter = max_iter
+#         self.step_size = step_size
+#         self.search_radius = search_radius
+#         self.goal_sample_rate = goal_sample_rate
+#         self.node_list = [self.start]
+
+#     def plan(self):
+#         """Main RRT* planning loop"""
+#         for i in range(self.max_iter):
+#             # 1. Sample a random point
+#             if random.random() > self.goal_sample_rate:
+#                 rnd_node = self.get_random_node()
+#             else:
+#                 rnd_node = self.Node(self.goal.x, self.goal.y)
+
+#             # 2. Find the nearest node in the tree
+#             nearest_node = self.get_nearest_node(rnd_node)
+
+#             # 3. Steer from nearest to random point
+#             new_node = self.steer(nearest_node, rnd_node)
+
+#             # 4. If the path to the new node is collision-free
+#             if self.is_collision_free(nearest_node, new_node):
+#                 # 5. Find near nodes and choose the best parent (lowest cost)
+#                 near_nodes_indices = self.find_near_nodes(new_node)
+#                 self.choose_parent(new_node, near_nodes_indices)
+                
+#                 self.node_list.append(new_node)
+
+#                 # 6. Rewire the tree
+#                 self.rewire(new_node, near_nodes_indices)
+
+#         # 7. Generate final path
+#         return self.generate_final_path()
+
+#     def get_random_node(self):
+#         return self.Node(
+#             random.uniform(self.play_area[0], self.play_area[1]),
+#             random.uniform(self.play_area[2], self.play_area[3])
+#         )
+
+#     def get_nearest_node(self, node):
+#         distances = [(n.x - node.x)**2 + (n.y - node.y)**2 for n in self.node_list]
+#         return self.node_list[np.argmin(distances)]
+
+#     def steer(self, from_node, to_node):
+#         d, theta = self.get_distance_and_angle(from_node, to_node)
+        
+#         new_node = self.Node(from_node.x, from_node.y)
+#         new_node.x += min(self.step_size, d) * math.cos(theta)
+#         new_node.y += min(self.step_size, d) * math.sin(theta)
+#         new_node.parent = from_node
+#         return new_node
+
+#     def is_collision_free(self, from_node, to_node):
+#         if not self.obstacles.any():
+#             return True
+        
+#         points = np.linspace([from_node.x, from_node.y], [to_node.x, to_node.y], num=10)
+#         for p in points:
+#             distances = np.sqrt(np.sum((self.obstacles - p)**2, axis=1))
+#             if np.any(distances < self.obstacle_radius):
+#                 return False
+#         return True
+
+#     def find_near_nodes(self, new_node):
+#         n_nodes = len(self.node_list)
+#         distances = [(node.x - new_node.x)**2 + (node.y - new_node.y)**2 for node in self.node_list]
+#         near_indices = [i for i, d in enumerate(distances) if d < self.search_radius**2]
+#         return near_indices
+
+#     def choose_parent(self, new_node, near_indices):
+#         if not near_indices:
+#             return
+
+#         costs = []
+#         for i in near_indices:
+#             near_node = self.node_list[i]
+#             d, _ = self.get_distance_and_angle(near_node, new_node)
+#             if self.is_collision_free(near_node, new_node):
+#                 costs.append(near_node.cost + d)
+#             else:
+#                 costs.append(float('inf'))
+        
+#         min_cost_idx = near_indices[np.argmin(costs)]
+#         min_cost_node = self.node_list[min_cost_idx]
+
+#         new_node.parent = min_cost_node
+#         new_node.cost = min_cost_node.cost + self.get_distance_and_angle(min_cost_node, new_node)[0]
+
+#     def rewire(self, new_node, near_indices):
+#         for i in near_indices:
+#             node = self.node_list[i]
+#             d, _ = self.get_distance_and_angle(new_node, node)
+#             if new_node.cost + d < node.cost and self.is_collision_free(new_node, node):
+#                 node.parent = new_node
+#                 node.cost = new_node.cost + d
+
+#     def generate_final_path(self):
+#         # Find the node in the tree closest to the goal
+#         distances_to_goal = [(n.x - self.goal.x)**2 + (n.y - self.goal.y)**2 for n in self.node_list]
+#         best_node_idx = np.argmin(distances_to_goal)
+#         best_node = self.node_list[best_node_idx]
+
+#         # If the best node is within a certain threshold of the goal, consider it reached
+#         if self.get_distance_and_angle(best_node, self.goal)[0] > self.step_size * 2:
+#             return None # Path not found
+
+#         path = []
+#         node = best_node
+#         while node.parent is not None:
+#             path.append((node.x, node.y))
+#             node = node.parent
+#         path.append((self.start.x, self.start.y))
+#         return path[::-1]
+
+#     @staticmethod
+#     def get_distance_and_angle(from_node, to_node):
+#         dx = to_node.x - from_node.x
+#         dy = to_node.y - from_node.y
+#         d = math.hypot(dx, dy)
+#         theta = math.atan2(dy, dx)
+#         return d, theta
+
+# def plot_process_func(queue):
+#     import matplotlib.pyplot as plt
+#     import math
+#     import numpy as np
+#     import matplotlib
+#     matplotlib.use('TkAgg')
+
+#     plt.ion()
+#     fig, ax = plt.subplots(figsize=(10, 10))
+    
+#     all_cones = set()
+#     vehicle_trajectory = []
+
+#     while True:
+#         try:
+#             data = queue.get()
+#             if data is None:
+#                 break
+            
+#             vehicle_state, cone_map, rrt_nodes, final_path = data
+            
+#             vehicle_x, vehicle_y = vehicle_state[0], vehicle_state[1]
+#             vehicle_trajectory.append((vehicle_x, vehicle_y))
+            
+#             for cone in cone_map:
+#                 all_cones.add(tuple(cone))
+
+#             ax.clear()
+            
+#             # Plot Cones
+#             if all_cones:
+#                 cones_array = np.array(list(all_cones))
+#                 ax.scatter(cones_array[:, 0], cones_array[:, 1], c='b', label='Cones')
+
+#             # Plot Trajectory
+#             if vehicle_trajectory:
+#                 traj_array = np.array(vehicle_trajectory)
+#                 ax.plot(traj_array[:, 0], traj_array[:, 1], c='g', linewidth=1.5, label='Trajectory')
+
+#             # Plot RRT Tree
+#             if rrt_nodes:
+#                 for node in rrt_nodes:
+#                     if node.parent:
+#                         ax.plot([node.x, node.parent.x], [node.y, node.parent.y], "-g", linewidth=0.5)
+
+#             # Plot Final Path
+#             if final_path:
+#                 path_arr = np.array(final_path)
+#                 ax.plot(path_arr[:, 0], path_arr[:, 1], "-r", linewidth=2, label="RRT* Path")
+
+#             # Plot Vehicle
+#             vehicle_yaw_rad = vehicle_state[2]
+#             ax.scatter(vehicle_x, vehicle_y, c='r', marker='x', s=100, label='Vehicle')
+#             ax.arrow(vehicle_x, vehicle_y, 2.0 * math.cos(vehicle_yaw_rad), 2.0 * math.sin(vehicle_yaw_rad), head_width=0.5, fc='r', ec='r')
+
+#             ax.set_xlabel("X coordinate (m)")
+#             ax.set_ylabel("Y coordinate (m)")
+#             ax.set_title("RRT* Path Planning")
+#             ax.legend()
+#             ax.grid(True)
+#             ax.set_aspect('equal', adjustable='box')
+            
+#             plt.draw()
+#             plt.pause(0.001)
+#         except (KeyboardInterrupt, ValueError):
+#             break
+#     plt.close(fig)
+#     print("Plotting process finished.")
+
 # ==================== Enums ====================
 class AutonomousMode(Enum):
     AS_OFF = 0
@@ -49,8 +261,8 @@ class AutonomousEvent(Enum):
     SYSTEM_INIT = 0
     SYSTEM_READY = 1
     GO_SIGNAL = 2
-# ==================== Main System ====================
 
+# ==================== Main System ====================
 class FormulaAutonomousSystem:
     def __init__(self):
         self.is_initialized = False
@@ -63,29 +275,38 @@ class FormulaAutonomousSystem:
         self.dbscan_points = 0
         self.prev_x, self.prev_y, self.prev_z = 0,0,0
         
-        # ==================== 데이터 로거 추가 ====================
-        self.data_logger = DataLogger(
-        log_directory="/home/user/fsds_ws/src/tutorial/log",
-        session_name=datetime.datetime.now().strftime("%Y%m%d_%H%M%S"),
-        max_lidar_points=50  # 필요시 이 값을 조절
-        )
-        # =========================================================
+        self.cone_map = set()
 
-        # State machine: Autonomous mode
+        self.data_logger = DataLogger(
+            log_directory="/home/user/fsds_ws/src/tutorial/log",
+            session_name=datetime.datetime.now().strftime("%Y%m%d_%H%M%S"),
+            max_lidar_points=50
+        )
+
         self.gps_util = GPSIMUProcessor()
         self.state_machine = StateMachine()
         self.lidar_util = LiDARProcessor()
+
+        self.plot_queue = mp.Queue(maxsize=1)
+        self.plot_process = mp.Process(target=plot_process_func, args=(self.plot_queue,))
+        self.plot_process.start()
+        rospy.on_shutdown(self.cleanup)
         
+    def cleanup(self):
+        print("Shutting down plotting process...")
+        if self.plot_process.is_alive():
+            self.plot_queue.put(None)
+            self.plot_process.join(timeout=1)
+        print("Plotting process stopped.")
+
     def init(self):
-        """Initialize the system"""
         self.is_initialized = True
         return True
 
     def get_parameters(self):
-        """Get parameters from ROS parameter server"""
-        self.x_min, self.x_max = rospy.get_param("/perception/lidar_roi_extraction/x_min") , rospy.get_param("/perception/lidar_roi_extraction/x_max")
-        self.y_min, self.y_max = rospy.get_param("/perception/lidar_roi_extraction/y_min") , rospy.get_param("/perception/lidar_roi_extraction/y_max")
-        self.z_min, self.z_max = rospy.get_param("/perception/lidar_roi_extraction/z_min") , rospy.get_param("/perception/lidar_roi_extraction/z_max")
+        self.x_min, self.x_max = rospy.get_param("/perception/lidar_roi_extraction/x_min"), rospy.get_param("/perception/lidar_roi_extraction/x_max")
+        self.y_min, self.y_max = rospy.get_param("/perception/lidar_roi_extraction/y_min"), rospy.get_param("/perception/lidar_roi_extraction/y_max")
+        self.z_min, self.z_max = rospy.get_param("/perception/lidar_roi_extraction/z_min"), rospy.get_param("/perception/lidar_roi_extraction/z_max")
         self.ransac_iter = rospy.get_param("/perception/lidar_ground_removal/ransac_iterations")
         self.ransac_distance = rospy.get_param("/perception/lidar_ground_removal/ransac_distance_threshold")
         self.dbscan_eps = rospy.get_param("/perception/lidar_clustering/dbscan_eps")
@@ -93,153 +314,98 @@ class FormulaAutonomousSystem:
         return True
 
     def run(self, lidar_msg, camera1_msg, camera2_msg, imu_msg, gps_msg, go_signal_msg):
-        """Run the autonomous system (Pythonic version)
-        
-        Returns:
-            tuple: (success, control_command, autonomous_mode)
-                - success (bool): 처리 성공 여부
-                - control_command (ControlCommand): 제어 명령
-                - autonomous_mode (String): 자율주행 모드 상태
-        """
-        
-
-        # print(self.state_machine.state)
-
-         # 시스템 초기화 확인
         if not self.is_initialized:
             rospy.logwarn_throttle(1.0, "FormulaAutonomousSystem: Not initialized")
             return False
         self.get_parameters()
 
-        autonomous_mode = String()
-        autonomous_mode.data = "AS_OFF"
+        autonomous_mode = String(data="AS_OFF")
         self.state_machine.inject_system_init()
 
         cv2.imshow("Camera1", self.get_camera_image(camera1_msg))
         cv2.imshow("Camera2", self.get_camera_image(camera2_msg))
         acc, gyro, orientation = self.get_imu_data(imu_msg)
         imu_data = [acc[0], acc[1], gyro[2]]
-        roll,pitch,yaw = self.gps_util.Quat_to_Euler(orientation)
+        roll, pitch, yaw = self.gps_util.Quat_to_Euler(orientation)
         lat, lon, alt = self.get_gps_data(gps_msg)
-        vtL = self.lidar_util.vehicle_to_lidar_Transform()
-        # print(vtL)
+        
         gps_data = self.gps_util.gps_to_local(lat, lon)
         self.gps_util.updateIMU(imu_data, yaw, imu_msg.header.stamp.secs)
-        self.gps_util.updateGPS(gps_data,gps_msg.header.stamp.secs)
-        rospy.loginfo_throttle(1.0,f"v = {math.sqrt(self.gps_util.state[3]**2 + self.gps_util.state[4]**2)} m/s")
+        self.gps_util.updateGPS(gps_data, gps_msg.header.stamp.secs)
+        rospy.loginfo_throttle(1.0, f"v = {math.sqrt(self.gps_util.state[3]**2 + self.gps_util.state[4]**2)} m/s")
         image1 = self.get_camera_image(camera1_msg)
         image2 = self.get_camera_image(camera2_msg)
         cv2.waitKey(1)
 
-        ## LiDAR Processed
-        # print(f"parameters = {self.dbscan_eps, self.dbscan_points, self.ransac_distance, self.ransac_iter, self.x_min, self.x_max}")
-        points=self.get_lidar_point_cloud(lidar_msg)
+        points = self.get_lidar_point_cloud(lidar_msg)
         filtered = self.lidar_util.filtering_points(points, (self.x_min, self.x_max), (self.y_min, self.y_max), (self.z_min, self.z_max))
-        removal =  self.lidar_util.ransac_plane_removal(filtered, threshold=self.ransac_distance, max_trials=self.ransac_iter)
-        # print(self.dbscan_eps)
+        removal = self.lidar_util.ransac_plane_removal(filtered, threshold=self.ransac_distance, max_trials=self.ransac_iter)
         cluster = self.lidar_util.cluster_points(removal, eps=self.dbscan_eps, min_samples=self.dbscan_points)
-        # print(cluster*math.sin(yaw))
-        left, right = self.lidar_util.left_right_split(np.array(cluster))
-
-        ## LiDAR Cone mean point calculate
-        # min_left, min_right = math.inf, math.inf
-        # for p in left:
-        #     # print(f"distance  = {math.sqrt(r[0]**2+r[1]**2)}")
-        #     distance = math.sqrt(p[0]**2 + p[1] **2)
-        #     if min_left > distance:
-        #         min_left = distance
-        #         left_point = [p[0],p[1]]
-        #     # print(f"minimum_distance_left = {min_left}")
-        # for r in right:
-        #     # print(f"distance  = {math.sqrt(r[0]**2+r[1]**2)}")
-        #     distance = math.sqrt(r[0]**2 + r[1] **2)
-        #     if min_right > distance:
-        #         min_right = distance
-        #         right_point = [r[0],r[1]]
-        #     # print(f"minimum_distance_right  = {min_right}")
-
-        # mean_point = [(left_point[0] + right_point[0]) / 2, (left_point[1] + right_point[1])/ 2]
-        # # print(mean_point)
         self.lidar_util.publish_point_cloud(cluster)
-        # print(len(cluster))
-        
 
-        ## GO_SIGNAL
         if go_signal_msg.mission != "None" and go_signal_msg.mission != "":
             self.state_machine.inject_go_signal(go_signal_msg.mission, go_signal_msg.track)
         autonomous_mode.data = self.state_machine.get_current_state_string()
 
-        # filtered_points = LiDARProcessor().filtering_points(np.array([[x,y,z]]), (1.0, 20.0), (-10.0, 10.0), (-0.5, 0.5))
-        # print("Filtered Points:", filtered_points)
-        ## GPS velocity
-        # Control
         control_command_msg = ControlCommand()
-        # print(go_signal_msg)
 
-        # ==================== Data Logger (Test) ====================
+        # Transform cluster points to map frame
+        cluster_map_frame = np.empty((0, 2))
+        vehicle_x, vehicle_y, vehicle_yaw_rad = self.gps_util.state[0], self.gps_util.state[1], self.gps_util.state[2]
+        if cluster.size > 0:
+            cos_yaw = math.cos(vehicle_yaw_rad)
+            sin_yaw = math.sin(vehicle_yaw_rad)
+            rot_mat = np.array([[cos_yaw, -sin_yaw], [sin_yaw, cos_yaw]])
+            cluster_xy = cluster[:, :2]
+            cluster_map_frame = (rot_mat @ cluster_xy.T).T + np.array([vehicle_x, vehicle_y])
+            for cone in cluster_map_frame:
+                self.cone_map.add(tuple(cone))
+
+        # RRT* Path Planning
+        start_point = (vehicle_x, vehicle_y)
+        # Simple goal: 15m ahead of the vehicle
+        goal_point = (vehicle_x + 15 * math.cos(vehicle_yaw_rad), vehicle_y + 15 * math.sin(vehicle_yaw_rad))
+        
+        # Define a search area around the vehicle
+        search_area = [vehicle_x - 5, vehicle_x + 20, vehicle_y - 10, vehicle_y + 10]
+
+        planner = RRTStarPlanner(start=start_point, goal=goal_point, obstacles=list(self.cone_map), obstacle_radius=0.5, play_area=search_area, max_iter=100)
+        final_path = planner.plan()
+
+        # Logging and Visualization
         self.data_logger.log_entry(
-            autonomous_mode=autonomous_mode.data,
-            control_command=control_command_msg,
-            imu_acc=acc,
-            imu_gyro=gyro,
-            state= self.gps_util.state,
-            camera1_image=image1,
-            camera2_image=image2,
-            lidar_points=cluster[:,:2]
+            autonomous_mode=autonomous_mode.data, control_command=control_command_msg,
+            imu_acc=acc, imu_gyro=gyro, state=self.gps_util.state,
+            camera1_image=image1, camera2_image=image2, lidar_points=cluster_map_frame
         )
-        # =========================================================
-        
-        # plt.axis([-50,50,-20,200])
-        # if len(cluster) == 0:
-        #     pass
-        
-        # plt.scatter(x=cluster[:,0] + offset[0] ,y=cluster[:,1]+ offset[1])
-        # plt.pause(0.001)
-        
-        # plt.clf()
-        # # print(go_signal_msg.mission, go_signal_msg.track)
+
+        if not self.plot_queue.full():
+            plot_data = (self.gps_util.state, self.cone_map, planner.node_list, final_path)
+            self.plot_queue.put(plot_data)
 
         return True, control_command_msg, autonomous_mode
 
     def get_lidar_point_cloud(self, msg):
-        """Convert ROS PointCloud2 message to point cloud"""
-        pointcloud = []
-        for point in pc2.read_points(msg, field_names=("x", "y", "z"), skip_nans=True):
-            x, y, z = point[:3]
-            pointcloud.append([x, y, z])
-            
+        pointcloud = [p[:3] for p in pc2.read_points(msg, field_names=("x", "y", "z"), skip_nans=True)]
         return np.array(pointcloud)
 
     def get_camera_image(self, msg):
-        """Convert ROS Image message to OpenCV Mat"""
         try:
-            bridge = CvBridge()
-            cv_image = bridge.imgmsg_to_cv2(msg, "bgr8")
-            return cv_image
+            return CvBridge().imgmsg_to_cv2(msg, "bgr8")
         except Exception as e:
             rospy.logerr(f"cv_bridge exception: {e}")
             return None
 
     def get_imu_data(self, msg):
-        """Extract IMU data from ROS message"""
-        # Extract orientation
         orientation = [msg.orientation.w, msg.orientation.x, msg.orientation.y, msg.orientation.z]
-        
-        # Extract acceleration
         acc = [msg.linear_acceleration.x, msg.linear_acceleration.y, msg.linear_acceleration.z]
-        
-        # Extract angular velocity
         gyro = [msg.angular_velocity.x, msg.angular_velocity.y, msg.angular_velocity.z]
-        
         return acc, gyro, orientation
     
     def get_gps_data(self, msg):
-        """Extract GPS data from ROS message"""
-        latitude = msg.latitude
-        longitude = msg.longitude
-        altitude = msg.altitude
-        return latitude, longitude, altitude
+        return msg.latitude, msg.longitude, msg.altitude
 
+# ==================== Utility Classes ====================
 class LiDARProcessor:
     def __init__(self):
         self.lidar_publisher = rospy.Publisher("/processed_lidar", PointCloud2, queue_size=1)
@@ -257,8 +423,6 @@ class LiDARProcessor:
         self.rot_r, self.rot_p, self.rot_yaw = rospy.get_param("/perception/lidar_extrinsics/rotation_roll"), rospy.get_param("/perception/lidar_extrinsics/rotation_pitch"), rospy.get_param("/perception/lidar_extrinsics/rotation_yaw")
 
     def vehicle_to_lidar_Transform(self):
-
-        # print(self.trans_x)
         veh_to_LiDAR = [
             [math.cos(self.rot_yaw)* math.cos(self.rot_p), math.cos(self.rot_yaw)*math.sin(self.rot_p)*math.sin(self.rot_r) - math.sin(self.rot_yaw)*math.cos(self.rot_r), math.cos(self.rot_yaw)*math.sin(self.rot_p)*math.cos(self.rot_r)+math.sin(self.rot_yaw)*math.sin(self.rot_r), self.trans_x],
             [math.sin(self.rot_yaw)* math.cos(self.rot_p), math.sin(self.rot_yaw)*math.sin(self.rot_p)*math.sin(self.rot_r) + math.cos(self.rot_yaw)*math.cos(self.rot_r), math.sin(self.rot_yaw)*math.sin(self.rot_p)*math.cos(self.rot_r)- math.cos(self.rot_yaw)*math.sin(self.rot_r), self.trans_y],
@@ -268,7 +432,6 @@ class LiDARProcessor:
         return veh_to_LiDAR
 
     def filtering_points(self, points: np.ndarray, x_range: Tuple[float, float], y_range: Tuple[float, float], z_range: Tuple[float, float]) -> np.ndarray:
-        """Filter points within specified ranges"""
         mask = (
             (points[:, 0] >= x_range[0]) & (points[:, 0] <= x_range[1]) &
             (points[:, 1] >= y_range[0]) & (points[:, 1] <= y_range[1]) &
@@ -277,114 +440,56 @@ class LiDARProcessor:
         return points[mask]
     
     def ransac_plane_removal(self, points: np.ndarray, threshold: float = 0.05, max_trials: int = 100) -> np.ndarray:
-        """Remove ground plane using RANSAC"""
-        if points is None or len(points) < 10: # RANSAC을 위해 최소 포인트 수 확보
+        if points is None or len(points) < 10:
             return np.array([])
-
-        X = points[:, 0:2] # x, y 좌표
-        y = points[:, 2]   # z 좌표
-        
-        # RANSAC Regressor 모델 생성
-        ransac = RANSACRegressor(
-            residual_threshold=threshold,
-            random_state=0
-        )
+        X = points[:, 0:2]
+        y = points[:, 2]
+        ransac = RANSACRegressor(residual_threshold=threshold, random_state=0)
         ransac.fit(X, y)
-        
-        # inlier_mask_는 지면(inlier)에 해당하는 포인트는 True, 아니면 False
-        inlier_mask = ransac.inlier_mask_
-        outlier_mask = np.logical_not(inlier_mask)
-
-        # 지면과 객체(콘 후보) 포인트를 분리
-        ground_points = points[inlier_mask]
-        object_points = points[outlier_mask]
-        return object_points
+        return points[np.logical_not(ransac.inlier_mask_)]
 
     def cluster_points(self, points: np.ndarray, eps: float = 0.5, min_samples: int = 5) -> np.ndarray:
-        """Cluster points using DBSCAN"""
         if points is None or len(points) == 0:
             return np.array([])
         
         db = DBSCAN(eps=eps, min_samples=min_samples).fit(points)
         labels = db.labels_
-        unique_labels = set(labels)
         
         clusters = []
-        for label in unique_labels:
-            if label == -1:
-                continue
-            cluster = points[labels == label]
-            center = np.mean(cluster, axis=0)
-            center_4d = np.array([center[0],center[1],center[2],1])
-            mat=self.vehicle_to_lidar_Transform()
+        for label in set(labels):
+            if label == -1: continue
+            cluster_points = points[labels == label]
+            center = np.mean(cluster_points, axis=0)
+            center_4d = np.array([center[0], center[1], center[2], 1])
+            mat = self.vehicle_to_lidar_Transform()
             transform_lidar = np.dot(mat, center_4d)
-            # print(f"transformed = {transform_lidar}")
-            clusters.append(transform_lidar[:3])  # Append transformed x, y, z
+            clusters.append(transform_lidar[:3])
         
         return np.array(clusters)
     
-    def left_right_split(self, points: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
-        """Split points into left and right based on y-coordinate"""
-        left_points = points[points[:, 1] > 0]
-        right_points = points[points[:, 1] <= 0]
-        return left_points, right_points
-    
-    ### For Debugging: Publish Processed Point Cloud ###
     def publish_point_cloud(self, points: np.ndarray):
-        """Publish processed point cloud and their indices as markers"""
-
-        clusters = points
-
-        header = rospy.Header()
-        header.stamp = rospy.Time.now()
-        header.frame_id = "fsds/FSCar"
-        
-        # Publish point cloud
-        fields = [
-            PointField('x', 0, PointField.FLOAT32, 1),
-            PointField('y', 4, PointField.FLOAT32, 1),
-            PointField('z', 8, PointField.FLOAT32, 1),
-        ]
-        point_cloud_msg = pc2.create_cloud(header, fields, clusters)
+        header = rospy.Header(stamp=rospy.Time.now(), frame_id="fsds/FSCar")
+        fields = [PointField('x', 0, PointField.FLOAT32, 1), PointField('y', 4, PointField.FLOAT32, 1), PointField('z', 8, PointField.FLOAT32, 1)]
+        point_cloud_msg = pc2.create_cloud(header, fields, points)
         self.lidar_publisher.publish(point_cloud_msg)
 
-        # Publish markers for indices
         marker_array = MarkerArray()
-        
-        # Add text markers for each cluster
-        for i, point in enumerate(clusters):
-            marker = Marker()
-            marker.header = header
-            marker.ns = "cluster_indices"
-            marker.id = i
-            marker.type = Marker.TEXT_VIEW_FACING
-            marker.action = Marker.ADD
-            marker.pose.position.x = point[0]
-            marker.pose.position.y = point[1]
-            marker.pose.position.z = point[2] + 0.5  # Offset text above the point
+        for i, point in enumerate(points):
+            marker = Marker(header=header, ns="cluster_indices", id=i, type=Marker.TEXT_VIEW_FACING, action=Marker.ADD)
+            marker.pose.position.x, marker.pose.position.y, marker.pose.position.z = point[0], point[1], point[2] + 0.5
             marker.pose.orientation.w = 1.0
-            marker.scale.z = 0.5  # Text size
-            marker.color.a = 1.0
-            marker.color.r = 1.0
-            marker.color.g = 1.0
-            marker.color.b = 1.0
+            marker.scale.z = 0.5
+            marker.color.a, marker.color.r, marker.color.g, marker.color.b = 1.0, 1.0, 1.0, 1.0
             marker.text = str(i)
             marker_array.markers.append(marker)
 
-        # Add delete markers for old markers that are no longer present
-        for i in range(len(clusters), self.last_marker_count):
-            marker = Marker()
-            marker.header = header
-            marker.ns = "cluster_indices"
-            marker.id = i
-            marker.action = Marker.DELETE
+        for i in range(len(points), self.last_marker_count):
+            marker = Marker(header=header, ns="cluster_indices", id=i, action=Marker.DELETE)
             marker_array.markers.append(marker)
 
-        self.last_marker_count = len(clusters)
-        if len(marker_array.markers) > 0:
+        self.last_marker_count = len(points)
+        if marker_array.markers:
             self.marker_publisher.publish(marker_array)
-
-# ==================== Utility Classes ====================
 
 class GPSIMUProcessor:
     def __init__(self):
@@ -395,167 +500,117 @@ class GPSIMUProcessor:
             self.origin_alt = rospy.get_param("/localization/localization/ref_wgs84_altitude", 0.0)
         else: self.origin_lat, self.origin_lon, self.origin_alt = 0,0,0
         self.alpha = rospy.get_param("/localization/localization/alpha_velocity", 0.0)
-        self.R = 6378137.0  # WGS84 타원체의 반경 (미터 단위)
+        self.R = 6378137.0
         self.prev_time = 0.0
         self.prev_gps_time = 0.0
-        self.prev_x, self.prev_y, self.prev_z = 0, 0, 0
-        # Initialize state vector [x, y, yaw, vx, vy, yawrate, ax, ay]
+        self.prev_x, self.prev_y = 0, 0
         self.state = [0,0,0,0,0,0,0,0]
 
-    ## Set origin GPS coordinates (relative to this point)
-    def set_origin(self, lat: float, lon: float, alt: float):
-        self.origin_lat = lat
-        self.origin_lon = lon
-        self.origin_alt = alt
-
     def gps_to_local(self, lat: float, lon: float) -> Tuple[float, float]:
-        if not self.origin_set:
-            raise ValueError("Origin GPS coordinates not set.")
-        
-        # print(self.origin_lat, self.origin_lon, self.origin_alt)
-        # print(lat,lon,alt)
-        
+        if not self.origin_set: raise ValueError("Origin GPS not set.")
         d_lat = math.radians(lat - self.origin_lat)
         d_lon = math.radians(lon - self.origin_lon)
-        
         x = d_lon * self.R * math.cos(math.radians(self.origin_lat))
         y = d_lat * self.R
-        
         return np.array([x, y])
+
     def updateIMU(self, imu_input, yaw, current_time):
         self.state[5], self.state[6], self.state[7] = imu_input[0], imu_input[1], imu_input[2]
         self.state[2] = yaw
-
         dt = current_time - self.prev_time
-        if dt> 0.0 :
+        if dt > 0.0:
             self.state = self.predictState(self.state, dt)
         self.prev_time = current_time
 
     def updateGPS(self, gps_msg, current_time):
         dt = current_time - self.prev_time
         self.state[0], self.state[1] = gps_msg[0], gps_msg[1]
-        if dt > 0.0 and current_time > np.finfo(float).eps:
+        if dt > 0.0:
             self.state = self.predictState(self.state, dt)
             self.prev_time = current_time
+        
         dt_gps = current_time - self.prev_gps_time
-        if dt_gps > 0.0 and current_time > np.finfo(float).eps:
-            dx,dy = self.state[0] - self.prev_x , self.state[1] - self.prev_y
+        if dt_gps > 0.0:
+            dx, dy = self.state[0] - self.prev_x, self.state[1] - self.prev_y
             self.prev_x, self.prev_y = self.state[0], self.state[1]
-            vx,vy = dx/dt_gps, dy/dt_gps
-            self.state[3], self.state[4] = self.alpha * self.state[3] + (1-self.alpha) * (vx * math.cos(-self.state[2]) - vy * math.sin(-self.state[2])), self.alpha * self.state[4] + (1-self.alpha) * (vx * math.sin(-self.state[2])+ vy * math.cos(-self.state[2]))
+            vx, vy = dx / dt_gps, dy / dt_gps
+            self.state[3] = self.alpha * self.state[3] + (1-self.alpha) * (vx * math.cos(-self.state[2]) - vy * math.sin(-self.state[2]))
+            self.state[4] = self.alpha * self.state[4] + (1-self.alpha) * (vx * math.sin(-self.state[2]) + vy * math.cos(-self.state[2]))
         self.prev_gps_time = current_time
     
     def Quat_to_Euler(self,quaternion):
         yaw = math.atan2(2*(quaternion[3]*quaternion[0]+quaternion[1]*quaternion[2]),(1-2*(quaternion[0]**2+quaternion[1]**2)))
         pitch = -math.pi/2 + 2 * math.atan2(math.sqrt(1+2*(quaternion[3]*quaternion[1]-quaternion[0]*quaternion[2])),math.sqrt(1-2*(quaternion[3]*quaternion[1]-quaternion[0]*quaternion[2])))
         roll = math.atan2(2*(quaternion[3]*quaternion[2]+quaternion[0]*quaternion[1]),(1-2*(quaternion[1]**2+quaternion[2]**2)))
-        return roll * 180/math.pi,pitch*180/math.pi,yaw*180/math.pi
-    
+        return roll * 180/math.pi, pitch*180/math.pi, yaw
     
     def predictState(self, state, dt):
-        x = state[0]
-        y = state[1]
-        yaw = state[2]
-        vx = state[3]
-        vy = state[4]
-        yawrate = state[5]
-        ax = state[6]
-        ay = state[7]
-
+        x, y, yaw, vx, vy, yawrate, ax, ay = state
         yaw_middle = yaw + (yawrate * dt / 2)
-        new_x =  x + vx * math.cos(yaw_middle) * dt + 0.5 * ax * math.cos(yaw_middle) * dt * dt
-        new_y = y + vx * math.sin(yaw_middle) * dt + 0.5 * ax * math.sin(yaw_middle) * dt * dt
+        new_x = x + vx * math.cos(yaw_middle) * dt + 0.5 * ax * math.cos(yaw_middle) * dt**2
+        new_y = y + vx * math.sin(yaw_middle) * dt + 0.5 * ax * math.sin(yaw_middle) * dt**2
         new_yaw = yaw + yawrate * dt
         new_vx = vx + ax * dt
         new_vy = vy + ay * dt
-
-        new_state = [new_x, new_y, new_yaw, new_vx, new_vy, yawrate, ax, ay]
-        return new_state
-
+        return [new_x, new_y, new_yaw, new_vx, new_vy, yawrate, ax, ay]
 
 class DataLogger:
-    """
-    주행 데이터를 체계적으로 저장하는 클래스 (최종 추천안).
-    - 메타데이터: `log.csv`에 IMU, GPS, 제어값 및 실제 LiDAR 포인트 개수 기록
-    - LiDAR: `lidar.csv`에 고정된 최대 너비로 포인트 좌표 기록
-    - 카메라: `cameraX.avi` 동영상 파일로 저장
-    """
     def __init__(self, log_directory: str, session_name: str, video_fps: float = 10.0, max_lidar_points: int = 500):
         self.session_path = os.path.join(log_directory, session_name)
         os.makedirs(self.session_path, exist_ok=True)
 
-        # 1. 메타데이터 CSV 설정
         self.csv_path = os.path.join(self.session_path, "log.csv")
-        # 헤더에 'lidar_point_count' 필드 추가
         self.csv_header = [
-            'timestamp', 'frame_id', 'autonomous_mode',
-            'control_steering', 'control_throttle', 'control_brake',
-            'imu_acc_x', 'imu_acc_y', 'imu_acc_z',
-            'imu_gyro_x', 'imu_gyro_y', 'imu_gyro_z',
-            'gps_latitude', 'gps_longitude',
-            'yaw', 'vehicle_vx', "vehicle_vy", 'vehicle_yawrate', 'vehicle_ax', 'vehicle_ay',
-            'lidar_point_count'  # <--- 추가된 필드
+            'timestamp', 'frame_id', 'autonomous_mode', 'control_steering', 'control_throttle', 'control_brake',
+            'imu_acc_x', 'imu_acc_y', 'imu_acc_z', 'imu_gyro_x', 'imu_gyro_y', 'imu_gyro_z',
+            'gps_latitude', 'gps_longitude', 'yaw', 'vehicle_vx', "vehicle_vy", 'vehicle_yawrate', 'vehicle_ax', 'vehicle_ay',
+            'lidar_point_count'
         ]
         self.metadata_csv_file = open(self.csv_path, 'w', newline='')
         self.metadata_csv_writer = csv.DictWriter(self.metadata_csv_file, fieldnames=self.csv_header)
         self.metadata_csv_writer.writeheader()
 
-        # 2. 비디오 녹화 설정
         self.video_paths = {'cam1': os.path.join(self.session_path, "camera1.avi"), 'cam2': os.path.join(self.session_path, "camera2.avi")}
         self.video_writers = {'cam1': None, 'cam2': None}
         self.video_fps = video_fps
         self.fourcc = cv2.VideoWriter_fourcc(*'XVID')
 
-        # 3. LiDAR CSV 설정 (고정 너비 방식)
         self.max_lidar_points = max_lidar_points
         self.lidar_csv_path = os.path.join(self.session_path, "lidar.csv")
         self.lidar_csv_file = open(self.lidar_csv_path, 'w', newline='')
         self.lidar_csv_writer = csv.writer(self.lidar_csv_file)
-        lidar_header = ['frame_id']
-        for i in range(self.max_lidar_points):
-            lidar_header.extend([f'p{i}_x', f'p{i}_y'])
+        lidar_header = ['frame_id'] + [f'p{i}_{axis}' for i in range(self.max_lidar_points) for axis in ['x', 'y']]
         self.lidar_csv_writer.writerow(lidar_header)
 
         self.frame_count = 0
         rospy.loginfo(f"DataLogger initialized. Saving logs to: {self.session_path}")
 
-    def log_entry(self, autonomous_mode: str, control_command: ControlCommand,
-                  imu_acc: list, imu_gyro: list, state: list,
-                  camera1_image: np.ndarray, camera2_image: np.ndarray, lidar_points: np.ndarray):
+    def log_entry(self, autonomous_mode: str, control_command: ControlCommand, imu_acc: list, imu_gyro: list, state: list, camera1_image: np.ndarray, camera2_image: np.ndarray, lidar_points: np.ndarray):
         timestamp = rospy.Time.now().to_sec()
-
-        # 각 프레임의 실제 LiDAR 포인트 개수 계산
-        point_count = len(lidar_points) if lidar_points is not None else 0  # <--- 실제 포인트 개수 계산
-
-        # 메타데이터 로깅 (point_count 포함)
+        point_count = len(lidar_points) if lidar_points is not None else 0
+        
         log_row = {
             'timestamp': timestamp, 'frame_id': self.frame_count, 'autonomous_mode': autonomous_mode,
             'control_steering': control_command.steering, 'control_throttle': control_command.throttle, 'control_brake': control_command.brake,
             'imu_acc_x': imu_acc[0], 'imu_acc_y': imu_acc[1], 'imu_acc_z': imu_acc[2],
             'imu_gyro_x': imu_gyro[0], 'imu_gyro_y': imu_gyro[1], 'imu_gyro_z': imu_gyro[2],
-            'gps_latitude': state[0], 'gps_longitude': state[1],
-            'yaw' : state[2], 'vehicle_vx' : state[3], 'vehicle_vy' : state[4], 'vehicle_yawrate' : state[5], 'vehicle_ax' : state[6], 'vehicle_ay' : state[7],
-            'lidar_point_count': point_count  # <--- 포인트 개수 추가
+            'gps_latitude': state[0], 'gps_longitude': state[1], 'yaw' : state[2], 'vehicle_vx' : state[3], 'vehicle_vy' : state[4], 'vehicle_yawrate' : state[5], 'vehicle_ax' : state[6], 'vehicle_ay' : state[7],
+            'lidar_point_count': point_count
         }
         self.metadata_csv_writer.writerow(log_row)
 
-        # 카메라 데이터 로깅
-        images = {'cam1': camera1_image, 'cam2': camera2_image}
-        for cam_id, img in images.items():
+        for cam_id, img in {'cam1': camera1_image, 'cam2': camera2_image}.items():
             if img is None: continue
             if self.video_writers[cam_id] is None:
                 h, w, _ = img.shape
                 self.video_writers[cam_id] = cv2.VideoWriter(self.video_paths[cam_id], self.fourcc, self.video_fps, (w, h))
             self.video_writers[cam_id].write(img)
 
-        # LiDAR 데이터 로깅 (고정 너비 + 패딩)
         lidar_row = [self.frame_count]
         if point_count > 0:
             points_flat = lidar_points[:self.max_lidar_points, :2].flatten().tolist()
             lidar_row.extend(points_flat)
-        
-        expected_len = 1 + self.max_lidar_points * 2
-        padding_len = expected_len - len(lidar_row)
+        padding_len = (1 + self.max_lidar_points * 2) - len(lidar_row)
         if padding_len > 0:
             lidar_row.extend([''] * padding_len)
         self.lidar_csv_writer.writerow(lidar_row)
@@ -563,174 +618,49 @@ class DataLogger:
         self.frame_count += 1
 
     def close(self):
-        """프로그램 종료 시 호출되어 모든 파일 핸들을 안전하게 닫습니다."""
         self.metadata_csv_file.close()
         rospy.loginfo(f"Successfully saved metadata to {self.csv_path}")
-
         for cam_id, writer in self.video_writers.items():
-            if writer is not None:
-                writer.release()
-                rospy.loginfo(f"Successfully saved video to {self.video_paths[cam_id]}")
-
+            if writer: writer.release()
         self.lidar_csv_file.close()
-        rospy.loginfo(f"Successfully saved LiDAR data to {self.lidar_csv_path}")
-
-StateTransitionResult = namedtuple(
-    'StateTransitionResult', 
-    ['success', 'from_state', 'to_state', 'reason']
-)
+        rospy.loginfo(f"Successfully saved logs to {self.session_path}")
 
 class StateMachine:
-    """
-    차량의 자율주행 시스템 상태를 관리하는 상태 머신 클래스입니다.
-    """
     def __init__(self):
         self.current_state = AutonomousMode.AS_OFF
-        self.previous_state = AutonomousMode.AS_OFF
         self.state_entry_time = time.monotonic()
-        self.last_update_time = time.monotonic()
-        
-        self.current_mission = ""
-        self.mission_track = ""
+        self.current_mission, self.mission_track = "", ""
         self.mission_active = False
-        
-        self.valid_transitions = {}
-        self._initialize_valid_transitions()
-        
-        print("StateMachine: Initialized in AS_OFF state")
+        self.valid_transitions = {
+            (AutonomousMode.AS_OFF, AutonomousMode.AS_READY): True,
+            (AutonomousMode.AS_READY, AutonomousMode.AS_DRIVING): True,
+            (AutonomousMode.AS_READY, AutonomousMode.AS_OFF): True,
+            (AutonomousMode.AS_DRIVING, AutonomousMode.AS_OFF): True,
+        }
+        rospy.loginfo("StateMachine: Initialized in AS_OFF state")
 
-    def _initialize_valid_transitions(self):
-        self.valid_transitions.clear()
-        
-        # AS_OFF -> AS_READY
-        self.valid_transitions[(AutonomousMode.AS_OFF, AutonomousMode.AS_READY)] = True
-        
-        # AS_READY -> AS_DRIVING, AS_OFF
-        self.valid_transitions[(AutonomousMode.AS_READY, AutonomousMode.AS_DRIVING)] = True
-        self.valid_transitions[(AutonomousMode.AS_READY, AutonomousMode.AS_OFF)] = True
-        
-        # AS_DRIVING -> AS_OFF
-        self.valid_transitions[(AutonomousMode.AS_DRIVING, AutonomousMode.AS_OFF)] = True
+    def process_event(self, event: AutonomousEvent):
+        if event == AutonomousEvent.SYSTEM_INIT and self.current_state == AutonomousMode.AS_OFF:
+            self._perform_state_transition(AutonomousMode.AS_READY, "System Initialized")
+        elif event == AutonomousEvent.GO_SIGNAL and self.current_state == AutonomousMode.AS_READY:
+            self._perform_state_transition(AutonomousMode.AS_DRIVING, "Go Signal Received")
 
-    def is_valid_transition(self, from_state: AutonomousMode, to_state: AutonomousMode) -> bool:
-        return (from_state, to_state) in self.valid_transitions
-
-    def process_event(self, event: AutonomousEvent) -> StateTransitionResult:
-        target_state = self.current_state
-        reason = self._event_to_string(event)
-        
-        if event == AutonomousEvent.SYSTEM_INIT:
-            if self.current_state == AutonomousMode.AS_OFF:
-                target_state = AutonomousMode.AS_READY
-        elif event == AutonomousEvent.GO_SIGNAL:
-            if self.current_state == AutonomousMode.AS_READY:
-                target_state = AutonomousMode.AS_DRIVING
-                self.mission_active = True
+    def _perform_state_transition(self, new_state: AutonomousMode, reason: str):
+        if self.valid_transitions.get((self.current_state, new_state)):
+            rospy.loginfo(f"StateMachine: {self.current_state.name} -> {new_state.name} (Reason: {reason})")
+            self.current_state = new_state
+            self.state_entry_time = time.monotonic()
+            if new_state == AutonomousMode.AS_DRIVING: self.mission_active = True
+            elif new_state == AutonomousMode.AS_OFF: self.mission_active = False
         else:
-            return StateTransitionResult(False, self.current_state, self.current_state,
-                                         f"Unknown event: {reason}")
-        
-        # 상태가 변경되어야 하는 경우
-        if target_state != self.current_state:
-            if self._perform_state_transition(target_state, reason):
-                return StateTransitionResult(True, self.previous_state, self.current_state, reason)
-            else:
-                return StateTransitionResult(False, self.current_state, self.current_state,
-                                             f"Transition failed: {reason}")
-        
-        # 상태 변경이 필요 없는 경우
-        return StateTransitionResult(True, self.current_state, self.current_state, "No transition needed")
+            rospy.logwarn(f"StateMachine: Invalid transition from {self.current_state.name} to {new_state.name}")
 
-    def _perform_state_transition(self, new_state: AutonomousMode, reason: str) -> bool:
-        if not self.is_valid_transition(self.current_state, new_state):
-            print(f"StateMachine: Invalid transition from {self._state_to_string(self.current_state)} "
-                  f"to {self._state_to_string(new_state)}")
-            return False
-        
-        exit_success = self._exit_state(self.current_state)
-        if not exit_success:
-            print(f"StateMachine: Failed to exit state {self._state_to_string(self.current_state)}")
-            return False
-        
-        self.previous_state = self.current_state
-        self.current_state = new_state
-        self.state_entry_time = time.monotonic()
-        
-        enter_success = self._enter_state(new_state)
-        
-        self._log_state_transition(self.previous_state, self.current_state, reason)
-        
-        return enter_success
-
-    def _enter_state(self, state: AutonomousMode) -> bool:
-        if state == AutonomousMode.AS_OFF: return self._enter_as_off()
-        if state == AutonomousMode.AS_READY: return self._enter_as_ready()
-        if state == AutonomousMode.AS_DRIVING: return self._enter_as_driving()
-        return False
-        
-    def _exit_state(self, state: AutonomousMode) -> bool:
-        if state == AutonomousMode.AS_OFF: return self._exit_as_off()
-        if state == AutonomousMode.AS_READY: return self._exit_as_ready()
-        if state == AutonomousMode.AS_DRIVING: return self._exit_as_driving()
-        return True # 기본적으로 성공
-
-    def _enter_as_off(self) -> bool:
-        print("StateMachine: Entering AS_OFF state")
-        self.mission_active = False
-        return True
-
-    def _enter_as_ready(self) -> bool:
-        print("StateMachine: Entering AS_READY state")
-        return True
-
-    def _enter_as_driving(self) -> bool:
-        print("StateMachine: Entering AS_DRIVING state")
-        self.mission_active = True
-        return True
-
-    def _exit_as_off(self) -> bool: return True
-    def _exit_as_ready(self) -> bool: return True
-    def _exit_as_driving(self) -> bool: return True
-
-    def inject_system_init(self):
-        self.process_event(AutonomousEvent.SYSTEM_INIT)
-
+    def inject_system_init(self): self.process_event(AutonomousEvent.SYSTEM_INIT)
     def inject_go_signal(self, mission: str, track: str):
-        self.current_mission = mission
-        self.mission_track = track
+        self.current_mission, self.mission_track = mission, track
         self.process_event(AutonomousEvent.GO_SIGNAL)
-
-    def print_state_info(self):
-        print("=== State Machine Status ===")
-        print(f"Current State: {self.get_current_state_string()}")
-        print(f"Previous State: {self._state_to_string(self.previous_state)}")
-        print(f"Time in State: {self.get_time_in_current_state():.3f} seconds")
-        active_str = "Yes" if self.mission_active else "No"
-        print(f"Mission: {self.current_mission} (Active: {active_str})")
-        print("==========================")
-
-    def get_time_in_current_state(self) -> float:
-        return time.monotonic() - self.state_entry_time
-
-    def get_current_state_string(self) -> str:
-        return self._state_to_string(self.current_state)
-
-    @staticmethod
-    def _state_to_string(state: AutonomousMode) -> str:
-        return state.name if state in AutonomousMode else "UNKNOWN"
-
-    @staticmethod
-    def _event_to_string(event: AutonomousEvent) -> str:
-        return event.name if event in AutonomousEvent else "UNKNOWN_EVENT"
-
-    def _log_state_transition(self, from_state: AutonomousMode, to_state: AutonomousMode, reason: str):
-        print(f"StateMachine: {self._state_to_string(from_state)} -> "
-              f"{self._state_to_string(to_state)} (Reason: {reason})")
+    def get_current_state_string(self) -> str: return self.current_state.name
 
 class Control:
-    def __init__(self):
-        pass
-
-    def compute_control(self, current_state, target_state):
-        # 제어 알고리즘 구현
-        pass
+    def __init__(self): pass
+    def compute_control(self, current_state, target_state): pass
