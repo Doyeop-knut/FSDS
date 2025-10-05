@@ -20,6 +20,7 @@ from typing import List, Tuple, Optional
 import time
 from collections import deque, namedtuple
 
+
 # ROS
 from std_msgs.msg import String
 from fs_msgs.msg import ControlCommand
@@ -30,6 +31,7 @@ from cv_bridge import CvBridge
 # 3D LiDAR
 from sklearn.cluster import DBSCAN
 from sklearn.linear_model import RANSACRegressor
+import matplotlib.pyplot as plt
 
 # Data Logger
 import os
@@ -58,6 +60,7 @@ class FormulaAutonomousSystem:
         self.ransac_distance = 0
         self.dbscan_eps = float()
         self.dbscan_points = 0
+        self.prev_x, self.prev_y, self.prev_z = 0,0,0
         
         # ==================== 데이터 로거 추가 ====================
         self.data_logger = DataLogger(
@@ -68,8 +71,9 @@ class FormulaAutonomousSystem:
         # =========================================================
 
         # State machine: Autonomous mode
-        self.gps_util = GPSProcessor()
+        self.gps_util = GPSIMUProcessor()
         self.state_machine = StateMachine()
+        self.lidar_util = LiDARProcessor()
         
     def init(self):
         """Initialize the system"""
@@ -113,12 +117,13 @@ class FormulaAutonomousSystem:
         cv2.imshow("Camera1", self.get_camera_image(camera1_msg))
         cv2.imshow("Camera2", self.get_camera_image(camera2_msg))
         acc, gyro, orientation = self.get_imu_data(imu_msg)
+        imu_data = [acc[0], acc[1], gyro[2]]
+        roll,pitch,yaw = self.gps_util.Quat_to_Euler(orientation)
         lat, lon, alt = self.get_gps_data(gps_msg)
-        # self.gps_util.set_origin(lat, lon, alt)  # 최초 GPS 좌표를 원점으로 설정
-        self.gps_util.origin_set = True
-        x,y,z = self.gps_util.gps_to_local(lat, lon, alt)
-        offset = np.array([x,y,z])
-        # print(offset[:2])
+        gps_data = self.gps_util.gps_to_local(lat, lon)
+        self.gps_util.updateIMU(imu_data, yaw, imu_msg.header.stamp.secs)
+        self.gps_util.updateGPS(gps_data,gps_msg.header.stamp.secs)
+        rospy.loginfo_throttle(1.0,f"v = {math.sqrt(self.gps_util.state[3]**2 + self.gps_util.state[4]**2)} m/s")
         image1 = self.get_camera_image(camera1_msg)
         image2 = self.get_camera_image(camera2_msg)
         cv2.waitKey(1)
@@ -126,13 +131,13 @@ class FormulaAutonomousSystem:
         ## LiDAR Processed
         # print(f"parameters = {self.dbscan_eps, self.dbscan_points, self.ransac_distance, self.ransac_iter, self.x_min, self.x_max}")
         points=self.get_lidar_point_cloud(lidar_msg)
-        LiDARProcessor().filtering_points(points, (self.x_min, self.x_max), (self.y_min, self.y_max), (self.z_min, self.z_max))
-        LiDARProcessor().ransac_plane_removal(points, threshold=self.ransac_distance, max_trials=self.ransac_iter)
+        filtered = self.lidar_util.filtering_points(points, (self.x_min, self.x_max), (self.y_min, self.y_max), (self.z_min, self.z_max))
+        removal =  self.lidar_util.ransac_plane_removal(filtered, threshold=self.ransac_distance, max_trials=self.ransac_iter)
         # print(self.dbscan_eps)
-        cluster = LiDARProcessor().cluster_points(points, eps=self.dbscan_eps, min_samples=self.dbscan_points)
+        cluster = self.lidar_util.cluster_points(removal, eps=self.dbscan_eps, min_samples=self.dbscan_points)
         # print(cluster[:,:2])
-        LiDARProcessor().publish_point_cloud(points)
-        # print(go_signal_msg.mission, go_signal_msg.track)
+        self.lidar_util.publish_point_cloud(points)
+        
 
         ## GO_SIGNAL
         if go_signal_msg.mission != "None" and go_signal_msg.mission != "":
@@ -141,24 +146,33 @@ class FormulaAutonomousSystem:
 
         # filtered_points = LiDARProcessor().filtering_points(np.array([[x,y,z]]), (1.0, 20.0), (-10.0, 10.0), (-0.5, 0.5))
         # print("Filtered Points:", filtered_points)
-    
+        ## GPS velocity
         # Control
         control_command_msg = ControlCommand()
         # print(go_signal_msg)
 
         # ==================== Data Logger (Test) ====================
-        self.data_logger.log_entry(
-            autonomous_mode=autonomous_mode.data,
-            control_command=control_command_msg,
-            imu_acc=acc,
-            imu_gyro=gyro,
-            gps_data=(x, y, z),
-            camera1_image=image1,
-            camera2_image=image2,
-            lidar_points=cluster[:,:2] + offset[:2]
-        )
+        # self.data_logger.log_entry(
+        #     autonomous_mode=autonomous_mode.data,
+        #     control_command=control_command_msg,
+        #     imu_acc=acc,
+        #     imu_gyro=gyro,
+        #     gps_data=(x, y, z),
+        #     camera1_image=image1,
+        #     camera2_image=image2,
+        #     lidar_points=cluster[:,:2] + offset[:2]
+        # )
         # =========================================================
         
+        # plt.axis([-50,50,-20,200])
+        # if len(cluster) == 0:
+        #     pass
+        
+        # plt.scatter(x=cluster[:,0] + offset[0] ,y=cluster[:,1]+ offset[1])
+        # plt.pause(0.001)
+        
+        # plt.clf()
+        # # print(go_signal_msg.mission, go_signal_msg.track)
 
         return True, control_command_msg, autonomous_mode
 
@@ -200,7 +214,7 @@ class FormulaAutonomousSystem:
         longitude = msg.longitude
         altitude = msg.altitude
         return latitude, longitude, altitude
-    
+
 class LiDARProcessor:
     def __init__(self):
         self.lidar_publisher = rospy.Publisher("/processed_lidar", PointCloud2, queue_size=1)
@@ -223,12 +237,12 @@ class LiDARProcessor:
     
     def ransac_plane_removal(self, points: np.ndarray, threshold: float = 0.05, max_trials: int = 100) -> np.ndarray:
         """Remove ground plane using RANSAC"""
+        if points is None or len(points) < 10: # RANSAC을 위해 최소 포인트 수 확보
+            return np.array([])
+
         X = points[:, 0:2] # x, y 좌표
         y = points[:, 2]   # z 좌표
         
-        if len(points) < 10: # RANSAC을 위해 최소 포인트 수 확보
-            return
-
         # RANSAC Regressor 모델 생성
         ransac = RANSACRegressor(
             residual_threshold=threshold,
@@ -245,10 +259,10 @@ class LiDARProcessor:
         object_points = points[outlier_mask]
         return object_points
 
-    def cluster_points(self, points: np.ndarray, eps: float = 0.5, min_samples: int = 5) -> List[np.ndarray]:
+    def cluster_points(self, points: np.ndarray, eps: float = 0.5, min_samples: int = 5) -> np.ndarray:
         """Cluster points using DBSCAN"""
-        if len(points) == 0:
-            return []
+        if points is None or len(points) == 0:
+            return np.array([])
         
         db = DBSCAN(eps=eps, min_samples=min_samples).fit(points)
         labels = db.labels_
@@ -277,7 +291,7 @@ class LiDARProcessor:
         filtered = self.filtering_points(points, (self.x_min, self.x_max), (self.y_min, self.y_max), (self.z_min, self.z_max))
         removal = self.ransac_plane_removal(filtered, threshold=self.ransac_distance, max_trials=self.ransac_iter)
         clusters = self.cluster_points(removal, eps=self.dbscan_eps, min_samples=self.dbscan_points)
-        left, right = self.left_right_split(np.array(clusters))
+        # left, right = self.left_right_split(np.array(clusters))
         # rospy.loginfo_throttle(1.0, f"left = {left}, right = {right}")
         header = rospy.Header()
         header.stamp = rospy.Time.now()
@@ -288,27 +302,35 @@ class LiDARProcessor:
             PointField('y', 4, PointField.FLOAT32, 1),
             PointField('z', 8, PointField.FLOAT32, 1),
         ]
+
         point_cloud_msg = pc2.create_cloud(header, fields, clusters)
         self.lidar_publisher.publish(point_cloud_msg)
 
 # ==================== Utility Classes ====================
 
-class GPSProcessor:
+class GPSIMUProcessor:
     def __init__(self):
-        self.origin_set = False
-        self.origin_lat = rospy.get_param("/localization/localization/ref_wgs84_latitude", 0.0)
-        self.origin_lon = rospy.get_param("/localization/localization/ref_wgs84_longitude", 0.0)
-        self.origin_alt = rospy.get_param("/localization/localization/ref_wgs84_altitude", 0.0)
+        self.origin_set = rospy.get_param("/localization/localization/use_user_defined_ref_wgs84_position",False)
+        if self.origin_set:
+            self.origin_lat = rospy.get_param("/localization/localization/ref_wgs84_latitude", 0.0)
+            self.origin_lon = rospy.get_param("/localization/localization/ref_wgs84_longitude", 0.0)
+            self.origin_alt = rospy.get_param("/localization/localization/ref_wgs84_altitude", 0.0)
+        else: self.origin_lat, self.origin_lon, self.origin_alt = 0,0,0
+        self.alpha = rospy.get_param("/localization/localization/alpha_velocity", 0.0)
         self.R = 6378137.0  # WGS84 타원체의 반경 (미터 단위)
+        self.prev_time = 0.0
+        self.prev_gps_time = 0.0
+        self.prev_x, self.prev_y, self.prev_z = 0, 0, 0
+        # Initialize state vector [x, y, yaw, vx, vy, yawrate, ax, ay]
+        self.state = [0,0,0,0,0,0,0,0]
 
     ## Set origin GPS coordinates (relative to this point)
     def set_origin(self, lat: float, lon: float, alt: float):
         self.origin_lat = lat
         self.origin_lon = lon
         self.origin_alt = alt
-        self.origin_set = True
 
-    def gps_to_local(self, lat: float, lon: float, alt: float) -> Tuple[float, float, float]:
+    def gps_to_local(self, lat: float, lon: float) -> Tuple[float, float]:
         if not self.origin_set:
             raise ValueError("Origin GPS coordinates not set.")
         
@@ -320,9 +342,58 @@ class GPSProcessor:
         
         x = d_lon * self.R * math.cos(math.radians(self.origin_lat))
         y = d_lat * self.R
-        z = alt - self.origin_alt
         
-        return x, y, z
+        return np.array([x, y])
+    def updateIMU(self, imu_input, yaw, current_time):
+        self.state[5], self.state[6], self.state[7] = imu_input[0], imu_input[1], imu_input[2]
+        self.state[2] = yaw
+
+        dt = current_time - self.prev_time
+        if dt> 0.0 :
+            self.state = self.predictState(self.state, dt)
+        self.prev_time = current_time
+
+    def updateGPS(self, gps_msg, current_time):
+        dt = current_time - self.prev_time
+        self.state[0], self.state[1] = gps_msg[0], gps_msg[1]
+        if dt > 0.0 and current_time > np.finfo(float).eps:
+            self.state = self.predictState(self.state, dt)
+            self.prev_time = current_time
+        dt_gps = current_time - self.prev_gps_time
+        if dt_gps > 0.0 and current_time > np.finfo(float).eps:
+            dx,dy = self.state[0] - self.prev_x , self.state[1] - self.prev_y
+            self.prev_x, self.prev_y = self.state[0], self.state[1]
+            vx,vy = dx/dt_gps, dy/dt_gps
+            self.state[3], self.state[4] = self.alpha * self.state[3] + (1-self.alpha) * (vx * math.cos(-self.state[2]) - vy * math.sin(-self.state[2])), self.alpha * self.state[4] + (1-self.alpha) * (vx * math.sin(-self.state[2])+ vy * math.cos(-self.state[2]))
+        self.prev_gps_time = current_time
+    
+    def Quat_to_Euler(self,quaternion):
+        yaw = math.atan2(2*(quaternion[3]*quaternion[0]+quaternion[1]*quaternion[2]),(1-2*(quaternion[0]**2+quaternion[1]**2)))
+        pitch = -math.pi/2 + 2 * math.atan2(math.sqrt(1+2*(quaternion[3]*quaternion[1]-quaternion[0]*quaternion[2])),math.sqrt(1-2*(quaternion[3]*quaternion[1]-quaternion[0]*quaternion[2])))
+        roll = math.atan2(2*(quaternion[3]*quaternion[2]+quaternion[0]*quaternion[1]),(1-2*(quaternion[1]**2+quaternion[2]**2)))
+        return roll * 180/math.pi,pitch*180/math.pi,yaw*180/math.pi
+    
+    
+    def predictState(self, state, dt):
+        x = state[0]
+        y = state[1]
+        yaw = state[2]
+        vx = state[3]
+        vy = state[4]
+        yawrate = state[5]
+        ax = state[6]
+        ay = state[7]
+
+        yaw_middle = yaw + (yawrate * dt / 2)
+        new_x =  x + vx * math.cos(yaw_middle) * dt + 0.5 * ax * math.cos(yaw_middle) * dt * dt
+        new_y = y + vx * math.sin(yaw_middle) * dt + 0.5 * ax * math.sin(yaw_middle) * dt * dt
+        new_yaw = yaw + yawrate * dt
+        new_vx = vx + ax * dt
+        new_vy = vy + ay * dt
+
+        new_state = [new_x, new_y, new_yaw, new_vx, new_vy, yawrate, ax, ay]
+        return new_state
+
 
 class DataLogger:
     """
