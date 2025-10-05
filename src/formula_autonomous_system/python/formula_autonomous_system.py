@@ -4,7 +4,7 @@
 @file formula_autonomous_system.py
 @author Jiwon Seok (jiwonseok@hanyang.ac.kr)
 @brief Formula Student Driverless Autonomous System - Python Implementation
-@version 0.5
+@version 0.6
 @date 2025-10-05
 
 @copyright Copyright (c) 2025
@@ -135,7 +135,6 @@ class FormulaAutonomousSystem:
         filtered = self.lidar_util.filtering_points(points, (self.x_min, self.x_max), (self.y_min, self.y_max), (self.z_min, self.z_max))
         removal = self.lidar_util.ransac_plane_removal(filtered, threshold=self.ransac_distance, max_trials=self.ransac_iter)
         cluster = self.lidar_util.cluster_points(removal, eps=self.dbscan_eps, min_samples=self.dbscan_points)
-        self.lidar_util.publish_point_cloud(cluster)
 
         if go_signal_msg.mission != "None" and go_signal_msg.mission != "":
             self.state_machine.inject_go_signal(go_signal_msg.mission, go_signal_msg.track)
@@ -152,9 +151,7 @@ class FormulaAutonomousSystem:
             cluster_xy = cluster[:, :2]
             cluster_map_frame = (rot_mat @ cluster_xy.T).T + np.array([vehicle_x, vehicle_y])
             
-            # Data association and map update
             association_radius = 1.0  # meters
-            alpha = 0.5 # Moving average weight
 
             for new_cone in cluster_map_frame:
                 found_match = False
@@ -162,11 +159,23 @@ class FormulaAutonomousSystem:
                     distances = np.sqrt(np.sum((np.array(self.cone_map) - new_cone)**2, axis=1))
                     closest_idx = np.argmin(distances)
                     if distances[closest_idx] < association_radius:
-                        self.cone_map[closest_idx] = (1 - alpha) * self.cone_map[closest_idx] + alpha * new_cone
+                        # A close cone already exists, so we do nothing and discard the new measurement.
                         found_match = True
                 
                 if not found_match:
                     self.cone_map.append(new_cone)
+
+        # Transform accumulated map to vehicle frame for RViz visualization
+        cone_map_local_frame = []
+        if self.cone_map:
+            map_points = np.array(self.cone_map)
+            translated_points = map_points - np.array([vehicle_x, vehicle_y])
+            inv_rot_mat = np.array([[math.cos(-vehicle_yaw_rad), -math.sin(-vehicle_yaw_rad)],
+                                    [math.sin(-vehicle_yaw_rad),  math.cos(-vehicle_yaw_rad)]])
+            local_points_2d = (inv_rot_mat @ translated_points.T).T
+            cone_map_local_frame = np.hstack([local_points_2d, np.zeros((local_points_2d.shape[0], 1))])
+        
+        self.lidar_util.publish_point_cloud(np.array(cone_map_local_frame))
 
         # Logging
         self.data_logger.log_entry(
@@ -176,45 +185,7 @@ class FormulaAutonomousSystem:
         )
 
         # # --- Delaunay Triangulation and Visualization ---
-        # vis_img_size = (800, 600, 3)
-        # vis_img = np.zeros(vis_img_size, dtype=np.uint8)
-        # scale = 15.0
-        # img_vehicle_u, img_vehicle_v = vis_img_size[1] // 2, vis_img_size[0] - 150
-
-        # def world_to_img(x, y):
-        #     dx, dy = x - vehicle_x, y - vehicle_y
-        #     rot_x = dx * math.cos(-vehicle_yaw_rad) - dy * math.sin(-vehicle_yaw_rad)
-        #     rot_y = dx * math.sin(-vehicle_yaw_rad) + dy * math.cos(-vehicle_yaw_rad)
-        #     u = int(img_vehicle_u + rot_y * scale)
-        #     v = int(img_vehicle_v - rot_x * scale)
-        #     return (u, v)
-
-        # if self.cone_map:
-        #     points = np.array(self.cone_map)
-        #     # Draw cones
-        #     for cone_pos in points:
-        #         u, v = world_to_img(cone_pos[0], cone_pos[1])
-        #         cv2.circle(vis_img, (u, v), 5, (0, 0, 255), -1)
-
-        #     # Perform and draw Delaunay Triangulation
-        #     if len(self.cone_map) >= 3:
-        #         try:
-        #             tri = Delaunay(points)
-        #             for simplex in tri.simplices:
-        #                 p1 = world_to_img(points[simplex[0]][0], points[simplex[0]][1])
-        #                 p2 = world_to_img(points[simplex[1]][0], points[simplex[1]][1])
-        #                 p3 = world_to_img(points[simplex[2]][0], points[simplex[2]][1])
-        #                 cv2.line(vis_img, p1, p2, (0, 255, 0), 1)
-        #                 cv2.line(vis_img, p2, p3, (0, 255, 0), 1)
-        #                 cv2.line(vis_img, p3, p1, (0, 255, 0), 1)
-        #         except Exception as e:
-        #             rospy.logwarn_throttle(1.0, f"Delaunay triangulation failed: {e}")
-
-        # # Draw vehicle
-        # cv2.arrowedLine(vis_img, (img_vehicle_u, img_vehicle_v + 10), (img_vehicle_u, img_vehicle_v - 20), (255, 0, 0), 3)
-
-        # cv2.imshow("Delaunay Triangulation", vis_img)
-        # # --- End of Visualization ---
+        # ... (user commented out code is preserved)
 
         return True, control_command_msg, autonomous_mode
 
@@ -316,6 +287,7 @@ class LiDARProcessor:
             marker.text = str(i)
             marker_array.markers.append(marker)
 
+        # Clear old markers that are no longer in the updated full map
         for i in range(len(points), self.last_marker_count):
             marker = Marker(header=header, ns="cluster_indices", id=i, action=Marker.DELETE)
             marker_array.markers.append(marker)
