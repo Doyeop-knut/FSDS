@@ -24,6 +24,7 @@ from collections import deque, namedtuple
 # ROS
 from std_msgs.msg import String
 from fs_msgs.msg import ControlCommand
+from visualization_msgs.msg import Marker, MarkerArray
 from sensor_msgs.msg import PointCloud2, Image, Imu, NavSatFix, PointField
 import sensor_msgs.point_cloud2 as pc2
 from cv_bridge import CvBridge
@@ -238,6 +239,8 @@ class FormulaAutonomousSystem:
 class LiDARProcessor:
     def __init__(self):
         self.lidar_publisher = rospy.Publisher("/processed_lidar", PointCloud2, queue_size=1)
+        self.marker_publisher = rospy.Publisher("/cluster_indices", MarkerArray, queue_size=1)
+        self.last_marker_count = 0
         self.x_min, self.x_max = rospy.get_param("/perception/lidar_roi_extraction/x_min") , rospy.get_param("/perception/lidar_roi_extraction/x_max")
         self.y_min, self.y_max = rospy.get_param("/perception/lidar_roi_extraction/y_min") , rospy.get_param("/perception/lidar_roi_extraction/y_max")
         self.z_min, self.z_max = rospy.get_param("/perception/lidar_roi_extraction/z_min") , rospy.get_param("/perception/lidar_roi_extraction/z_max")
@@ -306,22 +309,58 @@ class LiDARProcessor:
     
     ### For Debugging: Publish Processed Point Cloud ###
     def publish_point_cloud(self, points: np.ndarray):
-        """Publish processed point cloud"""
+        """Publish processed point cloud and their indices as markers"""
 
-        # left, right = self.left_right_split(np.array(clusters))
-        # rospy.loginfo_throttle(1.0, f"left = {left}, right = {right}")
+        clusters = points
+
         header = rospy.Header()
         header.stamp = rospy.Time.now()
         header.frame_id = "fsds/FSCar"
         
+        # Publish point cloud
         fields = [
             PointField('x', 0, PointField.FLOAT32, 1),
             PointField('y', 4, PointField.FLOAT32, 1),
             PointField('z', 8, PointField.FLOAT32, 1),
         ]
-
-        point_cloud_msg = pc2.create_cloud(header, fields, points)
+        point_cloud_msg = pc2.create_cloud(header, fields, clusters)
         self.lidar_publisher.publish(point_cloud_msg)
+
+        # Publish markers for indices
+        marker_array = MarkerArray()
+        
+        # Add text markers for each cluster
+        for i, point in enumerate(clusters):
+            marker = Marker()
+            marker.header = header
+            marker.ns = "cluster_indices"
+            marker.id = i
+            marker.type = Marker.TEXT_VIEW_FACING
+            marker.action = Marker.ADD
+            marker.pose.position.x = point[0]
+            marker.pose.position.y = point[1]
+            marker.pose.position.z = point[2] + 0.5  # Offset text above the point
+            marker.pose.orientation.w = 1.0
+            marker.scale.z = 0.5  # Text size
+            marker.color.a = 1.0
+            marker.color.r = 1.0
+            marker.color.g = 1.0
+            marker.color.b = 1.0
+            marker.text = str(i)
+            marker_array.markers.append(marker)
+
+        # Add delete markers for old markers that are no longer present
+        for i in range(len(clusters), self.last_marker_count):
+            marker = Marker()
+            marker.header = header
+            marker.ns = "cluster_indices"
+            marker.id = i
+            marker.action = Marker.DELETE
+            marker_array.markers.append(marker)
+
+        self.last_marker_count = len(clusters)
+        if len(marker_array.markers) > 0:
+            self.marker_publisher.publish(marker_array)
 
 # ==================== Utility Classes ====================
 
