@@ -135,8 +135,28 @@ class FormulaAutonomousSystem:
         removal =  self.lidar_util.ransac_plane_removal(filtered, threshold=self.ransac_distance, max_trials=self.ransac_iter)
         # print(self.dbscan_eps)
         cluster = self.lidar_util.cluster_points(removal, eps=self.dbscan_eps, min_samples=self.dbscan_points)
-        # print(cluster[:,:2])
-        self.lidar_util.publish_point_cloud(points)
+        left, right = self.lidar_util.left_right_split(np.array(cluster))
+
+        ## LiDAR Cone mean point calculate
+        # min_left, min_right = math.inf, math.inf
+        # for p in left:
+        #     # print(f"distance  = {math.sqrt(r[0]**2+r[1]**2)}")
+        #     distance = math.sqrt(p[0]**2 + p[1] **2)
+        #     if min_left > distance:
+        #         min_left = distance
+        #         left_point = [p[0],p[1]]
+        #     # print(f"minimum_distance_left = {min_left}")
+        # for r in right:
+        #     # print(f"distance  = {math.sqrt(r[0]**2+r[1]**2)}")
+        #     distance = math.sqrt(r[0]**2 + r[1] **2)
+        #     if min_right > distance:
+        #         min_right = distance
+        #         right_point = [r[0],r[1]]
+        #     # print(f"minimum_distance_right  = {min_right}")
+
+        # mean_point = [(left_point[0] + right_point[0]) / 2, (left_point[1] + right_point[1])/ 2]
+        # # print(mean_point)
+        self.lidar_util.publish_point_cloud(cluster)
         
 
         ## GO_SIGNAL
@@ -152,16 +172,16 @@ class FormulaAutonomousSystem:
         # print(go_signal_msg)
 
         # ==================== Data Logger (Test) ====================
-        # self.data_logger.log_entry(
-        #     autonomous_mode=autonomous_mode.data,
-        #     control_command=control_command_msg,
-        #     imu_acc=acc,
-        #     imu_gyro=gyro,
-        #     gps_data=(x, y, z),
-        #     camera1_image=image1,
-        #     camera2_image=image2,
-        #     lidar_points=cluster[:,:2] + offset[:2]
-        # )
+        self.data_logger.log_entry(
+            autonomous_mode=autonomous_mode.data,
+            control_command=control_command_msg,
+            imu_acc=acc,
+            imu_gyro=gyro,
+            state= self.gps_util.state,
+            camera1_image=image1,
+            camera2_image=image2,
+            lidar_points=cluster[:,:2] + self.gps_util.state[:2]
+        )
         # =========================================================
         
         # plt.axis([-50,50,-20,200])
@@ -288,9 +308,6 @@ class LiDARProcessor:
     def publish_point_cloud(self, points: np.ndarray):
         """Publish processed point cloud"""
 
-        filtered = self.filtering_points(points, (self.x_min, self.x_max), (self.y_min, self.y_max), (self.z_min, self.z_max))
-        removal = self.ransac_plane_removal(filtered, threshold=self.ransac_distance, max_trials=self.ransac_iter)
-        clusters = self.cluster_points(removal, eps=self.dbscan_eps, min_samples=self.dbscan_points)
         # left, right = self.left_right_split(np.array(clusters))
         # rospy.loginfo_throttle(1.0, f"left = {left}, right = {right}")
         header = rospy.Header()
@@ -303,7 +320,7 @@ class LiDARProcessor:
             PointField('z', 8, PointField.FLOAT32, 1),
         ]
 
-        point_cloud_msg = pc2.create_cloud(header, fields, clusters)
+        point_cloud_msg = pc2.create_cloud(header, fields, points)
         self.lidar_publisher.publish(point_cloud_msg)
 
 # ==================== Utility Classes ====================
@@ -414,7 +431,8 @@ class DataLogger:
             'control_steering', 'control_throttle', 'control_brake',
             'imu_acc_x', 'imu_acc_y', 'imu_acc_z',
             'imu_gyro_x', 'imu_gyro_y', 'imu_gyro_z',
-            'gps_latitude', 'gps_longitude', 'gps_altitude',
+            'gps_latitude', 'gps_longitude',
+            'yaw', 'vehicle_vx', "vehicle_vy", 'vehicle_yawrate', 'vehicle_ax', 'vehicle_ay',
             'lidar_point_count'  # <--- 추가된 필드
         ]
         self.metadata_csv_file = open(self.csv_path, 'w', newline='')
@@ -441,7 +459,7 @@ class DataLogger:
         rospy.loginfo(f"DataLogger initialized. Saving logs to: {self.session_path}")
 
     def log_entry(self, autonomous_mode: str, control_command: ControlCommand,
-                  imu_acc: list, imu_gyro: list, gps_data: tuple,
+                  imu_acc: list, imu_gyro: list, state: list,
                   camera1_image: np.ndarray, camera2_image: np.ndarray, lidar_points: np.ndarray):
         timestamp = rospy.Time.now().to_sec()
 
@@ -454,7 +472,8 @@ class DataLogger:
             'control_steering': control_command.steering, 'control_throttle': control_command.throttle, 'control_brake': control_command.brake,
             'imu_acc_x': imu_acc[0], 'imu_acc_y': imu_acc[1], 'imu_acc_z': imu_acc[2],
             'imu_gyro_x': imu_gyro[0], 'imu_gyro_y': imu_gyro[1], 'imu_gyro_z': imu_gyro[2],
-            'gps_latitude': gps_data[0], 'gps_longitude': gps_data[1], 'gps_altitude': gps_data[2],
+            'gps_latitude': state[0], 'gps_longitude': state[1],
+            'yaw' : state[2], 'vehicle_vx' : state[3], 'vehicle_vy' : state[4], 'vehicle_yawrate' : state[5], 'vehicle_ax' : state[6], 'vehicle_ay' : state[7],
             'lidar_point_count': point_count  # <--- 포인트 개수 추가
         }
         self.metadata_csv_writer.writerow(log_row)
@@ -471,10 +490,10 @@ class DataLogger:
         # LiDAR 데이터 로깅 (고정 너비 + 패딩)
         lidar_row = [self.frame_count]
         if point_count > 0:
-            points_flat = lidar_points[:self.max_lidar_points, :3].flatten().tolist()
+            points_flat = lidar_points[:self.max_lidar_points, :2].flatten().tolist()
             lidar_row.extend(points_flat)
         
-        expected_len = 1 + self.max_lidar_points * 3
+        expected_len = 1 + self.max_lidar_points * 2
         padding_len = expected_len - len(lidar_row)
         if padding_len > 0:
             lidar_row.extend([''] * padding_len)
