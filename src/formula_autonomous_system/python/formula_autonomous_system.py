@@ -121,6 +121,8 @@ class FormulaAutonomousSystem:
         imu_data = [acc[0], acc[1], gyro[2]]
         roll,pitch,yaw = self.gps_util.Quat_to_Euler(orientation)
         lat, lon, alt = self.get_gps_data(gps_msg)
+        vtL = self.lidar_util.vehicle_to_lidar_Transform()
+        # print(vtL)
         gps_data = self.gps_util.gps_to_local(lat, lon)
         self.gps_util.updateIMU(imu_data, yaw, imu_msg.header.stamp.secs)
         self.gps_util.updateGPS(gps_data,gps_msg.header.stamp.secs)
@@ -136,6 +138,7 @@ class FormulaAutonomousSystem:
         removal =  self.lidar_util.ransac_plane_removal(filtered, threshold=self.ransac_distance, max_trials=self.ransac_iter)
         # print(self.dbscan_eps)
         cluster = self.lidar_util.cluster_points(removal, eps=self.dbscan_eps, min_samples=self.dbscan_points)
+        # print(cluster*math.sin(yaw))
         left, right = self.lidar_util.left_right_split(np.array(cluster))
 
         ## LiDAR Cone mean point calculate
@@ -158,6 +161,7 @@ class FormulaAutonomousSystem:
         # mean_point = [(left_point[0] + right_point[0]) / 2, (left_point[1] + right_point[1])/ 2]
         # # print(mean_point)
         self.lidar_util.publish_point_cloud(cluster)
+        # print(len(cluster))
         
 
         ## GO_SIGNAL
@@ -181,7 +185,7 @@ class FormulaAutonomousSystem:
             state= self.gps_util.state,
             camera1_image=image1,
             camera2_image=image2,
-            lidar_points=cluster[:,:2] + self.gps_util.state[:2]
+            lidar_points=cluster[:,:2]
         )
         # =========================================================
         
@@ -249,6 +253,20 @@ class LiDARProcessor:
         self.dbscan_eps = rospy.get_param("/perception/lidar_clustering/dbscan_eps")
         self.dbscan_points = rospy.get_param("/perception/lidar_clustering/dbscan_min_points")
 
+        self.trans_x,self.trans_y,self.trans_z = rospy.get_param("/perception/lidar_extrinsics/translation_x"), rospy.get_param("/perception/lidar_extrinsics/translation_y"), rospy.get_param("/perception/lidar_extrinsics/translation_z")
+        self.rot_r, self.rot_p, self.rot_yaw = rospy.get_param("/perception/lidar_extrinsics/rotation_roll"), rospy.get_param("/perception/lidar_extrinsics/rotation_pitch"), rospy.get_param("/perception/lidar_extrinsics/rotation_yaw")
+
+    def vehicle_to_lidar_Transform(self):
+
+        # print(self.trans_x)
+        veh_to_LiDAR = [
+            [math.cos(self.rot_yaw)* math.cos(self.rot_p), math.cos(self.rot_yaw)*math.sin(self.rot_p)*math.sin(self.rot_r) - math.sin(self.rot_yaw)*math.cos(self.rot_r), math.cos(self.rot_yaw)*math.sin(self.rot_p)*math.cos(self.rot_r)+math.sin(self.rot_yaw)*math.sin(self.rot_r), self.trans_x],
+            [math.sin(self.rot_yaw)* math.cos(self.rot_p), math.sin(self.rot_yaw)*math.sin(self.rot_p)*math.sin(self.rot_r) + math.cos(self.rot_yaw)*math.cos(self.rot_r), math.sin(self.rot_yaw)*math.sin(self.rot_p)*math.cos(self.rot_r)- math.cos(self.rot_yaw)*math.sin(self.rot_r), self.trans_y],
+            [-math.sin(self.rot_p) , math.cos(self.rot_p)* math.sin(self.rot_r), math.cos(self.rot_p)*math.cos(self.rot_r), self.trans_z],
+            [0,0,0,1]
+        ]
+        return veh_to_LiDAR
+
     def filtering_points(self, points: np.ndarray, x_range: Tuple[float, float], y_range: Tuple[float, float], z_range: Tuple[float, float]) -> np.ndarray:
         """Filter points within specified ranges"""
         mask = (
@@ -297,7 +315,11 @@ class LiDARProcessor:
                 continue
             cluster = points[labels == label]
             center = np.mean(cluster, axis=0)
-            clusters.append(center[:3])  # Append only x, y, z
+            center_4d = np.array([center[0],center[1],center[2],1])
+            mat=self.vehicle_to_lidar_Transform()
+            transform_lidar = np.dot(mat, center_4d)
+            # print(f"transformed = {transform_lidar}")
+            clusters.append(transform_lidar[:3])  # Append transformed x, y, z
         
         return np.array(clusters)
     
