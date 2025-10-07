@@ -75,6 +75,7 @@ class FormulaAutonomousSystem:
         self.gps_util = GPSIMUProcessor()
         self.state_machine = StateMachine()
         self.lidar_util = LiDARProcessor()
+        self.camera_util = CameraProcessor()
         
     def init(self):
         """Initialize the system"""
@@ -90,6 +91,11 @@ class FormulaAutonomousSystem:
         self.ransac_distance = rospy.get_param("/perception/lidar_ground_removal/ransac_distance_threshold")
         self.dbscan_eps = rospy.get_param("/perception/lidar_clustering/dbscan_eps")
         self.dbscan_points = rospy.get_param("/perception/lidar_clustering/dbscan_min_points")
+        self.left_tx, self.left_ty, self.left_tz = rospy.get_param("/perception/camera_extrinsics/translation_x"), rospy.get_param("/perception/camera_extrinsics/translation_y"),rospy.get_param("/perception/camera_extrinsics/translation_z")
+        self.left_rr, self.left_rp, self.left_ry = rospy.get_param("/perception/camera_extrinsics/rotation_roll"), rospy.get_param("/perception/camera_extrinsics/rotation_pitch"), rospy.get_param("/perception/camera_extrinsics/rotation_yaw")
+        self.right_tx, self.right_ty, self.right_tz = rospy.get_param("/perception/camera_right_extrinsics/translation_x"), rospy.get_param("/perception/camera_right_extrinsics/translation_y"),rospy.get_param("/perception/camera_right_extrinsics/translation_z")
+        self.right_rr, self.right_rp, self.right_ry = rospy.get_param("/perception/camera_right_extrinsics/rotation_roll"), rospy.get_param("/perception/camera_right_extrinsics/rotation_pitch"), rospy.get_param("/perception/camera_right_extrinsics/rotation_yaw")
+    
         return True
 
     def run(self, lidar_msg, camera1_msg, camera2_msg, imu_msg, gps_msg, go_signal_msg):
@@ -115,8 +121,6 @@ class FormulaAutonomousSystem:
         autonomous_mode.data = "AS_OFF"
         self.state_machine.inject_system_init()
 
-        cv2.imshow("Camera1", self.get_camera_image(camera1_msg))
-        cv2.imshow("Camera2", self.get_camera_image(camera2_msg))
         acc, gyro, orientation = self.get_imu_data(imu_msg)
         imu_data = [acc[0], acc[1], gyro[2]]
         roll,pitch,yaw = self.gps_util.Quat_to_Euler(orientation)
@@ -127,10 +131,6 @@ class FormulaAutonomousSystem:
         self.gps_util.updateIMU(imu_data, yaw, imu_msg.header.stamp.secs)
         self.gps_util.updateGPS(gps_data,gps_msg.header.stamp.secs)
         rospy.loginfo_throttle(1.0,f"v = {math.sqrt(self.gps_util.state[3]**2 + self.gps_util.state[4]**2)} m/s")
-        image1 = self.get_camera_image(camera1_msg)
-        image2 = self.get_camera_image(camera2_msg)
-        cv2.waitKey(1)
-
         ## LiDAR Processed
         # print(f"parameters = {self.dbscan_eps, self.dbscan_points, self.ransac_distance, self.ransac_iter, self.x_min, self.x_max}")
         points=self.get_lidar_point_cloud(lidar_msg)
@@ -140,6 +140,23 @@ class FormulaAutonomousSystem:
         cluster = self.lidar_util.cluster_points(removal, eps=self.dbscan_eps, min_samples=self.dbscan_points)
         # print(cluster*math.sin(yaw))
         left, right = self.lidar_util.left_right_split(np.array(cluster))
+        image1 = self.get_camera_image(camera1_msg)
+        image2 = self.get_camera_image(camera2_msg)
+        cam_mat = self.camera_util.cam_matrix()
+        cam1_transform = self.camera_util.transform_matrix(self.left_tx, self.left_ty, self.left_tz, self.left_rr, self.left_rp, self.left_ry)
+        cam2_transform = self.camera_util.transform_matrix(self.right_tx, self.right_ty, self.right_tz, self.right_rr, self.right_rp, self.right_ry)
+        # print(cam2_transform)
+        image1 = self.camera_util.preprocessImage(image1)
+        image2 = self.camera_util.preprocessImage(image2)
+        cam1_pts = self.camera_util.projectToCam(cluster, cam1_transform)
+        cam2_pts = self.camera_util.projectToCam(cluster,cam2_transform)
+        img1 = self.camera_util.visualization(cam1_pts, image1)
+        img2 = self.camera_util.visualization(cam2_pts, image2)
+        cv2.imshow("image1", img1)
+        cv2.imshow("image2", img2)
+        # cv2.imshow("Camera1", self.get_camera_image(camera1_msg))
+        # cv2.imshow("Camera2", self.get_camera_image(camera2_msg))
+        cv2.waitKey(1)
 
         ## LiDAR Cone mean point calculate
         # min_left, min_right = math.inf, math.inf
@@ -183,8 +200,8 @@ class FormulaAutonomousSystem:
             imu_acc=acc,
             imu_gyro=gyro,
             state= self.gps_util.state,
-            camera1_image=image1,
-            camera2_image=image2,
+            camera1_image=img1,
+            camera2_image=img2,
             lidar_points=cluster[:,:2]
         )
         # =========================================================
@@ -239,6 +256,88 @@ class FormulaAutonomousSystem:
         longitude = msg.longitude
         altitude = msg.altitude
         return latitude, longitude, altitude
+class CameraProcessor:
+    def __init__(self):
+        self.fx, self.fy = rospy.get_param("/perception/camera_intrinsics/focal_length_x"), rospy.get_param("/perception/camera_intrinsics/focal_length_y")
+        self.px, self.py = rospy.get_param("/perception/camera_intrinsics/principal_point_x"), rospy.get_param("/perception/camera_intrinsics/principal_point_y")
+        self.preprocess = rospy.get_param("/perception/camera_image_processing/enable_preprocessing")
+        self.sigma = rospy.get_param("/perception/camera_image_processing/gaussian_blur_sigma")
+        self.bilateral = rospy.get_param("/perception/camera_image_processing/bilateral_filter_diameter")
+       
+    def cam_matrix(self):
+        camera_matrix = [
+            [self.fx, 0, self.px],
+            [0,self.fy, self.py],
+            [0, 0, 1]
+        ]
+        return camera_matrix
+    
+    def transform_matrix(self, x, y, z, r, p, yaw):
+        cr, sr = math.cos(r), math.sin(r)
+        cp, sp = math.cos(p), math.sin(p)
+        cy, sy = math.cos(yaw), math.sin(yaw)
+
+        T = [
+            [cy*cp, cy*sp*sr - sy*cr, cy*sp*cr + sy*sr, x,],
+            [sy*cp, sy*sp*sr + cy*cr, sy*sp*cr - cy*sr, y],
+            [-sp,   cp*sr,            cp*cr,            z],
+            [0,    0,                0,                1]
+        ]
+        return T
+    def preprocessImage(self, rgb_image):
+        if not self.preprocess:
+            return rgb_image
+        processed_image = rgb_image.copy()
+        if self.sigma > 0 :
+            kernel_size = (2* self.sigma *3 + 1)
+            if kernel_size % 2 == 0 : kernel_size += 1
+            # print(kernel_size)
+            processed = cv2.GaussianBlur(processed_image,(0, 0), self.sigma)
+        
+        if self.bilateral > 0:
+            processed = cv2.bilateralFilter(processed_image, self.bilateral, 80,80)
+        return processed
+    
+    def projectToCam(self, points, transform):
+        projected_points = []
+        Trans = np.array(transform).T
+        rotation = Trans[:3,:3]
+        translation = Trans[3,:3]
+
+        for point in points:
+            cone_point_in_base = np.array([point[0], point[1], point[2]]).T
+            cone_point_in_cam = np.dot(rotation, cone_point_in_base) + translation
+
+            if cone_point_in_cam[0] <= 0:
+                continue
+
+            x_cam = -cone_point_in_cam[1]
+            y_cam = cone_point_in_cam[2]
+            z_cam = cone_point_in_cam[0]
+
+            x_img = x_cam / z_cam
+            y_img = y_cam / z_cam
+
+            u = self.fx * x_img + self.px
+            v = self.fy * y_img + self.py
+            projected_points.append((u, v))
+        return projected_points
+
+
+        # print(f"base = {cone_point_in_base}, cam = {cone_point_in_cam}")
+        # return (u,v)
+    def visualization(self, points, rgb_image):
+        viz = rgb_image.copy()
+        image_size = rgb_image.shape
+        for point in points:
+            if 0 <= point[0] < image_size[1] and 0 <= point[1] < image_size[0]:
+                projected = (int(point[0]), int(point[1]))
+                cv2.circle(viz, projected, 10, (0, 0, 0), 2)
+        return viz
+    
+    def detectConeColor(self, cone, rgb_image):
+        pass
+        
 
 class LiDARProcessor:
     def __init__(self):
