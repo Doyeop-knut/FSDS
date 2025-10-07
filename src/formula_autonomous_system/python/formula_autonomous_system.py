@@ -3,10 +3,10 @@
 """
 @file formula_autonomous_system.py
 @author Jiwon Seok (jiwonseok@hanyang.ac.kr)
+@editor Korea National University of Transportation vehicle System Modeling and Autonomous Control Lab.(SMAC) - Doyeop Lee (2015152@ut.ac.kr)
 @brief Formula Student Driverless Autonomous System - Python Implementation
 @version 0.1
-@date 2025-07-25
-
+@date 2025-10-07
 @copyright Copyright (c) 2025
 """
 
