@@ -828,8 +828,26 @@ class StateMachine:
 
 class Control:
     def __init__(self):
-        pass
+        self.controller_select = rospy.get_param("/control/ControllerSelection/lateral_controller_type")
+        self.max_steer_angle = rospy.get_param("/control/PurePursuit/max_steer_angle")
+        if self.controller_select == "PurePursuit":
+            self.lfd = rospy.get_param("/control/PurePursuit/lookahead_distance")
+        elif self.controller_select == "Stanley":
+            self.k_gain = rospy.get_param("/control/Stanley/k_gain")
+        self.target_velocity = rospy.get_param("/control/SpeedControl/target_speed")
+        self.p, self.i, self.d = rospy.get_param("/control/SpeedControl/pid_kp"), rospy.get_param("/control/SpeedControl/pid_ki"), rospy.get_param("/control/SpeedControl/pid_kd")
+        self.max_throttle = rospy.get_param("/control/SpeedControl/max_throttle")
+        self.wheel_base = rospy.get_param("/control/Vehicle/wheel_base")
 
     def compute_control(self, current_state, target_state):
         # 제어 알고리즘 구현
+        pass
+
+    def Pure_Pursuit(self):
+        pass
+
+    def Stanley(self):
+        pass
+
+    def ModelPredictiveControl(self):
         pass
