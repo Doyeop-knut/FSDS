@@ -33,6 +33,8 @@ from sensor_msgs.msg import PointCloud2, Image, Imu, NavSatFix, PointField
 import sensor_msgs.point_cloud2 as pc2
 import rospkg # rospkg import 추가
 from cv_bridge import CvBridge
+import tf2_ros
+from geometry_msgs.msg import TransformStamped
 
 # 3D LiDAR
 <<<<<<< HEAD
@@ -71,6 +73,7 @@ class AutonomousEvent(Enum):
 
 class FormulaAutonomousSystem:
     def __init__(self):
+        self.tf_broadcaster = tf2_ros.TransformBroadcaster()
         self.is_initialized = False
 
         self.lidar_buffer  = deque(maxlen=10)
@@ -351,14 +354,21 @@ class FormulaAutonomousSystem:
         roll,pitch,yaw = self.gps_util.Quat_to_Euler(orientation)
         lat, lon, alt = self.get_gps_data(gps_msg)
         gps_data = self.gps_util.gps_to_local(lat, lon)
+<<<<<<< HEAD
         self.gps_util.updateIMU(imu_data, yaw, imu_msg.header.stamp.to_sec())
         self.gps_util.updateGPS(gps_data,gps_msg.header.stamp.to_sec())
         vehicle_state = self.gps_util.state
+=======
+        self.gps_util.updateIMU(imu_data, yaw, imu_msg.header.stamp.secs)
+        self.gps_util.updateGPS(gps_data,gps_msg.header.stamp.secs)
+        rospy.loginfo_throttle(1.0,f"v = {math.sqrt(self.gps_util.state[3]**2 + self.gps_util.state[4]**2)} m/s")
+>>>>>>> [ConeDetection] 251008 @Doyeop-knut | map TF
 
         # ==================== TF Publisher ====================
         t = TransformStamped()
         t.header.stamp = rospy.Time.now()
         t.header.frame_id = "map"
+<<<<<<< HEAD
         t.child_frame_id = "odom"
         t.transform.translation.x = vehicle_state[0]
         t.transform.translation.y = vehicle_state[1]
@@ -373,17 +383,42 @@ class FormulaAutonomousSystem:
         t.transform.rotation.y = 0.0
         t.transform.rotation.z = q_z
         t.transform.rotation.w = q_w
+=======
+        t.child_frame_id = "fsds/FSCar"
+        t.transform.translation.x = self.gps_util.state[0]
+        t.transform.translation.y = self.gps_util.state[1]
+        t.transform.translation.z = 0.0
+        
+        # yaw = self.gps_util.state[2]
+        # half_yaw = yaw / 2.0
+        # q_z = math.sin(half_yaw)
+        # q_w = math.cos(half_yaw)
+        t.transform.rotation.x = 0.0
+        t.transform.rotation.y = 0.0
+        t.transform.rotation.z = 0.0
+        t.transform.rotation.w = 1.0
+>>>>>>> [ConeDetection] 251008 @Doyeop-knut | map TF
         
         self.tf_broadcaster.sendTransform(t)
         # =====================================================
 
+<<<<<<< HEAD
         # rospy.loginfo_throttle(0.001,f"v = {round(math.sqrt(vehicle_state[3]**2 + vehicle_state[4]**2),4)} m/s")
+=======
+>>>>>>> [ConeDetection] 251008 @Doyeop-knut | map TF
         ## LiDAR Processed
         points=self.get_lidar_point_cloud(lidar_msg)
         filtered = self.lidar_util.filtering_points(points, (self.x_min, self.x_max), (self.y_min, self.y_max), (self.z_min, self.z_max))
         removal =  self.lidar_util.ransac_plane_removal(filtered, threshold=self.ransac_distance, max_trials=self.ransac_iter)
         cluster = self.lidar_util.cluster_points(removal, eps=self.dbscan_eps, min_samples=self.dbscan_points)
+<<<<<<< HEAD
        
+=======
+        
+        # print(f"cluster = {cluster[:,:2]} \ car = {self.gps_util.state[:2]} , global point = {cluster[:,:2] + self.gps_util.state[:2]}")
+        # print(cluster*math.sin(yaw))
+        left, right = self.lidar_util.left_right_split(np.array(cluster))
+>>>>>>> [ConeDetection] 251008 @Doyeop-knut | map TF
         image1 = self.get_camera_image(camera1_msg)
         image2 = self.get_camera_image(camera2_msg)
         processed_img1 = self.camera_util.preprocessImage(image1)
@@ -736,6 +771,7 @@ class FormulaAutonomousSystem:
             control_command_msg.brake = brake
         # print(go_signal_msg)
 
+<<<<<<< HEAD
 =======
             control_command_msg.throttle = 0.0
             control_command_msg.steering = 0.0
@@ -768,6 +804,20 @@ class FormulaAutonomousSystem:
 >>>>>>> test
             )
         # # =========================================================
+=======
+        # ==================== Data Logger (Test) ====================
+        self.data_logger.log_entry(
+            autonomous_mode=autonomous_mode.data,
+            control_command=control_command_msg,
+            imu_acc=acc,
+            imu_gyro=gyro,
+            state= self.gps_util.state,
+            camera1_image=img1,
+            camera2_image=img2,
+            lidar_points=cluster[:,:2] + self.gps_util.state[:2]  # LiDAR points를 차량의 현재 위치 기준으로 변환
+        )
+        # =========================================================
+>>>>>>> [ConeDetection] 251008 @Doyeop-knut | map TF
         
         # plt.axis([-50,50,-20,200])
         # if len(cluster) == 0:
@@ -1286,6 +1336,7 @@ class CameraProcessor:
         # --- 신뢰도 기반 색상 탐지 로직으로 개선 ---
         color_scores = {"yellow": 0.0, "blue": 0.0, "orange": 0.0}
         
+<<<<<<< HEAD
         # 각 색상 마스크 생성
         mask_yellow = cv2.inRange(hsv_roi, self.hsv_yellow_min, self.hsv_yellow_max)
         mask_blue = cv2.inRange(hsv_roi, self.hsv_blue_min, self.hsv_blue_max)
@@ -1296,6 +1347,46 @@ class CameraProcessor:
 <<<<<<< HEAD
         cv2.imshow("lidar roi", np.concatenate((hsv_roi,roi),axis=1))
         # cv2.imshow("masks", np.concatenate((mask_yellow,mask_blue,mask_orange),axis=1))
+=======
+        clusters = []
+        for label in unique_labels:
+            if label == -1:
+                continue
+            cluster = points[labels == label]
+            center = np.mean(cluster, axis=0)
+            center_4d = np.array([center[0],center[1],center[2],1])
+            mat=self.vehicle_to_lidar_Transform()
+            transform_lidar = np.dot(mat, center_4d)
+            # print(f"transformed = {transform_lidar}")
+            if math.sqrt(transform_lidar[0]**2 + transform_lidar[1]**2) < 5.0:
+                clusters.append(transform_lidar[:3])  # Append transformed x, y, z
+        
+        return np.array(clusters)
+    
+    def left_right_split(self, points: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+        """Split points into left and right based on y-coordinate"""
+        left_points = points[points[:, 1] > 0]
+        right_points = points[points[:, 1] <= 0]
+        return left_points, right_points
+    
+    ### For Debugging: Publish Processed Point Cloud ###
+    def publish_point_cloud(self, points: np.ndarray):
+        """Publish processed point cloud and their indices as markers"""
+
+    
+        header = rospy.Header()
+        header.stamp = rospy.Time.now()
+        header.frame_id = "fsds/FSCar"
+        
+        # Publish point cloud
+        fields = [
+            PointField('x', 0, PointField.FLOAT32, 1),
+            PointField('y', 4, PointField.FLOAT32, 1),
+            PointField('z', 8, PointField.FLOAT32, 1),
+        ]
+        point_cloud_msg = pc2.create_cloud(header, fields, points)
+        self.lidar_publisher.publish(point_cloud_msg)
+>>>>>>> [ConeDetection] 251008 @Doyeop-knut | map TF
 
 =======
 >>>>>>> test
@@ -1741,7 +1832,11 @@ class LiDARProcessor:
         marker_array = MarkerArray()
         
         # Add text markers for each cluster
+<<<<<<< HEAD
         for i, point in enumerate(clusters_np):
+=======
+        for i, point in enumerate(points):
+>>>>>>> [ConeDetection] 251008 @Doyeop-knut | map TF
             marker = Marker()
             marker.header = header
             marker.ns = "cluster_indices"
@@ -1761,13 +1856,18 @@ class LiDARProcessor:
             marker_array.markers.append(marker)
 
         # Add delete markers for old markers that are no longer present
+<<<<<<< HEAD
         for i in range(len(clusters_np), self.last_marker_count):
+=======
+        for i in range(len(points), self.last_marker_count):
+>>>>>>> [ConeDetection] 251008 @Doyeop-knut | map TF
             marker = Marker()
             marker.header = header
             marker.ns = "cluster_indices"
             marker.id = i
             marker.action = Marker.DELETE
             marker_array.markers.append(marker)
+<<<<<<< HEAD
 
         self.last_marker_count = len(clusters_np)
         if len(marker_array.markers) > 0:
@@ -2835,6 +2935,12 @@ class PathPlanner:
         self._fallback_last_path = P
         self._fallback_hold_until = now + self.fallback_hold_s
         return P
+=======
+
+        self.last_marker_count = len(points)
+        if len(marker_array.markers) > 0:
+            self.marker_publisher.publish(marker_array)
+>>>>>>> [ConeDetection] 251008 @Doyeop-knut | map TF
 
 >>>>>>> test
 # ==================== Utility Classes ====================
@@ -2857,19 +2963,11 @@ class GPSIMUProcessor:
         # Initialize state vector [x, y, yaw, vx, vy, yawrate, ax, ay]
         self.state = [0,0,0,0,0,0,0,0]
 
-    ## Set origin GPS coordinates (relative to this point)
-    def set_origin(self, lat: float, lon: float, alt: float):
-        self.origin_lat = lat
-        self.origin_lon = lon
-        self.origin_alt = alt
-
     def gps_to_local(self, lat: float, lon: float) -> Tuple[float, float]:
+        # print(self.origin_set)
         if not self.origin_set:
             raise ValueError("Origin GPS coordinates not set.")
-        
-        # print(self.origin_lat, self.origin_lon, self.origin_alt)
-        # print(lat,lon,alt)
-        
+                
         d_lat = math.radians(lat - self.origin_lat)
         d_lon = math.radians(lon - self.origin_lon)
         
@@ -3424,6 +3522,7 @@ class StateMachine:
               f"{self._state_to_string(to_state)} (Reason: {reason})")
 
 class Control:
+<<<<<<< HEAD
     """
     Main control class that manages and selects the active path tracking controller.
     """
@@ -4440,3 +4539,11 @@ class Control:
 =======
         return throttle, normalized_steer, brake, predicted_path
 >>>>>>> test
+=======
+    def __init__(self):
+        pass
+
+    def compute_control(self, current_state, target_state):
+        # 제어 알고리즘 구현
+        pass
+>>>>>>> [ConeDetection] 251008 @Doyeop-knut | map TF
