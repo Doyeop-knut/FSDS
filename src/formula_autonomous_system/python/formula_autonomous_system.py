@@ -148,7 +148,7 @@ class FormulaAutonomousSystem:
         gps_data = self.gps_util.gps_to_local(lat, lon)
         self.gps_util.updateIMU(imu_data, yaw, imu_msg.header.stamp.to_sec())
         self.gps_util.updateGPS(gps_data,gps_msg.header.stamp.to_sec())
-        rospy.loginfo_throttle(1.0,f"v = {math.sqrt(self.gps_util.state[3]**2 + self.gps_util.state[4]**2)} m/s")
+        rospy.loginfo_throttle(1.0,f"v = {round(math.sqrt(self.gps_util.state[3]**2 + self.gps_util.state[4]**2),4)} m/s")
         # print(f"v = {math.sqrt(self.gps_util.state[3]**2 + self.gps_util.state[4]**2)} m/s")
         # ==================== TF Publisher ====================
         t = TransformStamped()
