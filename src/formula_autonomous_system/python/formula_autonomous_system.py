@@ -3,10 +3,10 @@
 """
 @file formula_autonomous_system.py
 @author Jiwon Seok (jiwonseok@hanyang.ac.kr)
-@editor Korea National University of Transportation vehicle System Modeling and Autonomous Control Lab.(SMAC) - Doyeop Lee (2015152@ut.ac.kr)
 @brief Formula Student Driverless Autonomous System - Python Implementation
 @version 0.1
-@date 2025-10-07
+@date 2025-07-25
+
 @copyright Copyright (c) 2025
 """
 
@@ -28,6 +28,8 @@ from visualization_msgs.msg import Marker, MarkerArray
 from sensor_msgs.msg import PointCloud2, Image, Imu, NavSatFix, PointField
 import sensor_msgs.point_cloud2 as pc2
 from cv_bridge import CvBridge
+import tf2_ros
+from geometry_msgs.msg import TransformStamped
 
 # 3D LiDAR
 from sklearn.cluster import DBSCAN
@@ -53,6 +55,7 @@ class AutonomousEvent(Enum):
 
 class FormulaAutonomousSystem:
     def __init__(self):
+        self.tf_broadcaster = tf2_ros.TransformBroadcaster()
         self.is_initialized = False
         self.x_min, self.x_max = 0,0
         self.y_min, self.y_max = 0,0
@@ -131,6 +134,28 @@ class FormulaAutonomousSystem:
         self.gps_util.updateIMU(imu_data, yaw, imu_msg.header.stamp.secs)
         self.gps_util.updateGPS(gps_data,gps_msg.header.stamp.secs)
         rospy.loginfo_throttle(1.0,f"v = {math.sqrt(self.gps_util.state[3]**2 + self.gps_util.state[4]**2)} m/s")
+
+        # ==================== TF Publisher ====================
+        t = TransformStamped()
+        t.header.stamp = rospy.Time.now()
+        t.header.frame_id = "map"
+        t.child_frame_id = "fsds/FSCar"
+        t.transform.translation.x = self.gps_util.state[0]
+        t.transform.translation.y = self.gps_util.state[1]
+        t.transform.translation.z = 0.0
+        
+        # yaw = self.gps_util.state[2]
+        # half_yaw = yaw / 2.0
+        # q_z = math.sin(half_yaw)
+        # q_w = math.cos(half_yaw)
+        t.transform.rotation.x = 0.0
+        t.transform.rotation.y = 0.0
+        t.transform.rotation.z = 0.0
+        t.transform.rotation.w = 1.0
+        
+        self.tf_broadcaster.sendTransform(t)
+        # =====================================================
+
         ## LiDAR Processed
         # print(f"parameters = {self.dbscan_eps, self.dbscan_points, self.ransac_distance, self.ransac_iter, self.x_min, self.x_max}")
         points=self.get_lidar_point_cloud(lidar_msg)
@@ -138,6 +163,8 @@ class FormulaAutonomousSystem:
         removal =  self.lidar_util.ransac_plane_removal(filtered, threshold=self.ransac_distance, max_trials=self.ransac_iter)
         # print(self.dbscan_eps)
         cluster = self.lidar_util.cluster_points(removal, eps=self.dbscan_eps, min_samples=self.dbscan_points)
+        
+        # print(f"cluster = {cluster[:,:2]} \ car = {self.gps_util.state[:2]} , global point = {cluster[:,:2] + self.gps_util.state[:2]}")
         # print(cluster*math.sin(yaw))
         left, right = self.lidar_util.left_right_split(np.array(cluster))
         image1 = self.get_camera_image(camera1_msg)
@@ -202,7 +229,7 @@ class FormulaAutonomousSystem:
             state= self.gps_util.state,
             camera1_image=img1,
             camera2_image=img2,
-            lidar_points=cluster[:,:2]
+            lidar_points=cluster[:,:2] + self.gps_util.state[:2]  # LiDAR points를 차량의 현재 위치 기준으로 변환
         )
         # =========================================================
         
@@ -418,7 +445,8 @@ class LiDARProcessor:
             mat=self.vehicle_to_lidar_Transform()
             transform_lidar = np.dot(mat, center_4d)
             # print(f"transformed = {transform_lidar}")
-            clusters.append(transform_lidar[:3])  # Append transformed x, y, z
+            if math.sqrt(transform_lidar[0]**2 + transform_lidar[1]**2) < 5.0:
+                clusters.append(transform_lidar[:3])  # Append transformed x, y, z
         
         return np.array(clusters)
     
@@ -432,8 +460,7 @@ class LiDARProcessor:
     def publish_point_cloud(self, points: np.ndarray):
         """Publish processed point cloud and their indices as markers"""
 
-        clusters = points
-
+    
         header = rospy.Header()
         header.stamp = rospy.Time.now()
         header.frame_id = "fsds/FSCar"
@@ -444,14 +471,14 @@ class LiDARProcessor:
             PointField('y', 4, PointField.FLOAT32, 1),
             PointField('z', 8, PointField.FLOAT32, 1),
         ]
-        point_cloud_msg = pc2.create_cloud(header, fields, clusters)
+        point_cloud_msg = pc2.create_cloud(header, fields, points)
         self.lidar_publisher.publish(point_cloud_msg)
 
         # Publish markers for indices
         marker_array = MarkerArray()
         
         # Add text markers for each cluster
-        for i, point in enumerate(clusters):
+        for i, point in enumerate(points):
             marker = Marker()
             marker.header = header
             marker.ns = "cluster_indices"
@@ -471,7 +498,7 @@ class LiDARProcessor:
             marker_array.markers.append(marker)
 
         # Add delete markers for old markers that are no longer present
-        for i in range(len(clusters), self.last_marker_count):
+        for i in range(len(points), self.last_marker_count):
             marker = Marker()
             marker.header = header
             marker.ns = "cluster_indices"
@@ -479,7 +506,7 @@ class LiDARProcessor:
             marker.action = Marker.DELETE
             marker_array.markers.append(marker)
 
-        self.last_marker_count = len(clusters)
+        self.last_marker_count = len(points)
         if len(marker_array.markers) > 0:
             self.marker_publisher.publish(marker_array)
 
@@ -501,19 +528,11 @@ class GPSIMUProcessor:
         # Initialize state vector [x, y, yaw, vx, vy, yawrate, ax, ay]
         self.state = [0,0,0,0,0,0,0,0]
 
-    ## Set origin GPS coordinates (relative to this point)
-    def set_origin(self, lat: float, lon: float, alt: float):
-        self.origin_lat = lat
-        self.origin_lon = lon
-        self.origin_alt = alt
-
     def gps_to_local(self, lat: float, lon: float) -> Tuple[float, float]:
+        # print(self.origin_set)
         if not self.origin_set:
             raise ValueError("Origin GPS coordinates not set.")
-        
-        # print(self.origin_lat, self.origin_lon, self.origin_alt)
-        # print(lat,lon,alt)
-        
+                
         d_lat = math.radians(lat - self.origin_lat)
         d_lon = math.radians(lon - self.origin_lon)
         
@@ -828,26 +847,8 @@ class StateMachine:
 
 class Control:
     def __init__(self):
-        self.controller_select = rospy.get_param("/control/ControllerSelection/lateral_controller_type")
-        self.max_steer_angle = rospy.get_param("/control/PurePursuit/max_steer_angle")
-        if self.controller_select == "PurePursuit":
-            self.lfd = rospy.get_param("/control/PurePursuit/lookahead_distance")
-        elif self.controller_select == "Stanley":
-            self.k_gain = rospy.get_param("/control/Stanley/k_gain")
-        self.target_velocity = rospy.get_param("/control/SpeedControl/target_speed")
-        self.p, self.i, self.d = rospy.get_param("/control/SpeedControl/pid_kp"), rospy.get_param("/control/SpeedControl/pid_ki"), rospy.get_param("/control/SpeedControl/pid_kd")
-        self.max_throttle = rospy.get_param("/control/SpeedControl/max_throttle")
-        self.wheel_base = rospy.get_param("/control/Vehicle/wheel_base")
+        pass
 
     def compute_control(self, current_state, target_state):
         # 제어 알고리즘 구현
-        pass
-
-    def Pure_Pursuit(self):
-        pass
-
-    def Stanley(self):
-        pass
-
-    def ModelPredictiveControl(self):
         pass
