@@ -275,6 +275,7 @@ localization:
 
 local_planning:
   trajectory:
+<<<<<<< HEAD
     lane_offset: 3.0
     planner_roi_distance : 40.0
     planner_roi_angle : 80.0
@@ -301,6 +302,25 @@ planning:
     spline_smoothing_factor: 1.0 # Smoothing factor for path spline
     fallback_path_length: 5.0 # Length of the fallback path in meters
     fallback_path_points: 10 # Number of points in the fallback path
+=======
+    # Basic trajectory generation
+    lookahead_distance: 5.0
+    waypoint_spacing: 2.0
+    default_speed: 5.0
+    poly_degree: 3
+    num_waypoints: 20
+    max_accumulated_midpoints: 500
+    max_x_diff_for_pairing: 10.0
+    cone_filter_max_distance: 20.0 # Max distance from vehicle to consider cones for planning
+    cone_filter_max_angle: 60.0 # Max angle (degrees) from vehicle's forward axis to consider cones
+    
+    # Cone-based path planning (meters)
+    max_cone_distance: 10.0
+    lane_offset: 2.0
+    
+    # Safety parameters (meters)
+    safety_margin: 0.5
+>>>>>>> [control] 251008 @Doyeop-knut | Trajectory + Stanley controller
 
 control:
   ControllerSelection:
@@ -342,6 +362,10 @@ control:
       w_accel_rate: 1.0
 
   SpeedControl:
+<<<<<<< HEAD
+=======
+    target_speed: 1.0
+>>>>>>> [control] 251008 @Doyeop-knut | Trajectory + Stanley controller
     pid_kp: 0.5
     pre_loop_closure:
       target_speed: 10.0
