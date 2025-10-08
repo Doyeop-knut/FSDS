@@ -146,10 +146,10 @@ class FormulaAutonomousSystem:
         vtL = self.lidar_util.vehicle_to_lidar_Transform()
         # print(vtL)
         gps_data = self.gps_util.gps_to_local(lat, lon)
-        self.gps_util.updateIMU(imu_data, yaw, imu_msg.header.stamp.secs)
-        self.gps_util.updateGPS(gps_data,gps_msg.header.stamp.secs)
+        self.gps_util.updateIMU(imu_data, yaw, imu_msg.header.stamp.to_sec())
+        self.gps_util.updateGPS(gps_data,gps_msg.header.stamp.to_sec())
         rospy.loginfo_throttle(1.0,f"v = {math.sqrt(self.gps_util.state[3]**2 + self.gps_util.state[4]**2)} m/s")
-
+        # print(f"v = {math.sqrt(self.gps_util.state[3]**2 + self.gps_util.state[4]**2)} m/s")
         # ==================== TF Publisher ====================
         t = TransformStamped()
         t.header.stamp = rospy.Time.now()
@@ -595,7 +595,7 @@ class GPSIMUProcessor:
             self.origin_lon = rospy.get_param("/localization/localization/ref_wgs84_longitude", 0.0)
             self.origin_alt = rospy.get_param("/localization/localization/ref_wgs84_altitude", 0.0)
         else: self.origin_lat, self.origin_lon, self.origin_alt = 0,0,0
-        self.alpha = rospy.get_param("/localization/localization/alpha_velocity", 0.0)
+        self.alpha = rospy.get_param("/localization/localization/alpha_velocity", 0.8)
         self.R = 6378137.0  # WGS84 타원체의 반경 (미터 단위)
         self.prev_time = 0.0
         self.prev_gps_time = 0.0
@@ -630,12 +630,16 @@ class GPSIMUProcessor:
         if dt > 0.0 and current_time > np.finfo(float).eps:
             self.state = self.predictState(self.state, dt)
             self.prev_time = current_time
-        dt_gps = current_time - self.prev_gps_time
-        if dt_gps > 0.0 and current_time > np.finfo(float).eps:
-            dx,dy = self.state[0] - self.prev_x , self.state[1] - self.prev_y
-            self.prev_x, self.prev_y = self.state[0], self.state[1]
-            vx,vy = dx/dt_gps, dy/dt_gps
-            self.state[3], self.state[4] = self.alpha * self.state[3] + (1-self.alpha) * (vx * math.cos(-self.state[2]) - vy * math.sin(-self.state[2])), self.alpha * self.state[4] + (1-self.alpha) * (vx * math.sin(-self.state[2])+ vy * math.cos(-self.state[2]))
+            print(dt)
+
+        if self.prev_gps_time > 0.0:
+            dt_gps = current_time - self.prev_gps_time
+            if dt_gps > 0.0:
+                dx,dy = self.state[0] - self.prev_x , self.state[1] - self.prev_y
+                vx,vy = dx/dt_gps, dy/dt_gps
+                self.state[3], self.state[4] = self.alpha * self.state[3] + (1-self.alpha) * (vx * math.cos(-self.state[2]) - vy * math.sin(-self.state[2])), self.alpha * self.state[4] + (1-self.alpha) * (vx * math.sin(-self.state[2])+ vy * math.cos(-self.state[2]))
+
+        self.prev_x, self.prev_y = self.state[0], self.state[1]
         self.prev_gps_time = current_time
     
     def Quat_to_Euler(self,quaternion):
