@@ -10,7 +10,11 @@
 - [Optimal Trajectory] @Doyeop-knut | 250820 동적 RRT* 알고리즘을 활용한 경로 생성
 - [Cone Detection] @Doyeop-knut | 250820 stereo 이미지 생성
 <<<<<<< HEAD
+<<<<<<< HEAD
 - [Cone Detection]@marigold0916 | 251007 cone탐지 코드 추가(camera_cone_detect.py), yolo5-cone.pt추가
 =======
 - [Cone Detection] @marigold0916 | 251007 cone detection 코드추가, yolo모델파일 추가
 >>>>>>> ros_2025
+=======
+- [Cone Detection] @marigold0916 | 251007 cone detection 코드추가, yolo모델파일 추가
+>>>>>>> [Cone Detection] @marigold0916 | 251007 cone detection,yolo.pt
