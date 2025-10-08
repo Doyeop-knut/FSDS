@@ -131,6 +131,12 @@ local_planning:
     lookahead_distance: 5.0
     waypoint_spacing: 2.0
     default_speed: 5.0
+    poly_degree: 3
+    num_waypoints: 20
+    max_accumulated_midpoints: 500
+    max_x_diff_for_pairing: 10.0
+    cone_filter_max_distance: 20.0 # Max distance from vehicle to consider cones for planning
+    cone_filter_max_angle: 60.0 # Max angle (degrees) from vehicle's forward axis to consider cones
     
     # Cone-based path planning (meters)
     max_cone_distance: 10.0
@@ -152,7 +158,7 @@ control:
     k_gain: 0.8
 
   SpeedControl:
-    target_speed: 5.0
+    target_speed: 1.0
     pid_kp: 0.5
     pid_ki: 0.05
     pid_kd: 0.005
