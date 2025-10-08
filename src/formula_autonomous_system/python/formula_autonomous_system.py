@@ -20,9 +20,13 @@ from enum import Enum
 from typing import List, Tuple, Optional
 import time
 from collections import deque, namedtuple
+<<<<<<< HEAD
 
 import tf2_ros
 from geometry_msgs.msg import TransformStamped, Point, PoseStamped
+=======
+import threading
+>>>>>>> [ConeDetection] 251008 @Doyeop-knut | Map data 생성 코드 작성
 
 # ROS
 from std_msgs.msg import String, ColorRGBA
@@ -53,6 +57,10 @@ from scipy.optimize import minimize, linear_sum_assignment
 import torch
 import torchvision
 torch.backends.cudnn.benchmark = True
+
+# Tracking
+from scipy.optimize import linear_sum_assignment
+from scipy.spatial.distance import cdist
 
 # Data Logger
 import os
@@ -170,6 +178,7 @@ class FormulaAutonomousSystem:
         self.state_machine = StateMachine()
         self.lidar_util = LiDARProcessor(self.enable_visualization, self.device)
         self.camera_util = CameraProcessor()
+<<<<<<< HEAD
         self.track_map = TrackMap(self.device)
         self.midpoint_map = MidpointMap(self.device)
         self.path_planner = PathPlanner(self.device)
@@ -258,6 +267,19 @@ class FormulaAutonomousSystem:
         self.cam2_transform = self.camera_util.transform_matrix(-self.right_tx, -self.right_ty, -self.right_tz, self.right_rr, self.right_rp, self.right_ry)
         
 >>>>>>> test
+=======
+        self.map_cones_publisher = rospy.Publisher("/map_cones", MarkerArray, queue_size=10)
+        self.tracker = ConeTracker()
+
+        rospy.on_shutdown(self.shutdown_hook)
+        
+    def shutdown_hook(self):
+        """Handles node shutdown procedures."""
+        rospy.loginfo("Shutdown hook called. Saving final data...")
+        final_map = self.tracker.get_all_tracks_for_saving()
+        self.data_logger.close(cone_map=final_map)
+        cv2.destroyAllWindows()
+>>>>>>> [ConeDetection] 251008 @Doyeop-knut | Map data 생성 코드 작성
         
     def init(self):
         """Initialize the system"""
@@ -389,15 +411,20 @@ class FormulaAutonomousSystem:
         t.transform.translation.y = self.gps_util.state[1]
         t.transform.translation.z = 0.0
         
-        # yaw = self.gps_util.state[2]
-        # half_yaw = yaw / 2.0
-        # q_z = math.sin(half_yaw)
-        # q_w = math.cos(half_yaw)
+        yaw = self.gps_util.state[2]
+        half_yaw = yaw / 2.0
+        q_z = math.sin(half_yaw)
+        q_w = math.cos(half_yaw)
         t.transform.rotation.x = 0.0
         t.transform.rotation.y = 0.0
+<<<<<<< HEAD
         t.transform.rotation.z = 0.0
         t.transform.rotation.w = 1.0
 >>>>>>> [ConeDetection] 251008 @Doyeop-knut | map TF
+=======
+        t.transform.rotation.z = q_z
+        t.transform.rotation.w = q_w
+>>>>>>> [ConeDetection] 251008 @Doyeop-knut | Map data 생성 코드 작성
         
         self.tf_broadcaster.sendTransform(t)
         # =====================================================
@@ -412,15 +439,40 @@ class FormulaAutonomousSystem:
         removal =  self.lidar_util.ransac_plane_removal(filtered, threshold=self.ransac_distance, max_trials=self.ransac_iter)
         cluster = self.lidar_util.cluster_points(removal, eps=self.dbscan_eps, min_samples=self.dbscan_points)
 <<<<<<< HEAD
+<<<<<<< HEAD
        
 =======
+=======
+
+        # ==================== Map Building & Tracking =====================
+        if cluster.size > 0:
+            # Transform cluster points to map frame
+            veh_x = self.gps_util.state[0]
+            veh_y = self.gps_util.state[1]
+            veh_yaw = self.gps_util.state[2]  # Assumes radians
+
+            cos_yaw = math.cos(veh_yaw)
+            sin_yaw = math.sin(veh_yaw)
+            rot_matrix = np.array([[cos_yaw, -sin_yaw],
+                                   [sin_yaw,  cos_yaw]])
+            map_frame_points = np.dot(cluster[:, :2], rot_matrix.T) + np.array([veh_x, veh_y])
+            global_clusters = np.hstack([map_frame_points, cluster[:, 2, np.newaxis]])
+
+            # Update tracker
+            self.tracker.update(global_clusters)
+
+        # Publish the active tracks for visualization
+        active_tracks = self.tracker.get_active_tracks()
+        if active_tracks.size > 0:
+            self.publish_map_cones(active_tracks)
+        # =====================================================================
+>>>>>>> [ConeDetection] 251008 @Doyeop-knut | Map data 생성 코드 작성
         
-        # print(f"cluster = {cluster[:,:2]} \ car = {self.gps_util.state[:2]} , global point = {cluster[:,:2] + self.gps_util.state[:2]}")
-        # print(cluster*math.sin(yaw))
         left, right = self.lidar_util.left_right_split(np.array(cluster))
 >>>>>>> [ConeDetection] 251008 @Doyeop-knut | map TF
         image1 = self.get_camera_image(camera1_msg)
         image2 = self.get_camera_image(camera2_msg)
+<<<<<<< HEAD
         processed_img1 = self.camera_util.preprocessImage(image1)
         processed_img2 = self.camera_util.preprocessImage(image2)
         
@@ -740,17 +792,33 @@ class FormulaAutonomousSystem:
             cv2.imshow("image2", img2)
             cv2.waitKey(1)
         self.lidar_util.publish_point_cloud(cluster)        
+=======
+        cam_mat = self.camera_util.cam_matrix()
+        cam1_transform = self.camera_util.transform_matrix(self.left_tx, self.left_ty, self.left_tz, self.left_rr, self.left_rp, self.left_ry)
+        cam2_transform = self.camera_util.transform_matrix(self.right_tx, self.right_ty, self.right_tz, self.right_rr, self.right_rp, self.right_ry)
+
+        image1 = self.camera_util.preprocessImage(image1)
+        image2 = self.camera_util.preprocessImage(image2)
+        cam1_pts = self.camera_util.projectToCam(cluster, cam1_transform)
+        cam2_pts = self.camera_util.projectToCam(cluster,cam2_transform)
+        img1 = self.camera_util.visualization(cam1_pts, image1)
+        img2 = self.camera_util.visualization(cam2_pts, image2)
+        cv2.imshow("image1", img1)
+        cv2.imshow("image2", img2)
+        cv2.waitKey(1)
+
+        # Publish cluster centers in vehicle frame (for debugging)
+        self.lidar_util.publish_point_cloud(cluster)
+>>>>>>> [ConeDetection] 251008 @Doyeop-knut | Map data 생성 코드 작성
 
         ## GO_SIGNAL
         if go_signal_msg.mission != "None" and go_signal_msg.mission != "":
             self.state_machine.inject_go_signal(go_signal_msg.mission, go_signal_msg.track)
         autonomous_mode.data = self.state_machine.get_current_state_string()
 
-        # filtered_points = LiDARProcessor().filtering_points(np.array([[x,y,z]]), (1.0, 20.0), (-10.0, 10.0), (-0.5, 0.5))
-        # print("Filtered Points:", filtered_points)
-        ## GPS velocity
         # Control
         control_command_msg = ControlCommand()
+<<<<<<< HEAD
         if self.state_machine.current_state == AutonomousMode.AS_DRIVING and path is not None and len(path) > 0:
             # Call the selected controller to compute commands
 <<<<<<< HEAD
@@ -770,6 +838,8 @@ class FormulaAutonomousSystem:
             control_command_msg.steering = steer
             control_command_msg.brake = brake
         # print(go_signal_msg)
+=======
+>>>>>>> [ConeDetection] 251008 @Doyeop-knut | Map data 생성 코드 작성
 
 <<<<<<< HEAD
 =======
@@ -814,7 +884,7 @@ class FormulaAutonomousSystem:
             state= self.gps_util.state,
             camera1_image=img1,
             camera2_image=img2,
-            lidar_points=cluster[:,:2] + self.gps_util.state[:2]  # LiDAR points를 차량의 현재 위치 기준으로 변환
+            lidar_points=global_clusters  # Log globally transformed points
         )
         # =========================================================
 >>>>>>> [ConeDetection] 251008 @Doyeop-knut | map TF
@@ -832,6 +902,7 @@ class FormulaAutonomousSystem:
 
         return True, control_command_msg, autonomous_mode
 
+<<<<<<< HEAD
     def publish_map_cones(self):
         if not self.enable_visualization:
             return
@@ -854,10 +925,47 @@ class FormulaAutonomousSystem:
             marker.pose.position.x = cone['x']
             marker.pose.position.y = cone['y']
             marker.pose.position.z = cone.get('z', 0.0) # Use z if available
+=======
+    def publish_map_cones(self, cones):
+        marker_array = MarkerArray()
+
+        # First, publish a DELETEALL to clear old markers
+        delete_marker = Marker()
+        delete_marker.header.stamp = rospy.Time.now()
+        delete_marker.header.frame_id = "map"
+        delete_marker.ns = "map_cones"
+        delete_marker.action = Marker.DELETEALL
+        marker_array.markers.append(delete_marker)
+
+        # Also clear labels
+        delete_label_marker = Marker()
+        delete_label_marker.header = delete_marker.header
+        delete_label_marker.ns = "map_cone_labels"
+        delete_label_marker.action = Marker.DELETEALL
+        marker_array.markers.append(delete_label_marker)
+
+        # Now, add all current cones
+        for cone in cones:
+            cone_id = int(cone[0])
+            cone_pos = cone[1:]
+
+            # Cube Marker
+            marker = Marker()
+            marker.header.stamp = rospy.Time.now()
+            marker.header.frame_id = "map"
+            marker.ns = "map_cones"
+            marker.id = cone_id
+            marker.type = Marker.CUBE
+            marker.action = Marker.ADD
+            marker.pose.position.x = cone_pos[0]
+            marker.pose.position.y = cone_pos[1]
+            marker.pose.position.z = cone_pos[2]
+>>>>>>> [ConeDetection] 251008 @Doyeop-knut | Map data 생성 코드 작성
             marker.pose.orientation.w = 1.0
             marker.scale.x = 0.3
             marker.scale.y = 0.3
             marker.scale.z = 0.5
+<<<<<<< HEAD
             marker.color.a = 0.8
             if cone['color_id'] == 1: # Blue
                 marker.color.r = 0.0
@@ -918,10 +1026,13 @@ class FormulaAutonomousSystem:
             marker.pose.position.z = 0.5  # Offset text above the path
             marker.pose.orientation.w = 1.0
             marker.scale.z = 0.5  # Text size
+=======
+>>>>>>> [ConeDetection] 251008 @Doyeop-knut | Map data 생성 코드 작성
             marker.color.a = 1.0
             marker.color.r = 1.0
             marker.color.g = 1.0
             marker.color.b = 0.0
+<<<<<<< HEAD
             marker.text = str(i)
             marker_array.markers.append(marker)
 
@@ -1138,6 +1249,32 @@ class FormulaAutonomousSystem:
                     marker.colors.append(line_color)
                 
         self.triangulation_publisher.publish(marker)
+=======
+            marker.lifetime = rospy.Duration()
+            marker_array.markers.append(marker)
+
+            # Text Marker for ID
+            text_marker = Marker()
+            text_marker.header = marker.header
+            text_marker.ns = "map_cone_labels"
+            text_marker.id = cone_id
+            text_marker.type = Marker.TEXT_VIEW_FACING
+            text_marker.action = Marker.ADD
+            text_marker.pose.position.x = cone_pos[0]
+            text_marker.pose.position.y = cone_pos[1]
+            text_marker.pose.position.z = cone_pos[2] + 0.5  # Offset text
+            text_marker.pose.orientation.w = 1.0
+            text_marker.scale.z = 0.4 # Text size
+            text_marker.color.a = 1.0
+            text_marker.color.r = 1.0
+            text_marker.color.g = 1.0
+            text_marker.color.b = 1.0
+            text_marker.text = str(cone_id)
+            text_marker.lifetime = rospy.Duration()
+            marker_array.markers.append(text_marker)
+
+        self.map_cones_publisher.publish(marker_array)
+>>>>>>> [ConeDetection] 251008 @Doyeop-knut | Map data 생성 코드 작성
 
     def get_lidar_point_cloud(self, msg):
         """Convert ROS PointCloud2 message to point cloud (torch.Tensor)"""
@@ -3031,6 +3168,7 @@ class GPSIMUProcessor:
         self.prev_gps_time = current_time
     
     def Quat_to_Euler(self,quaternion):
+<<<<<<< HEAD
         """
         Converts a quaternion [w, x, y, z] to Euler angles (roll, pitch, yaw).
         """
@@ -3053,6 +3191,12 @@ class GPSIMUProcessor:
         yaw = math.atan2(t3, t4)
 
         return roll, pitch, yaw
+=======
+        yaw = math.atan2(2*(quaternion[3]*quaternion[0]+quaternion[1]*quaternion[2]),(1-2*(quaternion[0]**2+quaternion[1]**2)))
+        pitch = -math.pi/2 + 2 * math.atan2(math.sqrt(1+2*(quaternion[3]*quaternion[1]-quaternion[0]*quaternion[2])),math.sqrt(1-2*(quaternion[3]*quaternion[1]-quaternion[0]*quaternion[2])))
+        roll = math.atan2(2*(quaternion[3]*quaternion[2]+quaternion[0]*quaternion[1]),(1-2*(quaternion[1]**2+quaternion[2]**2)))
+        return roll,pitch,yaw
+>>>>>>> [ConeDetection] 251008 @Doyeop-knut | Map data 생성 코드 작성
     
     
     def predictState(self, state, dt):
@@ -3122,12 +3266,19 @@ class DataLogger:
         self.session_path = os.path.join(expanded_log_dir, session_name)
         os.makedirs(self.session_path, exist_ok=True)
 
+        # Thread-safety
+        self.file_lock = threading.Lock()
+        self.is_closed = False
+
         # 1. 메타데이터 CSV 설정
         self.csv_path = os.path.join(self.session_path, "log.csv")
+<<<<<<< HEAD
 <<<<<<< HEAD
         # 헤더에 제어 튜닝용 데이터 추가
 =======
 >>>>>>> test
+=======
+>>>>>>> [ConeDetection] 251008 @Doyeop-knut | Map data 생성 코드 작성
         self.csv_header = [
             'timestamp', 'frame_id', 'autonomous_mode',
             'control_steering', 'control_throttle', 'control_brake',
@@ -3135,6 +3286,7 @@ class DataLogger:
             'imu_gyro_x', 'imu_gyro_y', 'imu_gyro_z',
             'gps_latitude', 'gps_longitude',
             'yaw', 'vehicle_vx', "vehicle_vy", 'vehicle_yawrate', 'vehicle_ax', 'vehicle_ay',
+<<<<<<< HEAD
 <<<<<<< HEAD
             'lidar_point_count',
             # Control Debug Data
@@ -3146,6 +3298,9 @@ class DataLogger:
 =======
             'lidar_point_count'
 >>>>>>> test
+=======
+            'lidar_point_count'
+>>>>>>> [ConeDetection] 251008 @Doyeop-knut | Map data 생성 코드 작성
         ]
         self.metadata_csv_file = open(self.csv_path, 'w', newline='')
         self.metadata_csv_writer = csv.DictWriter(self.metadata_csv_file, fieldnames=self.csv_header)
@@ -3197,6 +3352,7 @@ class DataLogger:
 =======
     def log_entry(self, autonomous_mode: str, control_command: ControlCommand,
                   imu_acc: list, imu_gyro: list, state: list,
+<<<<<<< HEAD
                   camera1_image: np.ndarray, camera2_image: np.ndarray, lidar_points: np.ndarray,
                   map_cones: list, provisional_cones: list):
 >>>>>>> test
@@ -3341,12 +3497,65 @@ class DataLogger:
         if self.metadata_csv_file:
             self.metadata_csv_file.close()
             rospy.loginfo(f"Successfully saved metadata to {self.csv_path}")
+=======
+                  camera1_image: np.ndarray, camera2_image: np.ndarray, lidar_points: np.ndarray):
+>>>>>>> [ConeDetection] 251008 @Doyeop-knut | Map data 생성 코드 작성
 
-        for cam_id, writer in self.video_writers.items():
-            if writer is not None:
-                writer.release()
-                rospy.loginfo(f"Successfully saved video to {self.video_paths[cam_id]}")
+        with self.file_lock:
+            if self.is_closed:
+                return
 
+            timestamp = rospy.Time.now().to_sec()
+            point_count = len(lidar_points) if lidar_points is not None else 0
+
+            log_row = {
+                'timestamp': timestamp, 'frame_id': self.frame_count, 'autonomous_mode': autonomous_mode,
+                'control_steering': control_command.steering, 'control_throttle': control_command.throttle, 'control_brake': control_command.brake,
+                'imu_acc_x': imu_acc[0], 'imu_acc_y': imu_acc[1], 'imu_acc_z': imu_acc[2],
+                'imu_gyro_x': imu_gyro[0], 'imu_gyro_y': imu_gyro[1], 'imu_gyro_z': imu_gyro[2],
+                'gps_latitude': state[0], 'gps_longitude': state[1],
+                'yaw' : state[2], 'vehicle_vx' : state[3], 'vehicle_vy' : state[4], 'vehicle_yawrate' : state[5], 'vehicle_ax' : state[6], 'vehicle_ay' : state[7],
+                'lidar_point_count': point_count
+            }
+            self.metadata_csv_writer.writerow(log_row)
+
+            images = {'cam1': camera1_image, 'cam2': camera2_image}
+            for cam_id, img in images.items():
+                if img is None: continue
+                if self.video_writers[cam_id] is None:
+                    h, w, _ = img.shape
+                    self.video_writers[cam_id] = cv2.VideoWriter(self.video_paths[cam_id], self.fourcc, self.video_fps, (w, h))
+                self.video_writers[cam_id].write(img)
+
+            lidar_row = [self.frame_count]
+            if point_count > 0:
+                points_flat = lidar_points[:self.max_lidar_points, :2].flatten().tolist()
+                lidar_row.extend(points_flat)
+            
+            expected_len = 1 + self.max_lidar_points * 2
+            padding_len = expected_len - len(lidar_row)
+            if padding_len > 0:
+                lidar_row.extend([''] * padding_len)
+            self.lidar_csv_writer.writerow(lidar_row)
+
+            self.frame_count += 1
+
+    def close(self, cone_map=None):
+        """프로그램 종료 시 호출되어 모든 파일 핸들을 안전하게 닫고, 맵 데이터를 저장합니다."""
+        with self.file_lock:
+            if self.is_closed:
+                return
+            
+            self.metadata_csv_file.close()
+            self.lidar_csv_file.close()
+
+            for cam_id, writer in self.video_writers.items():
+                if writer is not None:
+                    writer.release()
+            
+            self.is_closed = True
+
+<<<<<<< HEAD
         if self.lidar_csv_file:
             self.lidar_csv_file.close()
             rospy.loginfo(f"Successfully saved LiDAR data to {self.lidar_csv_path}")
@@ -3364,6 +3573,22 @@ class DataLogger:
             self.prov_cones_csv_file.close()
             rospy.loginfo(f"Successfully saved provisional cone data to {self.prov_cones_csv_path}")
 >>>>>>> test
+=======
+        rospy.loginfo(f"Successfully saved metadata to {self.csv_path}")
+        rospy.loginfo(f"Successfully saved LiDAR data to {self.lidar_csv_path}")
+>>>>>>> [ConeDetection] 251008 @Doyeop-knut | Map data 생성 코드 작성
+
+        # Save the final cone map
+        if cone_map is not None and cone_map.size > 0:
+            map_csv_path = os.path.join(self.session_path, "map.csv")
+            try:
+                with open(map_csv_path, 'w', newline='') as f:
+                    writer = csv.writer(f)
+                    writer.writerow(['id', 'x', 'y', 'z'])
+                    writer.writerows(cone_map)
+                rospy.loginfo(f"Successfully saved cone map to {map_csv_path}")
+            except IOError as e:
+                rospy.logerr(f"Failed to save cone map: {e}")
 
 StateTransitionResult = namedtuple(
     'StateTransitionResult', 
@@ -4546,4 +4771,133 @@ class Control:
     def compute_control(self, current_state, target_state):
         # 제어 알고리즘 구현
         pass
+<<<<<<< HEAD
 >>>>>>> [ConeDetection] 251008 @Doyeop-knut | map TF
+=======
+
+# ==================== Kalman Tracker ====================
+
+class KalmanConeTracker:
+    """A class for a single tracked cone using a Kalman Filter."""
+    def __init__(self, detection, track_id):
+        # State: [x, y, z, vx, vy, vz]
+        # Measurement: [x, y, z]
+        self.id = track_id
+        self.kf = cv2.KalmanFilter(6, 3)
+        self.kf.transitionMatrix = np.array([[1, 0, 0, 1, 0, 0],
+                                              [0, 1, 0, 0, 1, 0],
+                                              [0, 0, 1, 0, 0, 1],
+                                              [0, 0, 0, 1, 0, 0],
+                                              [0, 0, 0, 0, 1, 0],
+                                              [0, 0, 0, 0, 0, 1]], np.float32)
+        self.kf.measurementMatrix = np.array([[1, 0, 0, 0, 0, 0],
+                                               [0, 1, 0, 0, 0, 0],
+                                               [0, 0, 1, 0, 0, 0]], np.float32)
+        
+        # Initial state
+        self.kf.statePost = np.array([detection[0], detection[1], detection[2], 0, 0, 0], np.float32).reshape(6, 1)
+        
+        # Process noise covariance
+        self.kf.processNoiseCov = np.eye(6, dtype=np.float32) * 0.1
+        self.kf.processNoiseCov[3:, 3:] *= 10.0 # Higher uncertainty for velocity
+
+        # Measurement noise covariance
+        self.kf.measurementNoiseCov = np.eye(3, dtype=np.float32) * 0.5
+
+        # Error covariance
+        self.kf.errorCovPost = np.eye(6, dtype=np.float32) * 1
+
+        self.time_since_update = 0
+        self.hits = 1
+
+    def predict(self):
+        """Predict the next state."""
+        return self.kf.predict()
+
+    def update(self, detection):
+        """Update the state with a new measurement."""
+        self.kf.correct(np.array(detection, dtype=np.float32).reshape(3, 1))
+        self.time_since_update = 0
+        self.hits += 1
+
+    @property
+    def state(self):
+        return self.kf.statePost.flatten()
+
+
+class ConeTracker:
+    """Manages multiple KalmanConeTracker objects and a persistent map."""
+    def __init__(self, dist_thresh=1.5, max_age=5, min_hits_for_confirmation=2):
+        self.dist_thresh = dist_thresh
+        self.max_age = max_age
+        self.min_hits_for_confirmation = min_hits_for_confirmation
+        self.next_track_id = 0
+        self.tracks = []  # Active tracks for real-time association
+        self.map_landmarks = {}  # Persistent map of confirmed cones {id: state}
+
+    def update(self, detections):
+        """
+        Update tracks with new detections.
+        
+        detections: np.array of shape (N, 3) for (x, y, z)
+        """
+        # 1. Predict next state for all active tracks
+        if len(self.tracks) > 0:
+            predicted_positions = np.array([t.predict()[:3].flatten() for t in self.tracks])
+        else:
+            predicted_positions = np.empty((0, 3))
+
+        # 2. Associate detections with predictions
+        if len(detections) > 0 and len(predicted_positions) > 0:
+            cost_matrix = cdist(predicted_positions, detections)
+            row_ind, col_ind = linear_sum_assignment(cost_matrix)
+            
+            matched_indices = []
+            for r, c in zip(row_ind, col_ind):
+                if cost_matrix[r, c] < self.dist_thresh:
+                    matched_indices.append((r, c))
+            
+            matched_track_indices = [r for r, c in matched_indices]
+            matched_det_indices = [c for r, c in matched_indices]
+        else:
+            matched_track_indices = []
+            matched_det_indices = []
+
+        # 3. Update matched tracks and populate the persistent map
+        for r, c in zip(matched_track_indices, matched_det_indices):
+            track = self.tracks[r]
+            track.update(detections[c])
+            # If track is confirmed, add/update it in the persistent map
+            if track.hits >= self.min_hits_for_confirmation:
+                self.map_landmarks[track.id] = track.state
+
+        # 4. Create new tracks for unmatched detections
+        unmatched_det_indices = set(range(len(detections))) - set(matched_det_indices)
+        for i in unmatched_det_indices:
+            new_track = KalmanConeTracker(detections[i], self.next_track_id)
+            self.tracks.append(new_track)
+            self.next_track_id += 1
+
+        # 5. Manage active track lifecycle (remove stale tracks from active list)
+        updated_tracks = []
+        for track in self.tracks:
+            if track.time_since_update <= self.max_age:
+                updated_tracks.append(track)
+            track.time_since_update += 1
+        self.tracks = updated_tracks
+
+    def get_active_tracks(self):
+        """Return all confirmed landmarks from the map for visualization."""
+        map_data = []
+        for track_id, state in self.map_landmarks.items():
+            map_data.append([track_id, state[0], state[1], state[2]])
+        return np.array(map_data)
+
+    def get_all_tracks_for_saving(self):
+        """Return all confirmed landmarks from the map for saving."""
+        # This now returns the same data as get_active_tracks
+        saved_tracks = []
+        for track_id, state in self.map_landmarks.items():
+            saved_tracks.append([track_id, state[0], state[1], state[2]])
+        return np.array(saved_tracks)
+>>>>>>> [ConeDetection] 251008 @Doyeop-knut | Map data 생성 코드 작성
