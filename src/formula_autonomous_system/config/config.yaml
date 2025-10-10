@@ -121,7 +121,7 @@ localization:
     
     # Velocity Estimation
     alpha_velocity: 0.1
-    yaw_filter_alpha : 0.8
+    yaw_filter_alpha : 0.6
 
 behavior_planning:
   default: {}

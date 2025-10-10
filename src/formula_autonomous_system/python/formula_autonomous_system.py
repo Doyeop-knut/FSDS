@@ -37,6 +37,7 @@ from sklearn.linear_model import RANSACRegressor
 import matplotlib.pyplot as plt
 from scipy.spatial.distance import cdist
 from scipy.interpolate import splprep, splev
+from scipy.spatial import Delaunay
 
 # Data Logger
 import os
@@ -79,6 +80,7 @@ class FormulaAutonomousSystem:
         # Publishers for visualization
         self.path_publisher = rospy.Publisher("/centerline_path", Marker, queue_size=1)
         self.map_cone_publisher = rospy.Publisher("/map_cones", MarkerArray, queue_size=1)
+        self.triangulation_publisher = rospy.Publisher("/delaunay_triangulation", Marker, queue_size=1)
 
         # System Components
         self.gps_util = GPSIMUProcessor()
@@ -185,9 +187,26 @@ class FormulaAutonomousSystem:
         image1 = self.camera_util.preprocessImage(image1)
         image2 = self.camera_util.preprocessImage(image2)
         
+        # --- Time Synchronization Compensation ---
+        # Compensate for vehicle motion between LiDAR scan time and Camera image time
+        # This is a first-order correction for high-speed alignment issues.
+        try:
+            # Note: A negative dt means the lidar message is newer than the camera, which is unusual but possible.
+            # The compensation will move the points backward in that case, which is correct.
+            dt_cam_lidar = camera1_msg.header.stamp.to_sec() - lidar_msg.header.stamp.to_sec()
+            vx = vehicle_state[3] # Longitudinal velocity
+            compensation_dist = vx * dt_cam_lidar
+            
+            compensated_cluster = cluster.copy()
+            compensated_cluster[:, 0] += compensation_dist # Add distance to the x-component (forward)
+        except Exception as e:
+            rospy.logwarn_throttle(1.0, f"Could not perform time compensation: {e}")
+            compensated_cluster = cluster
+        # --- End Compensation ---
+
         # print(color)
-        cam1_pts = self.camera_util.projectToCam(cluster, cam1_transform)
-        cam2_pts = self.camera_util.projectToCam(cluster, cam2_transform)
+        cam1_pts = self.camera_util.projectToCam(compensated_cluster, cam1_transform)
+        cam2_pts = self.camera_util.projectToCam(compensated_cluster, cam2_transform)
         # color = self.camera_util.detectConeColor(cam1_pts, image1)
 
         if cluster.size > 0:
@@ -243,13 +262,13 @@ class FormulaAutonomousSystem:
         self.track_map.update(global_clusters)
 
         # Plan path using the map
-        path = self.path_planner.plan_path(self.track_map.get_cones(), vehicle_state[:2])
-
-        # Visualize Map and Path
+        path, tri, tri_points = self.path_planner.plan_path(self.track_map.get_cones(), vehicle_state[:2])
+        
+                    # Visualize Map and Path
         self.publish_map_cones()
+        self.publish_triangulation(tri, tri_points)
         if path is not None:
             self.publish_path(path)
-
         # =====================================================
         img1 = self.camera_util.visualization(cam1_pts, image1)
         img2 = self.camera_util.visualization(cam2_pts, image2)
@@ -396,6 +415,63 @@ class FormulaAutonomousSystem:
 
         self.path_publisher.publish(marker)
 
+    def publish_triangulation(self, tri, points):
+        if tri is None or points is None:
+            # Clear previous markers if triangulation is not available
+            marker = Marker()
+            marker.header.stamp = rospy.Time.now()
+            marker.header.frame_id = "map"
+            marker.ns = "delaunay_mesh"
+            marker.id = 0
+            marker.action = Marker.DELETEALL
+            self.triangulation_publisher.publish(marker)
+            return
+
+        marker = Marker()
+        marker.header.stamp = rospy.Time.now()
+        marker.header.frame_id = "map"
+        marker.ns = "delaunay_mesh"
+        marker.id = 0
+        marker.type = Marker.LINE_LIST
+        marker.action = Marker.ADD
+        marker.pose.orientation.w = 1.0
+        marker.scale.x = 0.05  # Line width
+        marker.color.a = 0.4
+        marker.color.r = 0.6
+        marker.color.g = 0.6
+        marker.color.b = 0.6 # Gray color for the mesh
+
+        # Use the same max edge length from the path planner for consistency
+        max_len_sq = self.path_planner.max_edge_length ** 2
+
+        # tri.simplices contains the indices of the points forming each triangle
+        for simplex in tri.simplices:
+            # Add the 3 edges of the triangle to the line list
+            for i in range(3):
+                p1_idx = simplex[i]
+                p2_idx = simplex[(i + 1) % 3]
+                
+                p1_coords = points[p1_idx]
+                p2_coords = points[p2_idx]
+
+                # Filter out long edges to clean up the visualization
+                dist_sq = (p1_coords[0] - p2_coords[0])**2 + (p1_coords[1] - p2_coords[1])**2
+                if dist_sq < max_len_sq:
+                    p1 = Point()
+                    p1.x = p1_coords[0]
+                    p1.y = p1_coords[1]
+                    p1.z = 0.0
+                    
+                    p2 = Point()
+                    p2.x = p2_coords[0]
+                    p2.y = p2_coords[1]
+                    p2.z = 0.0
+
+                    marker.points.append(p1)
+                    marker.points.append(p2)
+                
+        self.triangulation_publisher.publish(marker)
+
     def get_lidar_point_cloud(self, msg):
         """Convert ROS PointCloud2 message to point cloud"""
         pointcloud = []
@@ -540,7 +616,7 @@ class CameraProcessor:
         # cone_point_img is expected to be a single (u, v) tuple or list
         if cone_point_img is None or not isinstance(cone_point_img, (tuple, list)) or len(cone_point_img) != 2:
             return "unknown"
-        cv2.imshow("debug", cv2.cvtColor(rgb_image,cv2.COLOR_BGR2HSV))
+        # cv2.imshow("debug", cv2.cvtColor(rgb_image,cv2.COLOR_BGR2HSV))
         u, v = int(cone_point_img[0]), int(cone_point_img[1])
         
         # Define ROI around the cone
@@ -691,8 +767,8 @@ class LiDARProcessor:
             # print(f"before = {transform_lidar}")
             # print(f"original = {center}, transformed = {rotated_lidar}")
             # print(f"transformed = {transform_lidar}")
-            if math.sqrt(transform_lidar[0]**2 + transform_lidar[1]**2) < 5.0:
-                clusters.append(transform_lidar[:3])  # Append transformed x, y, z   
+            # if math.sqrt(transform_lidar[0]**2 + transform_lidar[1]**2) < 5.0:
+            clusters.append(transform_lidar[:3])  # Append transformed x, y, z   
                 # print(f"transformed = {transform_lidar}")     
             # if math.sqrt(center[0]**2 + center[1]**2) < 5.0:
                 # print(f"original = {center}")
@@ -851,52 +927,85 @@ class TrackMap:
 
 class PathPlanner:
     def __init__(self):
-        pass
+        self.max_edge_length = 7.0 # A reasonable track width, meters
 
     def plan_path(self, cones, current_car_pos):
         """
-        지도 상의 콘들을 기반으로 주행 경로를 생성합니다.
+        지도 상의 콘들을 기반으로 Delaunay Triangulation을 이용해 주행 경로를 생성합니다.
         cones: TrackMap의 self.cones 리스트
         current_car_pos: 차량의 현재 위치 [x, y]
+        Returns:
+            (path, tri, all_points) or (None, None, None)
         """
-        # 1. 색상별로 콘 분리하고 차량으로부터의 거리에 따라 정렬
-        left_cones = sorted([c for c in cones if c['color_id'] == 1], key=lambda c: np.hypot(c['x']-current_car_pos[0], c['y']-current_car_pos[1]))
-        right_cones = sorted([c for c in cones if c['color_id'] == 2], key=lambda c: np.hypot(c['x']-current_car_pos[0], c['y']-current_car_pos[1]))
+        # 1. Get blue (1) and yellow (2) cones
+        blue_cones = [c for c in cones if c['color_id'] == 1]
+        yellow_cones = [c for c in cones if c['color_id'] == 2]
 
-        if len(left_cones) < 2 or len(right_cones) < 2:
-            return None # 경로를 만들기에 콘이 부족
+        if len(blue_cones) < 2 or len(yellow_cones) < 2:
+            return None, None, None # Not enough cones to define a path
 
-        # 2. 콘 페어링 및 중간점 계산
+        # 2. Prepare points for triangulation
+        all_points = np.array([[c['x'], c['y']] for c in blue_cones] + [[c['x'], c['y']] for c in yellow_cones])
+        if len(all_points) < 3:
+            return None, None, None # Triangulation requires at least 3 points
+
+        # Create a mapping from point index back to cone color
+        # 1 for blue, 2 for yellow
+        num_blue = len(blue_cones)
+        colors = np.array([1] * num_blue + [2] * len(yellow_cones))
+
+        # 3. Perform Delaunay Triangulation
+        try:
+            tri = Delaunay(all_points)
+        except Exception as e:
+            rospy.logwarn(f"Delaunay triangulation failed: {e}")
+            return None, None, None
+
+        # 4. Find centerline edges (connecting blue and yellow cones)
         midpoints = []
-        # 왼쪽 콘을 기준으로 가장 가까운 오른쪽 콘을 찾아 페어링
-        for lc in left_cones:
-            distances = [np.hypot(lc['x'] - rc['x'], lc['y'] - rc['y']) for rc in right_cones]
-            if not distances: continue
-            closest_rc = right_cones[np.argmin(distances)]
-            
-            # 중간점 계산
-            mid_x = (lc['x'] + closest_rc['x']) / 2
-            mid_y = (lc['y'] + closest_rc['y']) / 2
-            midpoints.append([mid_x, mid_y])
+        for simplex in tri.simplices:
+            # A simplex is a triangle, defined by indices of 3 points
+            for i in range(3):
+                p1_idx = simplex[i]
+                p2_idx = simplex[(i + 1) % 3]
+                
+                color1 = colors[p1_idx]
+                color2 = colors[p2_idx]
 
-        if len(midpoints) < 3: # 스플라인을 만들기에 점이 부족
-            return None
+                # Check if the edge connects a blue and a yellow cone
+                if color1 != color2:
+                    p1 = all_points[p1_idx]
+                    p2 = all_points[p2_idx]
+                    
+                    # Filter out unrealistically long edges
+                    edge_length = np.linalg.norm(p1 - p2)
+                    if edge_length < self.max_edge_length:
+                        midpoint = (p1 + p2) / 2.0
+                        midpoints.append(midpoint)
+        
+        if len(midpoints) < 3: # Not enough midpoints to create a spline
+            return None, tri, all_points
 
-        # 3. 중간점들을 스플라인으로 부드럽게 보간
+        # 5. Sort midpoints by distance from the car and smooth with a spline
         midpoints = np.array(sorted(midpoints, key=lambda p: np.hypot(p[0]-current_car_pos[0], p[1]-current_car_pos[1])))
         
-        # k must be less than or equal to the number of points
-        k = min(2, len(midpoints)-1)
-        if k < 1: return None
+        # Remove duplicate midpoints that might arise from shared edges
+        unique_midpoints, indices = np.unique(midpoints, axis=0, return_index=True)
+        midpoints = unique_midpoints[np.argsort(indices)]
 
-        tck, u = splprep([midpoints[:, 0], midpoints[:, 1]], s=1.0, k=k) # s: 스무딩 강도, k: 곡선 차수
+        if len(midpoints) < 3:
+            return None, tri, all_points
+
+        k = min(2, len(midpoints)-1)
+        if k < 1: return None, tri, all_points
+
+        tck, u = splprep([midpoints[:, 0], midpoints[:, 1]], s=0.5, k=k) # s: smoothing factor
         
-        # 4. 부드러운 경로상의 새로운 점들 생성
-        u_new = np.linspace(u.min(), u.max(), 50) # 50개의 점으로 경로 구성
+        u_new = np.linspace(u.min(), u.max(), 50) # Create 50 points for the path
         x_new, y_new = splev(u_new, tck)
 
         path = np.vstack((x_new, y_new)).T
-        return path # [[x1, y1], [x2, y2], ...] 형태의 경로 반환
+        return path, tri, all_points
 
 # ==================== Utility Classes ====================
 
@@ -914,6 +1023,7 @@ class GPSIMUProcessor:
         self.prev_gps_time = 0.0
         self.prev_x, self.prev_y, self.prev_z = 0, 0, 0
         self.yaw_filter_alpha = rospy.get_param("/localization/localization/yaw_filter_alpha", 0.05)
+        self.yaw_initialized = False
         # Initialize state vector [x, y, yaw, vx, vy, yawrate, ax, ay]
         self.state = [0,0,0,0,0,0,0,0]
 
@@ -938,6 +1048,13 @@ class GPSIMUProcessor:
         
         return np.array([x, y])
     def updateIMU(self, imu_input, yaw_from_imu, current_time):
+        # On the first run, initialize the yaw directly to avoid starting from 0
+        if not self.yaw_initialized:
+            self.state[2] = yaw_from_imu
+            self.yaw_initialized = True
+            self.prev_time = current_time
+            return
+
         # Set current inputs (ax, ay, yawrate)
         self.state[6] = imu_input[0] # ax
         self.state[7] = imu_input[1] # ay
