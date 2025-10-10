@@ -82,7 +82,7 @@ perception:
     bilateral_filter_diameter: 9
 
   camera_hsv_window_size:
-    window_size: 15
+    window_size: 25
 
   camera_hsv_yellow:
     # HSV thresholds for yellow cone detection
@@ -121,6 +121,7 @@ localization:
     
     # Velocity Estimation
     alpha_velocity: 0.1
+    yaw_filter_alpha : 0.8
 
 behavior_planning:
   default: {}

@@ -19,7 +19,9 @@ from enum import Enum
 from typing import List, Tuple, Optional
 import time
 from collections import deque, namedtuple
-import threading
+
+import tf2_ros
+from geometry_msgs.msg import TransformStamped, Point
 
 # ROS
 from std_msgs.msg import String
@@ -28,17 +30,13 @@ from visualization_msgs.msg import Marker, MarkerArray
 from sensor_msgs.msg import PointCloud2, Image, Imu, NavSatFix, PointField
 import sensor_msgs.point_cloud2 as pc2
 from cv_bridge import CvBridge
-import tf2_ros
-from geometry_msgs.msg import TransformStamped, Point
 
 # 3D LiDAR
 from sklearn.cluster import DBSCAN
 from sklearn.linear_model import RANSACRegressor
 import matplotlib.pyplot as plt
-
-# Tracking
-from scipy.optimize import linear_sum_assignment
 from scipy.spatial.distance import cdist
+from scipy.interpolate import splprep, splev
 
 # Data Logger
 import os
@@ -59,7 +57,6 @@ class AutonomousEvent(Enum):
 
 class FormulaAutonomousSystem:
     def __init__(self):
-        self.tf_broadcaster = tf2_ros.TransformBroadcaster()
         self.is_initialized = False
         self.x_min, self.x_max = 0,0
         self.y_min, self.y_max = 0,0
@@ -77,25 +74,19 @@ class FormulaAutonomousSystem:
         max_lidar_points=50  # 필요시 이 값을 조절
         )
         # =========================================================
+        self.tf_broadcaster = tf2_ros.TransformBroadcaster()
 
-        # State machine: Autonomous mode
+        # Publishers for visualization
+        self.path_publisher = rospy.Publisher("/centerline_path", Marker, queue_size=1)
+        self.map_cone_publisher = rospy.Publisher("/map_cones", MarkerArray, queue_size=1)
+
+        # System Components
         self.gps_util = GPSIMUProcessor()
         self.state_machine = StateMachine()
         self.lidar_util = LiDARProcessor()
         self.camera_util = CameraProcessor()
-        self.map_cones_publisher = rospy.Publisher("/map_cones", PointCloud2, queue_size=1)
-        self.tracker = ConeTracker()
-        self.trajectory_planner = TrajectoryPlanner()
-        self.controller = StanleyController()
-
-        rospy.on_shutdown(self.shutdown_hook)
-        
-    def shutdown_hook(self):
-        """Handles node shutdown procedures."""
-        rospy.loginfo("Shutdown hook called. Saving final data...")
-        final_map = self.tracker.get_all_tracks_for_saving()
-        self.data_logger.close(cone_map=final_map)
-        cv2.destroyAllWindows()
+        self.track_map = TrackMap()
+        self.path_planner = PathPlanner()
         
     def init(self):
         """Initialize the system"""
@@ -115,7 +106,6 @@ class FormulaAutonomousSystem:
         self.left_rr, self.left_rp, self.left_ry = rospy.get_param("/perception/camera_extrinsics/rotation_roll"), rospy.get_param("/perception/camera_extrinsics/rotation_pitch"), rospy.get_param("/perception/camera_extrinsics/rotation_yaw")
         self.right_tx, self.right_ty, self.right_tz = rospy.get_param("/perception/camera_right_extrinsics/translation_x"), rospy.get_param("/perception/camera_right_extrinsics/translation_y"),rospy.get_param("/perception/camera_right_extrinsics/translation_z")
         self.right_rr, self.right_rp, self.right_ry = rospy.get_param("/perception/camera_right_extrinsics/rotation_roll"), rospy.get_param("/perception/camera_right_extrinsics/rotation_pitch"), rospy.get_param("/perception/camera_right_extrinsics/rotation_yaw")
-    
         return True
 
     def run(self, lidar_msg, camera1_msg, camera2_msg, imu_msg, gps_msg, go_signal_msg):
@@ -127,8 +117,6 @@ class FormulaAutonomousSystem:
                 - control_command (ControlCommand): 제어 명령
                 - autonomous_mode (String): 자율주행 모드 상태
         """
-        
-
         # print(self.state_machine.state)
 
          # 시스템 초기화 확인
@@ -145,27 +133,27 @@ class FormulaAutonomousSystem:
         imu_data = [acc[0], acc[1], gyro[2]]
         roll,pitch,yaw = self.gps_util.Quat_to_Euler(orientation)
         lat, lon, alt = self.get_gps_data(gps_msg)
-        vtL = self.lidar_util.vehicle_to_lidar_Transform()
+        # vtL = self.lidar_util.vehicle_to_lidar_Transform()
+        # print(vtL)
         gps_data = self.gps_util.gps_to_local(lat, lon)
         self.gps_util.updateIMU(imu_data, yaw, imu_msg.header.stamp.to_sec())
         self.gps_util.updateGPS(gps_data,gps_msg.header.stamp.to_sec())
-        rospy.loginfo_throttle(1.0,f"v = {round(math.sqrt(self.gps_util.state[3]**2 + self.gps_util.state[4]**2),4)} m/s")
-        # print(f"v = {math.sqrt(self.gps_util.state[3]**2 + self.gps_util.state[4]**2)} m/s")
-        
+        vehicle_state = self.gps_util.state
 
         # ==================== TF Publisher ====================
         t = TransformStamped()
         t.header.stamp = rospy.Time.now()
         t.header.frame_id = "map"
-        t.child_frame_id = "fsds/FSCar"
-        t.transform.translation.x = self.gps_util.state[0]
-        t.transform.translation.y = self.gps_util.state[1]
+        t.child_frame_id = "odom"
+        t.transform.translation.x = vehicle_state[0]
+        t.transform.translation.y = vehicle_state[1]
         t.transform.translation.z = 0.0
-        
-        yaw = self.gps_util.state[2]
-        half_yaw = yaw / 2.0
-        q_z = math.sin(half_yaw)
-        q_w = math.cos(half_yaw)
+
+        # Convert yaw to quaternion
+        veh_yaw = vehicle_state[2]
+        q_z = math.sin(veh_yaw / 2.0)
+        q_w = math.cos(veh_yaw / 2.0)
+
         t.transform.rotation.x = 0.0
         t.transform.rotation.y = 0.0
         t.transform.rotation.z = q_z
@@ -174,73 +162,147 @@ class FormulaAutonomousSystem:
         self.tf_broadcaster.sendTransform(t)
         # =====================================================
 
+        rospy.loginfo_throttle(1.0,f"v = {round(math.sqrt(vehicle_state[3]**2 + vehicle_state[4]**2),4)} m/s")
+        # print(f"state = {self.gps_util.state}, yaw = {math.degrees(self.gps_util.state[2])}")
         ## LiDAR Processed
+        # print(f"parameters = {self.dbscan_eps, self.dbscan_points, self.ransac_distance, self.ransac_iter, self.x_min, self.x_max}")
         points=self.get_lidar_point_cloud(lidar_msg)
         filtered = self.lidar_util.filtering_points(points, (self.x_min, self.x_max), (self.y_min, self.y_max), (self.z_min, self.z_max))
         removal =  self.lidar_util.ransac_plane_removal(filtered, threshold=self.ransac_distance, max_trials=self.ransac_iter)
+        # print(self.dbscan_eps)
         cluster = self.lidar_util.cluster_points(removal, eps=self.dbscan_eps, min_samples=self.dbscan_points)
-
-        # ========================= Camera Processed ====================
+        # print(f"cluster = {cluster}")
+        # print(f"gps_data = {gps_data}")
+        # print(f"x = {self.gps_util.state[0]}, y = {self.gps_util.state[1]}, yaw = {math.degrees(self.gps_util.state[2])}")
+        # print(cluster*math.sin(yaw))
+       
         image1 = self.get_camera_image(camera1_msg)
         image2 = self.get_camera_image(camera2_msg)
         cam_mat = self.camera_util.cam_matrix()
-        cam1_transform = self.camera_util.transform_matrix(self.left_tx, self.left_ty, self.left_tz, self.left_rr, self.left_rp, self.left_ry)
-        cam2_transform = self.camera_util.transform_matrix(self.right_tx, self.right_ty, self.right_tz, self.right_rr, self.right_rp, self.right_ry)
-
+        cam1_transform = self.camera_util.transform_matrix(-self.left_tx, -self.left_ty, -self.left_tz, self.left_rr, self.left_rp, self.left_ry)
+        cam2_transform = self.camera_util.transform_matrix(-self.right_tx, -self.right_ty, -self.right_tz, self.right_rr, self.right_rp, self.right_ry)
+        # print(cam2_transform)
         image1 = self.camera_util.preprocessImage(image1)
         image2 = self.camera_util.preprocessImage(image2)
+        
+        # print(color)
         cam1_pts = self.camera_util.projectToCam(cluster, cam1_transform)
-        cam2_pts = self.camera_util.projectToCam(cluster,cam2_transform)
-        img1 = self.camera_util.visualization(cam1_pts, image1)
-        img2 = self.camera_util.visualization(cam2_pts, image2)
-        cv2.imshow("image1", img1)
-        cv2.imshow("image2", img2)
-        cv2.waitKey(1)
-        # ==================== Map Building & Tracking =====================
+        cam2_pts = self.camera_util.projectToCam(cluster, cam2_transform)
+        # color = self.camera_util.detectConeColor(cam1_pts, image1)
+
         if cluster.size > 0:
             # Transform cluster points to map frame
             veh_x = self.gps_util.state[0]
             veh_y = self.gps_util.state[1]
             veh_yaw = self.gps_util.state[2]  # Assumes radians
 
-            cos_yaw = math.cos(-veh_yaw)
-            sin_yaw = math.sin(-veh_yaw)
+            cos_yaw = math.cos(veh_yaw)
+            sin_yaw = math.sin(veh_yaw)
             rot_matrix = np.array([[cos_yaw, -sin_yaw],
                                    [sin_yaw,  cos_yaw]])
-            map_frame_points = np.dot(cluster[:, :2], rot_matrix.T) + np.array([veh_x, veh_y])
-            global_clusters = np.hstack([map_frame_points, cluster[:, 2, np.newaxis]])
-
-            # Update tracker
-            self.tracker.update(global_clusters)
-
-        # Publish the active tracks for visualization
-        active_tracks = self.tracker.get_active_tracks()
-        if active_tracks.size > 0:
-            rospy.loginfo_throttle(1.0, f"Publishing {active_tracks.shape[0]} active cones.")
-            self.publish_map_cones(active_tracks)
+            # Prepare a list to store cones with color information
+            cones_with_color = []
+            left, right = [], []
+            # Iterate through each 3D cluster point and its corresponding 2D projected point
+            for i, cone_3d_veh_frame in enumerate(cluster):
+                # Project 3D cone to camera 1 image plane
+                # Note: cam1_pts is a list of projected points, need to get the i-th one
+                if i < len(cam1_pts):
+                    cone_2d_img_frame = cam1_pts[i]
+                    detected_color_left = self.camera_util.detectConeColor(cone_2d_img_frame, image1, debug_image=image1)
+                    detected_color_right = self.camera_util.detectConeColor(cam2_pts[i], image2, debug_image=image2)
+                    
+                    color_id = 0 # Default to unknown
+                    if detected_color_left == "blue" or detected_color_right == "blue":
+                        # print("Blue cone detected")
+                        color_id = 1
+                    elif detected_color_left == "yellow" or detected_color_right == "yellow":
+                        # print("Yellow cone detected")
+                        color_id = 2
+                    elif detected_color_left == "orange" or detected_color_right == "orange":
+                        # print("Orange cone detected")
+                        color_id = 3
+                    
+                    # Transform 3D cone from vehicle frame to map frame
+                    # print(f"3D Cone (Vehicle Frame): {cone_3d_veh_frame}, Color ID: {color_id}")
+                    cone_3d_map_frame_xy = np.dot(cone_3d_veh_frame[:2], rot_matrix.T) + np.array([veh_x, veh_y])
+                    cone_3d_map_frame_z = cone_3d_veh_frame[2] # Z-coordinate remains the same
+                    
+                    cones_with_color.append([cone_3d_map_frame_xy[0], cone_3d_map_frame_xy[1], cone_3d_map_frame_z, color_id])
+                    if color_id == 1:
+                        left.append([cone_3d_map_frame_xy[0], cone_3d_map_frame_xy[1]])
+                    elif color_id == 2:
+                        right.append([cone_3d_map_frame_xy[0], cone_3d_map_frame_xy[1]])
+            
+            global_clusters = np.array(cones_with_color)
         else:
-            rospy.loginfo_throttle(1.0, "No active cones to publish.")
+            global_clusters = np.empty((0, 4)) # Ensure global_clusters is always a 2D array with 4 columns
 
-        # ==================== Trajectory Planning =====================
-        vehicle_state = self.gps_util.state
-        waypoints = self.trajectory_planner.plan(vehicle_state, active_tracks)
-        # ==============================================================
+        # ==================== Map & Path ===================
+        # Update map with new cone observations
+        self.track_map.update(global_clusters)
+
+        # Plan path using the map
+        path = self.path_planner.plan_path(self.track_map.get_cones(), vehicle_state[:2])
+
+        # Visualize Map and Path
+        self.publish_map_cones()
+        if path is not None:
+            self.publish_path(path)
+
+        # =====================================================
+        img1 = self.camera_util.visualization(cam1_pts, image1)
+        img2 = self.camera_util.visualization(cam2_pts, image2)
+        cv2.imshow("image1", img1)
+        cv2.imshow("image2", img2)
+        # cv2.imshow("Camera1", self.get_camera_image(camera1_msg))
+        # cv2.imshow("Camera2", self.get_camera_image(camera2_msg))
+        cv2.waitKey(1)
         
-        # ============================ Control ===========================
-        control_command_msg = ControlCommand()
-        print(self.state_machine.current_state == AutonomousMode.AS_DRIVING, len(waypoints))
-        if self.state_machine.current_state == AutonomousMode.AS_DRIVING and len(waypoints) > 0:
-            throttle, steer, brake = self.controller.compute_control(vehicle_state, waypoints)
-            print(throttle, steer, brake)
-            control_command_msg.throttle = throttle
-            control_command_msg.steering = steer
-            control_command_msg.brake = brake
-        # ================================================================
+        # print(f"left = {left}, right = {right}")
+
+        ## LiDAR Cone mean point calculate
+        # min_left, min_right = math.inf, math.inf
+        # for p in left:
+        #     # print(f"distance  = {math.sqrt(r[0]**2+r[1]**2)}")
+        #     distance = math.sqrt(p[0]**2 + p[1] **2)
+        #     if min_left > distance:
+        #         min_left = distance
+        #         left_point = [p[0],p[1]]
+        #     # print(f"minimum_distance_left = {min_left}")
+        # for r in right:
+        #     # print(f"distance  = {math.sqrt(r[0]**2+r[1]**2)}")
+        #     distance = math.sqrt(r[0]**2 + r[1] **2)
+        #     if min_right > distance:
+        #         min_right = distance
+        #         right_point = [r[0],r[1]]
+        #     # print(f"minimum_distance_right  = {min_right}")
+
+        # mean_point = [(left_point[0] + right_point[0]) / 2, (left_point[1] + right_point[1])/ 2]
+        # # print(mean_point)
+        self.lidar_util.publish_point_cloud(cluster)
+        # print(len(cluster))
+        
 
         ## GO_SIGNAL
         if go_signal_msg.mission != "None" and go_signal_msg.mission != "":
             self.state_machine.inject_go_signal(go_signal_msg.mission, go_signal_msg.track)
         autonomous_mode.data = self.state_machine.get_current_state_string()
+
+        # filtered_points = LiDARProcessor().filtering_points(np.array([[x,y,z]]), (1.0, 20.0), (-10.0, 10.0), (-0.5, 0.5))
+        # print("Filtered Points:", filtered_points)
+        ## GPS velocity
+        # Control
+        control_command_msg = ControlCommand()
+        # print(self.state_machine.current_state == AutonomousMode.AS_DRIVING)#, len(waypoints))
+        if self.state_machine.current_state == AutonomousMode.AS_DRIVING and path is not None and len(path) > 0:
+            throttle, steer, brake = 0,0,0
+            # TODO: Implement MPC controller here using the 'path'
+            # print(throttle, steer, brake)
+            control_command_msg.throttle = throttle
+            control_command_msg.steering = steer
+            control_command_msg.brake = brake
+        # print(go_signal_msg)
 
         # ==================== Data Logger (Test) ====================
         self.data_logger.log_entry(
@@ -248,36 +310,91 @@ class FormulaAutonomousSystem:
             control_command=control_command_msg,
             imu_acc=acc,
             imu_gyro=gyro,
-            state= self.gps_util.state,
+            state= vehicle_state,
             camera1_image=img1,
             camera2_image=img2,
-            lidar_points=global_clusters
+            lidar_points=global_clusters,
+            map_cones=self.track_map.get_cones()
         )
         # =========================================================
+        
+        # plt.axis([-50,50,-20,200])
+        # if len(cluster) == 0:
+        #     pass
+        
+        # plt.scatter(x=cluster[:,0] + offset[0] ,y=cluster[:,1]+ offset[1])
+        # plt.pause(0.001)
+        
+        # plt.clf()
+        # # print(go_signal_msg.mission, go_signal_msg.track)
 
         return True, control_command_msg, autonomous_mode
 
-    def publish_map_cones(self, cones):
+    def publish_map_cones(self):
+        marker_array = MarkerArray()
         header = rospy.Header()
         header.stamp = rospy.Time.now()
-        header.frame_id = "map" # Cones are in map frame
+        header.frame_id = "map"
 
-        # Define PointField for x, y, z
-        fields = [
-            PointField('x', 0, PointField.FLOAT32, 1),
-            PointField('y', 4, PointField.FLOAT32, 1),
-            PointField('z', 8, PointField.FLOAT32, 1),
-        ]
+        # Add markers for each cone in the map
+        for cone in self.track_map.get_cones():
+            marker = Marker()
+            marker.header = header
+            marker.ns = "map_cones"
+            marker.id = cone['id']
+            marker.type = Marker.CUBE
+            marker.action = Marker.ADD
+            marker.pose.position.x = cone['x']
+            marker.pose.position.y = cone['y']
+            marker.pose.position.z = cone.get('z', 0.0) # Use z if available
+            marker.pose.orientation.w = 1.0
+            marker.scale.x = 0.3
+            marker.scale.y = 0.3
+            marker.scale.z = 0.5
+            marker.color.a = 0.8
+            if cone['color_id'] == 1: # Blue
+                marker.color.r = 0.0
+                marker.color.g = 0.0
+                marker.color.b = 1.0
+            elif cone['color_id'] == 2: # Yellow
+                marker.color.r = 1.0
+                marker.color.g = 1.0
+                marker.color.b = 0.0
+            elif cone['color_id'] == 3: # Orange
+                marker.color.r = 1.0
+                marker.color.g = 0.5
+                marker.color.b = 0.0
+            else: # Unknown
+                marker.color.r = 0.5
+                marker.color.g = 0.5
+                marker.color.b = 0.5
+            marker_array.markers.append(marker)
+        
+        self.map_cone_publisher.publish(marker_array)
 
-        # Extract only x, y, z coordinates from cones (cones[:, 1:4])
-        # Ensure cones is not empty before trying to slice
-        if cones.size == 0:
-            points_data = np.empty((0, 3), dtype=np.float32)
-        else:
-            points_data = cones[:, 1:4].astype(np.float32) # Assuming cones are [id, x, y, z]
+    def publish_path(self, path):
+        marker = Marker()
+        marker.header.stamp = rospy.Time.now()
+        marker.header.frame_id = "map"
+        marker.ns = "centerline_path"
+        marker.id = 0
+        marker.type = Marker.LINE_STRIP
+        marker.action = Marker.ADD
+        marker.pose.orientation.w = 1.0
+        marker.scale.x = 0.2  # Line width
+        marker.color.a = 1.0
+        marker.color.r = 0.0
+        marker.color.g = 1.0
+        marker.color.b = 0.0
 
-        point_cloud_msg = pc2.create_cloud(header, fields, points_data)
-        self.map_cones_publisher.publish(point_cloud_msg)
+        for point in path:
+            p = Point()
+            p.x = point[0]
+            p.y = point[1]
+            p.z = 0.1 # slightly above ground
+            marker.points.append(p)
+
+        self.path_publisher.publish(marker)
 
     def get_lidar_point_cloud(self, msg):
         """Convert ROS PointCloud2 message to point cloud"""
@@ -324,7 +441,18 @@ class CameraProcessor:
         self.preprocess = rospy.get_param("/perception/camera_image_processing/enable_preprocessing")
         self.sigma = rospy.get_param("/perception/camera_image_processing/gaussian_blur_sigma")
         self.bilateral = rospy.get_param("/perception/camera_image_processing/bilateral_filter_diameter")
-       
+        
+        self.hsv_window_size = rospy.get_param("/perception/camera_hsv_window_size/window_size", 15)
+
+        self.hsv_yellow_min = np.array([rospy.get_param("/perception/camera_hsv_yellow/hue_min"), rospy.get_param("/perception/camera_hsv_yellow/saturation_min"), rospy.get_param("/perception/camera_hsv_yellow/value_min")])
+        self.hsv_yellow_max = np.array([rospy.get_param("/perception/camera_hsv_yellow/hue_max"), 255, 255])
+
+        self.hsv_blue_min = np.array([rospy.get_param("/perception/camera_hsv_blue/hue_min"), rospy.get_param("/perception/camera_hsv_blue/saturation_min"), rospy.get_param("/perception/camera_hsv_blue/value_min")])
+        self.hsv_blue_max = np.array([rospy.get_param("/perception/camera_hsv_blue/hue_max"), 255, 255])
+
+        self.hsv_orange_min = np.array([rospy.get_param("/perception/camera_hsv_orange/hue_min"), rospy.get_param("/perception/camera_hsv_orange/saturation_min"), rospy.get_param("/perception/camera_hsv_orange/value_min")])
+        self.hsv_orange_max = np.array([rospy.get_param("/perception/camera_hsv_orange/hue_max"), 255, 255])
+
     def cam_matrix(self):
         camera_matrix = [
             [self.fx, 0, self.px],
@@ -361,26 +489,38 @@ class CameraProcessor:
     
     def projectToCam(self, points, transform):
         projected_points = []
-        Trans = np.array(transform).T
-        rotation = Trans[:3,:3]
-        translation = Trans[3,:3]
+        
+        # The transform matrix represents T_camera_from_vehicle.
+        # It should be used directly without transposition.
+        T = np.array(transform)
+        rotation = T[:3, :3]
+        translation = T[:3, 3] # Translation is the last column of the original matrix
 
         for point in points:
-            cone_point_in_base = np.array([point[0], point[1], point[2]]).T
+            # point is a 3D point in the vehicle (odom) frame
+            cone_point_in_base = np.array([point[0], point[1], point[2]])
+            
+            # Apply the transformation: p_camera = R * p_vehicle + t
             cone_point_in_cam = np.dot(rotation, cone_point_in_base) + translation
 
+            # The point is now in the camera's ROS-standard coordinate system (X-fwd, Y-left, Z-up)
+            # We need to check if the point is in front of the camera before proceeding.
+            # In the ROS convention for cameras, the X axis points forward.
             if cone_point_in_cam[0] <= 0:
                 continue
 
-            x_cam = -cone_point_in_cam[1]
-            y_cam = cone_point_in_cam[2]
-            z_cam = cone_point_in_cam[0]
+            # Convert from ROS camera coordinates (X-fwd, Y-left, Z-up)
+            # to standard computer vision/image coordinates (Z-fwd, X-right, Y-down)
+            z_cv = cone_point_in_cam[0]  # ROS X -> CV Z
+            x_cv = -cone_point_in_cam[1] # ROS Y -> CV X (Y-left = -X-right)
+            y_cv = -cone_point_in_cam[2] # ROS Z -> CV Y (Z-up   = -Y-down) <--- Corrected sign
 
-            x_img = x_cam / z_cam
-            y_img = y_cam / z_cam
-
-            u = self.fx * x_img + self.px
-            v = self.fy * y_img + self.py
+            # Perform pinhole projection
+            # u = fx * (X/Z) + px
+            # v = fy * (Y/Z) + py
+            u = self.fx * (x_cv / z_cv) + self.px
+            v = self.fy * (y_cv / z_cv) + self.py
+            
             projected_points.append((u, v))
         return projected_points
 
@@ -396,8 +536,75 @@ class CameraProcessor:
                 cv2.circle(viz, projected, 10, (0, 0, 0), 2)
         return viz
     
-    def detectConeColor(self, cone, rgb_image):
-        pass
+    def detectConeColor(self, cone_point_img, rgb_image, debug_image=None):
+        # cone_point_img is expected to be a single (u, v) tuple or list
+        if cone_point_img is None or not isinstance(cone_point_img, (tuple, list)) or len(cone_point_img) != 2:
+            return "unknown"
+        cv2.imshow("debug", cv2.cvtColor(rgb_image,cv2.COLOR_BGR2HSV))
+        u, v = int(cone_point_img[0]), int(cone_point_img[1])
+        
+        # Define ROI around the cone
+        half_window = self.hsv_window_size // 2
+        x_min = max(0, u - half_window)
+        x_max = min(rgb_image.shape[1], u + half_window)
+        y_min = max(0, v - half_window)
+        y_max = min(rgb_image.shape[0], v + half_window)
+
+        # Check if ROI is valid
+        if x_max <= x_min or y_max <= y_min:
+            if debug_image is not None and (0 <= u < rgb_image.shape[1] and 0 <= v < rgb_image.shape[0]):
+                cv2.circle(debug_image, (u, v), 8, (0, 0, 255), -1) # Draw red dot for invalid ROI
+            return "unknown"
+
+        # Draw the ROI on the debug image if provided
+        if debug_image is not None:
+            cv2.rectangle(debug_image, (x_min, y_min), (x_max, y_max), (0, 255, 255), 1)
+
+        roi = rgb_image[y_min:y_max, x_min:x_max]
+
+        if roi.size == 0: # Check if ROI is empty
+            return "unknown"
+
+        # Convert ROI to HSV
+        hsv_roi = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
+
+        # Detect colors
+        color_counts = {
+            "yellow": 0,
+            "blue": 0,
+            "orange": 0
+        }
+
+        # Yellow
+        mask_yellow = cv2.inRange(hsv_roi, self.hsv_yellow_min, self.hsv_yellow_max)
+        color_counts["yellow"] = cv2.countNonZero(mask_yellow)
+
+        # Blue
+        mask_blue = cv2.inRange(hsv_roi, self.hsv_blue_min, self.hsv_blue_max)
+        color_counts["blue"] = cv2.countNonZero(mask_blue)
+
+        # Orange
+        mask_orange = cv2.inRange(hsv_roi, self.hsv_orange_min, self.hsv_orange_max)
+        color_counts["orange"] = cv2.countNonZero(mask_orange)
+
+        # Determine dominant color
+        max_count = 0
+        dominant_color = "unknown"
+        for color, count in color_counts.items():
+            if count > max_count:
+                max_count = count
+                dominant_color = color
+        
+        # A threshold can be added here to avoid detecting noise as a color
+        # For example, if max_count is too low, return "unknown"
+        if max_count < (roi.size * 0.1): # e.g., at least 10% of ROI pixels must be of a color
+            dominant_color = "unknown"
+
+        if debug_image is not None and dominant_color != "unknown":
+             # Put text for the detected color
+             cv2.putText(debug_image, dominant_color, (x_min, y_min - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255,255,255), 1)
+
+        return dominant_color
         
 
 class LiDARProcessor:
@@ -415,14 +622,12 @@ class LiDARProcessor:
 
         self.trans_x,self.trans_y,self.trans_z = rospy.get_param("/perception/lidar_extrinsics/translation_x"), rospy.get_param("/perception/lidar_extrinsics/translation_y"), rospy.get_param("/perception/lidar_extrinsics/translation_z")
         self.rot_r, self.rot_p, self.rot_yaw = rospy.get_param("/perception/lidar_extrinsics/rotation_roll"), rospy.get_param("/perception/lidar_extrinsics/rotation_pitch"), rospy.get_param("/perception/lidar_extrinsics/rotation_yaw")
-
-    def vehicle_to_lidar_Transform(self):
-
-        # print(self.trans_x)
+        # self.gps_util = GPSIMUProcessor()
+    def vehicle_to_lidar_Transform(self, x, y, z, r, p, yaw):
         veh_to_LiDAR = [
-            [math.cos(self.rot_yaw)* math.cos(self.rot_p), math.cos(self.rot_yaw)*math.sin(self.rot_p)*math.sin(self.rot_r) - math.sin(self.rot_yaw)*math.cos(self.rot_r), math.cos(self.rot_yaw)*math.sin(self.rot_p)*math.cos(self.rot_r)+math.sin(self.rot_yaw)*math.sin(self.rot_r), self.trans_x],
-            [math.sin(self.rot_yaw)* math.cos(self.rot_p), math.sin(self.rot_yaw)*math.sin(self.rot_p)*math.sin(self.rot_r) + math.cos(self.rot_yaw)*math.cos(self.rot_r), math.sin(self.rot_yaw)*math.sin(self.rot_p)*math.cos(self.rot_r)- math.cos(self.rot_yaw)*math.sin(self.rot_r), self.trans_y],
-            [-math.sin(self.rot_p) , math.cos(self.rot_p)* math.sin(self.rot_r), math.cos(self.rot_p)*math.cos(self.rot_r), self.trans_z],
+            [math.cos(yaw)* math.cos(p), math.cos(yaw)*math.sin(p)*math.sin(r) - math.sin(yaw)*math.cos(r), math.cos(yaw)*math.sin(p)*math.cos(r)+math.sin(yaw)*math.sin(r), x],
+            [math.sin(yaw)* math.cos(p), math.sin(yaw)*math.sin(p)*math.sin(r) + math.cos(yaw)*math.cos(r), math.sin(yaw)*math.sin(p)*math.cos(r)- math.cos(yaw)*math.sin(r),y],
+            [-math.sin(p) , math.cos(p)* math.sin(r), math.cos(p)*math.cos(r), z],
             [0,0,0,1]
         ]
         return veh_to_LiDAR
@@ -469,21 +674,34 @@ class LiDARProcessor:
         labels = db.labels_
         unique_labels = set(labels)
         
+        mat=self.vehicle_to_lidar_Transform(self.trans_x,self.trans_y,self.trans_z,self.rot_r,self.rot_p,self.rot_yaw)
+        # rot_mat = self.vehicle_to_lidar_Transform(self.gps_util.state[0], self.gps_util.state[1],0,0,0, self.gps_util.state[2])
+        # print(f"GPS = {self.gps_util.state[0], self.gps_util.state[1]}, yaw = {math.degrees(self.gps_util.state[2])}")
+        # print(f"rotation matrix = {rot_mat}, translation matrix = {mat}")
+
         clusters = []
         for label in unique_labels:
             if label == -1:
                 continue
             cluster = points[labels == label]
             center = np.mean(cluster, axis=0)
-            rospy.loginfo_throttle(1.0, f"LiDARProcessor: Cluster center (LiDAR frame): {center}")
             center_4d = np.array([center[0],center[1],center[2],1])
-            mat=self.vehicle_to_lidar_Transform()
+            
             transform_lidar = np.dot(mat, center_4d)
-            rospy.loginfo_throttle(1.0, f"LiDARProcessor: Transformed cluster center (Vehicle frame): {transform_lidar[:3]}")
-            clusters.append(transform_lidar[:3])  # Append transformed x, y, z
-        
+            # print(f"before = {transform_lidar}")
+            # print(f"original = {center}, transformed = {rotated_lidar}")
+            # print(f"transformed = {transform_lidar}")
+            if math.sqrt(transform_lidar[0]**2 + transform_lidar[1]**2) < 5.0:
+                clusters.append(transform_lidar[:3])  # Append transformed x, y, z   
+                # print(f"transformed = {transform_lidar}")     
+            # if math.sqrt(center[0]**2 + center[1]**2) < 5.0:
+                # print(f"original = {center}")
+            # print(center)
+
         return np.array(clusters)
     
+        
+
     def left_right_split(self, points: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
         """Split points into left and right based on y-coordinate"""
         left_points = points[points[:, 1] > 0]
@@ -494,10 +712,11 @@ class LiDARProcessor:
     def publish_point_cloud(self, points: np.ndarray):
         """Publish processed point cloud and their indices as markers"""
 
-    
+        clusters = points
+
         header = rospy.Header()
         header.stamp = rospy.Time.now()
-        header.frame_id = "fsds/FSCar"
+        header.frame_id = "odom"
         
         # Publish point cloud
         fields = [
@@ -505,14 +724,14 @@ class LiDARProcessor:
             PointField('y', 4, PointField.FLOAT32, 1),
             PointField('z', 8, PointField.FLOAT32, 1),
         ]
-        point_cloud_msg = pc2.create_cloud(header, fields, points)
+        point_cloud_msg = pc2.create_cloud(header, fields, clusters)
         self.lidar_publisher.publish(point_cloud_msg)
 
         # Publish markers for indices
         marker_array = MarkerArray()
         
         # Add text markers for each cluster
-        for i, point in enumerate(points):
+        for i, point in enumerate(clusters):
             marker = Marker()
             marker.header = header
             marker.ns = "cluster_indices"
@@ -532,7 +751,7 @@ class LiDARProcessor:
             marker_array.markers.append(marker)
 
         # Add delete markers for old markers that are no longer present
-        for i in range(len(points), self.last_marker_count):
+        for i in range(len(clusters), self.last_marker_count):
             marker = Marker()
             marker.header = header
             marker.ns = "cluster_indices"
@@ -540,9 +759,144 @@ class LiDARProcessor:
             marker.action = Marker.DELETE
             marker_array.markers.append(marker)
 
-        self.last_marker_count = len(points)
+        self.last_marker_count = len(clusters)
         if len(marker_array.markers) > 0:
             self.marker_publisher.publish(marker_array)
+
+# ==================== Map & Path Planner ===================
+
+class TrackMap:
+    def __init__(self):
+        self.cones = []  # 지도에 저장된 콘 리스트. 예: [{'id': 0, 'x': 10.2, 'y': 3.1, 'color_id': 1, 'covariance': np.eye(2)*0.1}]
+        self.next_cone_id = 0
+        self.association_threshold = 1.5  # 1.5미터 안에 있으면 같은 콘으로 간주
+
+    def update(self, new_cones_observations):
+        """
+        새로 감지된 콘(observations)을 기반으로 지도를 업데이트합니다.
+        new_cones_observations: [[x, y, z, color_id], ...] 형태의 numpy 배열
+        """
+        if not self.cones: # 지도가 비어있으면
+            for cone_obs in new_cones_observations:
+                self._add_new_cone(cone_obs)
+            return
+
+        if new_cones_observations.size == 0:
+            return # 새로운 관측이 없으면 업데이트 안함
+
+        # 데이터 연관 수행
+        # 1. 지도에 있는 콘들과 새로 관측된 콘들 간의 거리 행렬 계산
+        map_cone_positions = np.array([[c['x'], c['y']] for c in self.cones])
+        obs_cone_positions = new_cones_observations[:, :2]
+        distance_matrix = cdist(map_cone_positions, obs_cone_positions)
+
+        matched_obs_indices = set()
+        matched_map_indices = set()
+
+        # 2. 지도 상의 각 콘에 대해 가장 가까운 관측 콘을 찾음
+        for map_idx, map_cone in enumerate(self.cones):
+            if map_idx in matched_map_indices:
+                continue
+
+            # 같은 색상의 콘만 대상으로 함
+            possible_matches_mask = (new_cones_observations[:, 3] == map_cone['color_id'])
+            if not np.any(possible_matches_mask):
+                continue
+
+            distances_to_map_cone = distance_matrix[map_idx, possible_matches_mask]
+            obs_indices_for_color = np.where(possible_matches_mask)[0]
+            
+            if not distances_to_map_cone.size:
+                continue
+
+            best_match_local_idx = np.argmin(distances_to_map_cone)
+            min_dist = distances_to_map_cone[best_match_local_idx]
+
+            # 3. 거리가 임계값보다 작으면 매칭 성공
+            if min_dist < self.association_threshold:
+                obs_idx = obs_indices_for_color[best_match_local_idx]
+                
+                if obs_idx not in matched_obs_indices:
+                    # 4. 매칭된 콘 정보 업데이트 (예: 칼만 필터 업데이트 또는 이동 평균)
+                    self._update_cone(map_idx, new_cones_observations[obs_idx])
+                    matched_obs_indices.add(obs_idx)
+                    matched_map_indices.add(map_idx)
+
+        # 5. 매칭되지 않은 관측 콘은 새로운 콘으로 지도에 추가
+        for obs_idx, cone_obs in enumerate(new_cones_observations):
+            if obs_idx not in matched_obs_indices:
+                self._add_new_cone(cone_obs)
+
+    def _add_new_cone(self, cone_obs):
+        new_cone = {
+            'id': self.next_cone_id,
+            'x': cone_obs[0],
+            'y': cone_obs[1],
+            'z': cone_obs[2],
+            'color_id': int(cone_obs[3]),
+            'covariance': np.eye(2) * 0.5  # 초기 불확실성은 높게 설정
+        }
+        self.cones.append(new_cone)
+        self.next_cone_id += 1
+
+    def _update_cone(self, map_idx, cone_obs):
+        # 간단한 이동 평균으로 위치 업데이트
+        alpha = 0.5 
+        self.cones[map_idx]['x'] = alpha * self.cones[map_idx]['x'] + (1 - alpha) * cone_obs[0]
+        self.cones[map_idx]['y'] = alpha * self.cones[map_idx]['y'] + (1 - alpha) * cone_obs[1]
+        # TODO: 칼만 필터 식으로 Covariance 업데이트
+
+    def get_cones(self):
+        return self.cones
+
+class PathPlanner:
+    def __init__(self):
+        pass
+
+    def plan_path(self, cones, current_car_pos):
+        """
+        지도 상의 콘들을 기반으로 주행 경로를 생성합니다.
+        cones: TrackMap의 self.cones 리스트
+        current_car_pos: 차량의 현재 위치 [x, y]
+        """
+        # 1. 색상별로 콘 분리하고 차량으로부터의 거리에 따라 정렬
+        left_cones = sorted([c for c in cones if c['color_id'] == 1], key=lambda c: np.hypot(c['x']-current_car_pos[0], c['y']-current_car_pos[1]))
+        right_cones = sorted([c for c in cones if c['color_id'] == 2], key=lambda c: np.hypot(c['x']-current_car_pos[0], c['y']-current_car_pos[1]))
+
+        if len(left_cones) < 2 or len(right_cones) < 2:
+            return None # 경로를 만들기에 콘이 부족
+
+        # 2. 콘 페어링 및 중간점 계산
+        midpoints = []
+        # 왼쪽 콘을 기준으로 가장 가까운 오른쪽 콘을 찾아 페어링
+        for lc in left_cones:
+            distances = [np.hypot(lc['x'] - rc['x'], lc['y'] - rc['y']) for rc in right_cones]
+            if not distances: continue
+            closest_rc = right_cones[np.argmin(distances)]
+            
+            # 중간점 계산
+            mid_x = (lc['x'] + closest_rc['x']) / 2
+            mid_y = (lc['y'] + closest_rc['y']) / 2
+            midpoints.append([mid_x, mid_y])
+
+        if len(midpoints) < 3: # 스플라인을 만들기에 점이 부족
+            return None
+
+        # 3. 중간점들을 스플라인으로 부드럽게 보간
+        midpoints = np.array(sorted(midpoints, key=lambda p: np.hypot(p[0]-current_car_pos[0], p[1]-current_car_pos[1])))
+        
+        # k must be less than or equal to the number of points
+        k = min(2, len(midpoints)-1)
+        if k < 1: return None
+
+        tck, u = splprep([midpoints[:, 0], midpoints[:, 1]], s=1.0, k=k) # s: 스무딩 강도, k: 곡선 차수
+        
+        # 4. 부드러운 경로상의 새로운 점들 생성
+        u_new = np.linspace(u.min(), u.max(), 50) # 50개의 점으로 경로 구성
+        x_new, y_new = splev(u_new, tck)
+
+        path = np.vstack((x_new, y_new)).T
+        return path # [[x1, y1], [x2, y2], ...] 형태의 경로 반환
 
 # ==================== Utility Classes ====================
 
@@ -554,19 +908,28 @@ class GPSIMUProcessor:
             self.origin_lon = rospy.get_param("/localization/localization/ref_wgs84_longitude", 0.0)
             self.origin_alt = rospy.get_param("/localization/localization/ref_wgs84_altitude", 0.0)
         else: self.origin_lat, self.origin_lon, self.origin_alt = 0,0,0
-        self.alpha = rospy.get_param("/localization/localization/alpha_velocity", 0.8)
+        self.alpha = rospy.get_param("/localization/localization/alpha_velocity", 0.0)
         self.R = 6378137.0  # WGS84 타원체의 반경 (미터 단위)
         self.prev_time = 0.0
         self.prev_gps_time = 0.0
         self.prev_x, self.prev_y, self.prev_z = 0, 0, 0
+        self.yaw_filter_alpha = rospy.get_param("/localization/localization/yaw_filter_alpha", 0.05)
         # Initialize state vector [x, y, yaw, vx, vy, yawrate, ax, ay]
         self.state = [0,0,0,0,0,0,0,0]
 
+    ## Set origin GPS coordinates (relative to this point)
+    def set_origin(self, lat: float, lon: float, alt: float):
+        self.origin_lat = lat
+        self.origin_lon = lon
+        self.origin_alt = alt
+
     def gps_to_local(self, lat: float, lon: float) -> Tuple[float, float]:
-        # print(self.origin_set)
         if not self.origin_set:
             raise ValueError("Origin GPS coordinates not set.")
-                
+        
+        # print(self.origin_lat, self.origin_lon, self.origin_alt)
+        # print(lat,lon,alt)
+        
         d_lat = math.radians(lat - self.origin_lat)
         d_lon = math.radians(lon - self.origin_lon)
         
@@ -574,13 +937,30 @@ class GPSIMUProcessor:
         y = d_lat * self.R
         
         return np.array([x, y])
-    def updateIMU(self, imu_input, yaw, current_time):
-        self.state[5], self.state[6], self.state[7] = imu_input[0], imu_input[1], imu_input[2]
-        self.state[2] = yaw
+    def updateIMU(self, imu_input, yaw_from_imu, current_time):
+        # Set current inputs (ax, ay, yawrate)
+        self.state[6] = imu_input[0] # ax
+        self.state[7] = imu_input[1] # ay
+        self.state[5] = imu_input[2] # yawrate
 
         dt = current_time - self.prev_time
-        if dt> 0.0 :
-            self.state = self.predictState(self.state, dt)
+        if dt > 0.0:
+            # Predict state (including yaw from gyro)
+            predicted_state = self.predictState(self.state, dt)
+            
+            # The predicted_state[2] is now (old_yaw + yawrate * dt)
+            # This is the high-frequency estimate from the gyro.
+            
+            # Correct the predicted yaw with the low-frequency measurement from the IMU's absolute orientation
+            # This is the complementary filter step.
+            fused_yaw = (1 - self.yaw_filter_alpha) * predicted_state[2] + self.yaw_filter_alpha * yaw_from_imu
+            
+            # To handle angle wrapping, a more robust solution would handle the -pi to pi jump.
+            # For now, this simple fusion will greatly improve stability.
+            
+            predicted_state[2] = fused_yaw
+            self.state = predicted_state
+
         self.prev_time = current_time
 
     def updateGPS(self, gps_msg, current_time):
@@ -589,42 +969,64 @@ class GPSIMUProcessor:
         if dt > 0.0 and current_time > np.finfo(float).eps:
             self.state = self.predictState(self.state, dt)
             self.prev_time = current_time
-            print(dt)
-
-        if self.prev_gps_time > 0.0:
-            dt_gps = current_time - self.prev_gps_time
-            if dt_gps > 0.0:
-                dx,dy = self.state[0] - self.prev_x , self.state[1] - self.prev_y
-                vx,vy = dx/dt_gps, dy/dt_gps
-                self.state[3], self.state[4] = self.alpha * self.state[3] + (1-self.alpha) * (vx * math.cos(-self.state[2]) - vy * math.sin(-self.state[2])), self.alpha * self.state[4] + (1-self.alpha) * (vx * math.sin(-self.state[2])+ vy * math.cos(-self.state[2]))
-
-        self.prev_x, self.prev_y = self.state[0], self.state[1]
+        dt_gps = current_time - self.prev_gps_time
+        if dt_gps > 0.0 and current_time > np.finfo(float).eps:
+            dx,dy = self.state[0] - self.prev_x , self.state[1] - self.prev_y
+            self.prev_x, self.prev_y = self.state[0], self.state[1]
+            vx,vy = dx/dt_gps, dy/dt_gps
+            self.state[3], self.state[4] = self.alpha * self.state[3] + (1-self.alpha) * (vx * math.cos(-self.state[2]) - vy * math.sin(-self.state[2])), self.alpha * self.state[4] + (1-self.alpha) * (vx * math.sin(-self.state[2])+ vy * math.cos(-self.state[2]))
         self.prev_gps_time = current_time
     
     def Quat_to_Euler(self,quaternion):
-        yaw = math.atan2(2*(quaternion[3]*quaternion[0]+quaternion[1]*quaternion[2]),(1-2*(quaternion[0]**2+quaternion[1]**2)))
-        pitch = -math.pi/2 + 2 * math.atan2(math.sqrt(1+2*(quaternion[3]*quaternion[1]-quaternion[0]*quaternion[2])),math.sqrt(1-2*(quaternion[3]*quaternion[1]-quaternion[0]*quaternion[2])))
-        roll = math.atan2(2*(quaternion[3]*quaternion[2]+quaternion[0]*quaternion[1]),(1-2*(quaternion[1]**2+quaternion[2]**2)))
-        return roll,pitch,yaw
+        """
+        Converts a quaternion [w, x, y, z] to Euler angles (roll, pitch, yaw).
+        """
+        w, x, y, z = quaternion[0], quaternion[1], quaternion[2], quaternion[3]
+
+        # roll (x-axis rotation)
+        t0 = +2.0 * (w * x + y * z)
+        t1 = +1.0 - 2.0 * (x * x + y * y)
+        roll = math.atan2(t0, t1)
+
+        # pitch (y-axis rotation)
+        t2 = +2.0 * (w * y - z * x)
+        t2 = +1.0 if t2 > +1.0 else t2
+        t2 = -1.0 if t2 < -1.0 else t2
+        pitch = math.asin(t2)
+
+        # yaw (z-axis rotation)
+        t3 = +2.0 * (w * z + x * y)
+        t4 = +1.0 - 2.0 * (y * y + z * z)
+        yaw = math.atan2(t3, t4)
+
+        return roll, pitch, yaw
     
     
     def predictState(self, state, dt):
-        x = state[0]
-        y = state[1]
-        yaw = state[2]
-        vx = state[3]
-        vy = state[4]
-        yawrate = state[5]
-        ax = state[6]
-        ay = state[7]
+        x, y, yaw, vx, vy, yawrate, ax, ay = state
 
-        yaw_middle = yaw + (yawrate * dt / 2)
-        new_x =  x + vx * math.cos(yaw_middle) * dt + 0.5 * ax * math.cos(yaw_middle) * dt * dt
-        new_y = y + vx * math.sin(yaw_middle) * dt + 0.5 * ax * math.sin(yaw_middle) * dt * dt
+        # Use a mid-point integration for better accuracy
+        yaw_middle = yaw + (yawrate * dt / 2.0)
+        
+        # Calculate displacement in the vehicle's body frame
+        disp_body_x = vx * dt + 0.5 * ax * dt * dt
+        disp_body_y = vy * dt + 0.5 * ay * dt * dt
+
+        # Rotate the body-frame displacement to the map frame
+        cos_yaw_mid = math.cos(yaw_middle)
+        sin_yaw_mid = math.sin(yaw_middle)
+        
+        disp_map_x = disp_body_x * cos_yaw_mid - disp_body_y * sin_yaw_mid
+        disp_map_y = disp_body_x * sin_yaw_mid + disp_body_y * cos_yaw_mid
+
+        # Update state
+        new_x = x + disp_map_x
+        new_y = y + disp_map_y
         new_yaw = yaw + yawrate * dt
         new_vx = vx + ax * dt
         new_vy = vy + ay * dt
 
+        # Note: yawrate, ax, ay are assumed to be constant over the interval dt
         new_state = [new_x, new_y, new_yaw, new_vx, new_vy, yawrate, ax, ay]
         return new_state
 
@@ -640,12 +1042,9 @@ class DataLogger:
         self.session_path = os.path.join(log_directory, session_name)
         os.makedirs(self.session_path, exist_ok=True)
 
-        # Thread-safety
-        self.file_lock = threading.Lock()
-        self.is_closed = False
-
         # 1. 메타데이터 CSV 설정
         self.csv_path = os.path.join(self.session_path, "log.csv")
+        # 헤더에 'lidar_point_count' 필드 추가
         self.csv_header = [
             'timestamp', 'frame_id', 'autonomous_mode',
             'control_steering', 'control_throttle', 'control_brake',
@@ -653,7 +1052,7 @@ class DataLogger:
             'imu_gyro_x', 'imu_gyro_y', 'imu_gyro_z',
             'gps_latitude', 'gps_longitude',
             'yaw', 'vehicle_vx', "vehicle_vy", 'vehicle_yawrate', 'vehicle_ax', 'vehicle_ay',
-            'lidar_point_count'
+            'lidar_point_count'  # <--- 추가된 필드
         ]
         self.metadata_csv_file = open(self.csv_path, 'w', newline='')
         self.metadata_csv_writer = csv.DictWriter(self.metadata_csv_file, fieldnames=self.csv_header)
@@ -675,81 +1074,87 @@ class DataLogger:
             lidar_header.extend([f'p{i}_x', f'p{i}_y'])
         self.lidar_csv_writer.writerow(lidar_header)
 
+        # 4. Map Cones CSV 설정
+        self.map_cones_csv_path = os.path.join(self.session_path, "map_cones.csv")
+        self.map_cones_csv_file = open(self.map_cones_csv_path, 'w', newline='')
+        self.map_cones_csv_writer = csv.writer(self.map_cones_csv_file)
+        self.map_cones_csv_writer.writerow(['frame_id', 'cone_id', 'color_id', 'x', 'y', 'z'])
+
         self.frame_count = 0
         rospy.loginfo(f"DataLogger initialized. Saving logs to: {self.session_path}")
 
     def log_entry(self, autonomous_mode: str, control_command: ControlCommand,
                   imu_acc: list, imu_gyro: list, state: list,
-                  camera1_image: np.ndarray, camera2_image: np.ndarray, lidar_points: np.ndarray):
+                  camera1_image: np.ndarray, camera2_image: np.ndarray, lidar_points: np.ndarray,
+                  map_cones: list):
+        timestamp = rospy.Time.now().to_sec()
 
-        with self.file_lock:
-            if self.is_closed:
-                return
+        # 각 프레임의 실제 LiDAR 포인트 개수 계산
+        point_count = len(lidar_points) if lidar_points is not None else 0  # <--- 실제 포인트 개수 계산
 
-            timestamp = rospy.Time.now().to_sec()
-            point_count = len(lidar_points) if lidar_points is not None else 0
+        # 메타데이터 로깅 (point_count 포함)
+        log_row = {
+            'timestamp': timestamp, 'frame_id': self.frame_count, 'autonomous_mode': autonomous_mode,
+            'control_steering': control_command.steering, 'control_throttle': control_command.throttle, 'control_brake': control_command.brake,
+            'imu_acc_x': imu_acc[0], 'imu_acc_y': imu_acc[1], 'imu_acc_z': imu_acc[2],
+            'imu_gyro_x': imu_gyro[0], 'imu_gyro_y': imu_gyro[1], 'imu_gyro_z': imu_gyro[2],
+            'gps_latitude': state[0], 'gps_longitude': state[1],
+            'yaw' : state[2], 'vehicle_vx' : state[3], 'vehicle_vy' : state[4], 'vehicle_yawrate' : state[5], 'vehicle_ax' : state[6], 'vehicle_ay' : state[7],
+            'lidar_point_count': point_count  # <--- 포인트 개수 추가
+        }
+        self.metadata_csv_writer.writerow(log_row)
 
-            log_row = {
-                'timestamp': timestamp, 'frame_id': self.frame_count, 'autonomous_mode': autonomous_mode,
-                'control_steering': control_command.steering, 'control_throttle': control_command.throttle, 'control_brake': control_command.brake,
-                'imu_acc_x': imu_acc[0], 'imu_acc_y': imu_acc[1], 'imu_acc_z': imu_acc[2],
-                'imu_gyro_x': imu_gyro[0], 'imu_gyro_y': imu_gyro[1], 'imu_gyro_z': imu_gyro[2],
-                'gps_latitude': state[0], 'gps_longitude': state[1],
-                'yaw' : state[2], 'vehicle_vx' : state[3], 'vehicle_vy' : state[4], 'vehicle_yawrate' : state[5], 'vehicle_ax' : state[6], 'vehicle_ay' : state[7],
-                'lidar_point_count': point_count
-            }
-            self.metadata_csv_writer.writerow(log_row)
+        # 카메라 데이터 로깅
+        images = {'cam1': camera1_image, 'cam2': camera2_image}
+        for cam_id, img in images.items():
+            if img is None: continue
+            if self.video_writers[cam_id] is None:
+                h, w, _ = img.shape
+                self.video_writers[cam_id] = cv2.VideoWriter(self.video_paths[cam_id], self.fourcc, self.video_fps, (w, h))
+            self.video_writers[cam_id].write(img)
 
-            images = {'cam1': camera1_image, 'cam2': camera2_image}
-            for cam_id, img in images.items():
-                if img is None: continue
-                if self.video_writers[cam_id] is None:
-                    h, w, _ = img.shape
-                    self.video_writers[cam_id] = cv2.VideoWriter(self.video_paths[cam_id], self.fourcc, self.video_fps, (w, h))
-                self.video_writers[cam_id].write(img)
+        # LiDAR 데이터 로깅 (고정 너비 + 패딩)
+        lidar_row = [self.frame_count]
+        if point_count > 0:
+            points_flat = lidar_points[:self.max_lidar_points, :2].flatten().tolist()
+            lidar_row.extend(points_flat)
+        
+        expected_len = 1 + self.max_lidar_points * 2
+        padding_len = expected_len - len(lidar_row)
+        if padding_len > 0:
+            lidar_row.extend([''] * padding_len)
+        self.lidar_csv_writer.writerow(lidar_row)
 
-            lidar_row = [self.frame_count]
-            if point_count > 0:
-                points_flat = lidar_points[:self.max_lidar_points, :2].flatten().tolist()
-                lidar_row.extend(points_flat)
-            
-            expected_len = 1 + self.max_lidar_points * 2
-            padding_len = expected_len - len(lidar_row)
-            if padding_len > 0:
-                lidar_row.extend([''] * padding_len)
-            self.lidar_csv_writer.writerow(lidar_row)
+        # Map Cones 데이터 로깅
+        if map_cones:
+            for cone in map_cones:
+                cone_row = [
+                    self.frame_count,
+                    cone['id'],
+                    cone['color_id'],
+                    cone['x'],
+                    cone['y'],
+                    cone['z']
+                ]
+                self.map_cones_csv_writer.writerow(cone_row)
 
-            self.frame_count += 1
+        self.frame_count += 1
 
-    def close(self, cone_map=None):
-        """프로그램 종료 시 호출되어 모든 파일 핸들을 안전하게 닫고, 맵 데이터를 저장합니다."""
-        with self.file_lock:
-            if self.is_closed:
-                return
-            
-            self.metadata_csv_file.close()
-            self.lidar_csv_file.close()
-
-            for cam_id, writer in self.video_writers.items():
-                if writer is not None:
-                    writer.release()
-            
-            self.is_closed = True
-
+    def close(self):
+        """프로그램 종료 시 호출되어 모든 파일 핸들을 안전하게 닫습니다."""
+        self.metadata_csv_file.close()
         rospy.loginfo(f"Successfully saved metadata to {self.csv_path}")
+
+        for cam_id, writer in self.video_writers.items():
+            if writer is not None:
+                writer.release()
+                rospy.loginfo(f"Successfully saved video to {self.video_paths[cam_id]}")
+
+        self.lidar_csv_file.close()
         rospy.loginfo(f"Successfully saved LiDAR data to {self.lidar_csv_path}")
 
-        # Save the final cone map
-        if cone_map is not None and cone_map.size > 0:
-            map_csv_path = os.path.join(self.session_path, "map.csv")
-            try:
-                with open(map_csv_path, 'w', newline='') as f:
-                    writer = csv.writer(f)
-                    writer.writerow(['id', 'x', 'y', 'z'])
-                    writer.writerows(cone_map)
-                rospy.loginfo(f"Successfully saved cone map to {map_csv_path}")
-            except IOError as e:
-                rospy.logerr(f"Failed to save cone map: {e}")
+        self.map_cones_csv_file.close()
+        rospy.loginfo(f"Successfully saved map cone data to {self.map_cones_csv_path}")
 
 StateTransitionResult = namedtuple(
     'StateTransitionResult', 
@@ -903,419 +1308,10 @@ class StateMachine:
         print(f"StateMachine: {self._state_to_string(from_state)} -> "
               f"{self._state_to_string(to_state)} (Reason: {reason})")
 
-class TrajectoryPlanner:
+class Control:
     def __init__(self):
-        self.trajectory_publisher = rospy.Publisher("/trajectory_path", Marker, queue_size=1)
-        self.accumulated_midpoints_publisher = rospy.Publisher("/accumulated_midpoints", Marker, queue_size=1)
-        self.poly_degree = rospy.get_param("/local_planning/trajectory/poly_degree", 3)
-        self.lookahead_dist = rospy.get_param("/local_planning/trajectory/lookahead_distance", 20.0)
-        self.num_waypoints = rospy.get_param("/local_planning/trajectory/num_waypoints", 20)
-        self.max_track_width = rospy.get_param("/local_planning/trajectory/max_cone_distance", 5.0) # Adjusted default to 5.0m
-        self.max_x_diff_for_pairing = rospy.get_param("/local_planning/trajectory/max_x_diff_for_pairing", 3.0) # New parameter
-        self.cone_filter_max_distance = rospy.get_param("/local_planning/trajectory/cone_filter_max_distance", 20.0)
-        self.cone_filter_max_angle = math.radians(rospy.get_param("/local_planning/trajectory/cone_filter_max_angle", 60.0)) # Convert to radians
-        self.accumulated_midpoints = deque(maxlen=rospy.get_param("/local_planning/trajectory/max_accumulated_midpoints", 500)) # Store historical midpoints
+        pass
 
-    def plan(self, vehicle_state, cones):
-        # 1. Separate left and right cones
-        if cones.size == 0:
-            self.publish_trajectory([])
-            return []
-
-        veh_x, veh_y, veh_yaw = vehicle_state[0], vehicle_state[1], vehicle_state[2]
-        
-        cos_yaw_inv = math.cos(-veh_yaw)
-        sin_yaw_inv = math.sin(-veh_yaw)
-        rot_matrix_inv = np.array([[cos_yaw_inv, -sin_yaw_inv],
-                                   [sin_yaw_inv,  cos_yaw_inv]])
-        
-        cones_xy = cones[:, 1:3]
-        vehicle_pos = np.array([veh_x, veh_y])
-        
-        cones_in_veh_frame = np.dot(cones_xy - vehicle_pos, rot_matrix_inv)
-
-        left_cones_veh = cones_in_veh_frame[cones_in_veh_frame[:, 1] > 0]
-        right_cones_veh = cones_in_veh_frame[cones_in_veh_frame[:, 1] <= 0]
-
-        # Apply additional filtering based on distance and angle from the vehicle
-        filtered_left_cones = []
-        for cone in left_cones_veh:
-            dist = np.linalg.norm(cone) # Distance from vehicle origin
-            angle = math.atan2(cone[1], cone[0]) # Angle relative to vehicle's x-axis
-            if dist < self.cone_filter_max_distance and abs(angle) < self.cone_filter_max_angle:
-                filtered_left_cones.append(cone)
-        left_cones_veh = np.array(filtered_left_cones)
-
-        filtered_right_cones = []
-        for cone in right_cones_veh:
-            dist = np.linalg.norm(cone) # Distance from vehicle origin
-            angle = math.atan2(cone[1], cone[0]) # Angle relative to vehicle's x-axis
-            if dist < self.cone_filter_max_distance and abs(angle) < self.cone_filter_max_angle:
-                filtered_right_cones.append(cone)
-        right_cones_veh = np.array(filtered_right_cones)
-
-        # rospy.loginfo_throttle(1.0, f"TrajectoryPlanner: Left cones: {len(left_cones_veh)}, Right cones: {len(right_cones_veh)}")
-
-        # 2. Find centerline midpoints (robust greedy pairing)
-        midpoints = []
-        available_left = list(left_cones_veh)
-        available_right = list(right_cones_veh)
-
-        if not available_left or not available_right:
-            rospy.loginfo_throttle(1.0, "TrajectoryPlanner: No path generated - Not enough cones on one side to form midpoints.")
-            self.publish_accumulated_midpoints([]) # Clear accumulated if no new points
-            self.publish_trajectory([])
-            return []
-
-        # Greedy one-to-one pairing
-        rospy.loginfo_throttle(1.0, f"TrajectoryPlanner: Available left cones (veh frame):\n{np.array(available_left)}")
-        rospy.loginfo_throttle(1.0, f"TrajectoryPlanner: Available right cones (veh frame):\n{np.array(available_right)}")
-
-        while available_left and available_right:
-            best_dist = float('inf')
-            best_pair = None
-            best_l_idx = -1
-            best_r_idx = -1
-
-            for i, l_cone in enumerate(available_left):
-                for j, r_cone in enumerate(available_right):
-                    dist = np.linalg.norm(l_cone - r_cone)
-                    if dist < best_dist:
-                        best_dist = dist
-                        best_pair = (l_cone, r_cone)
-                        best_l_idx = i
-                        best_r_idx = j
-            print(abs(l_cone[0] - r_cone[0]) )
-            if best_pair and best_dist < self.max_track_width and abs(l_cone[0] - r_cone[0]) < self.max_x_diff_for_pairing: # Max track width and x-diff check
-                l_cone, r_cone = best_pair
-                midpoint = (l_cone + r_cone) / 2.0
-                midpoints.append(midpoint)
-                rospy.loginfo_throttle(1.0, f"TrajectoryPlanner: Paired L:{l_cone} with R:{r_cone}, Dist:{best_dist:.2f}, Midpoint:{midpoint}")
-                
-                # Remove the paired cones. Need to handle indices carefully after pop.
-                # Pop the higher index first to avoid shifting issues.
-                if best_l_idx > best_r_idx:
-                    available_left.pop(best_l_idx)
-                    available_right.pop(best_r_idx)
-                else:
-                    available_right.pop(best_r_idx)
-                    available_left.pop(best_l_idx)
-            else:
-                rospy.loginfo_throttle(1.0, f"TrajectoryPlanner: No valid pair found within max_track_width ({self.max_track_width:.2f}) or max_x_diff_for_pairing ({self.max_x_diff_for_pairing:.2f}) or no more cones to pair.")
-                break
-        rospy.loginfo_throttle(1.0, f"TrajectoryPlanner: Generated {len(midpoints)} midpoints.")
-        if len(midpoints) < 1:
-            rospy.loginfo_throttle(1.0, "TrajectoryPlanner: No path generated - Less than 1 midpoint generated after pairing.")
-            self.publish_trajectory([])
-            self.publish_accumulated_midpoints([])
-            return []
-
-        midpoints = np.array(midpoints)
-        rospy.loginfo_throttle(1.0, f"TrajectoryPlanner: Raw midpoints (veh frame):\n{midpoints}")
-        midpoints = midpoints[midpoints[:, 0].argsort()]
-        
-        forward_midpoints = midpoints[midpoints[:, 0] > 0]
-        rospy.loginfo_throttle(1.0, f"TrajectoryPlanner: {len(forward_midpoints)} forward midpoints after filtering.")
-        rospy.loginfo_throttle(1.0, f"TrajectoryPlanner: Forward midpoints (veh frame):\n{forward_midpoints}")
-
-        if len(forward_midpoints) < 1:
-            rospy.loginfo_throttle(1.0, "TrajectoryPlanner: No path generated - No forward midpoints available after filtering.")
-            self.publish_trajectory([])
-            self.publish_accumulated_midpoints([])
-            return []
-
-        # Accumulate midpoints (in map frame)
-        # Transform forward_midpoints from vehicle frame to map frame for accumulation
-        current_veh_x, current_veh_y, current_veh_yaw = vehicle_state[0], vehicle_state[1], vehicle_state[2]
-        cos_yaw_map = math.cos(current_veh_yaw)
-        sin_yaw_map = math.sin(current_veh_yaw)
-        rot_matrix_map = np.array([[cos_yaw_map, -sin_yaw_map],
-                                   [sin_yaw_map,  cos_yaw_map]])
-        
-        # Only accumulate if there are actual points
-        if len(forward_midpoints) > 0:
-            midpoints_map_frame = np.dot(forward_midpoints, rot_matrix_map.T) + np.array([current_veh_x, current_veh_y])
-            for mp in midpoints_map_frame:
-                self.accumulated_midpoints.append(mp)
-        
-        self.publish_accumulated_midpoints(list(self.accumulated_midpoints)) # Publish accumulated midpoints
-
-        # 3. Generate waypoints directly from midpoints or by linear interpolation
-        waypoints_veh_frame = []
-
-        if len(forward_midpoints) == 1:
-            # If only one midpoint, create a line from vehicle's origin to it
-            p1 = np.array([0.0, 0.0]) # Vehicle's current position in its frame
-            p2 = forward_midpoints[0]
-            
-            # Generate points along this line
-            for i in range(self.num_waypoints):
-                t = i / (self.num_waypoints - 1) if self.num_waypoints > 1 else 0.0
-                waypoint = p1 + t * (p2 - p1)
-                waypoints_veh_frame.append(waypoint)
-            waypoints_veh_frame = np.array(waypoints_veh_frame)
-        else: # len(forward_midpoints) >= 2
-            # Linear interpolation between midpoints
-            x_coords = forward_midpoints[:, 0]
-            y_coords = forward_midpoints[:, 1]
-            
-            # Ensure x_coords are strictly increasing for interpolation
-            sorted_indices = np.argsort(x_coords)
-            x_coords_sorted = x_coords[sorted_indices]
-            y_coords_sorted = y_coords[sorted_indices]
-
-            # Generate new x_points for interpolation
-            # Start from 0 (vehicle's x) up to the furthest midpoint x, or lookahead_dist
-            max_x_midpoint = np.max(x_coords_sorted)
-            target_x_end = min(max_x_midpoint, self.lookahead_dist)
-            
-            if target_x_end <= 0: # If all midpoints are behind or at origin
-                rospy.loginfo_throttle(1.0, "TrajectoryPlanner: No path generated - target_x_end is zero or negative.")
-                self.publish_trajectory([])
-                return []
-
-            x_interp = np.linspace(0, target_x_end, self.num_waypoints)
-            y_interp = np.interp(x_interp, x_coords_sorted, y_coords_sorted)
-            
-            waypoints_veh_frame = np.vstack([x_interp, y_interp]).T
-        
-        # 4. Transform back to map frame
-        cos_yaw = math.cos(veh_yaw)
-        sin_yaw = math.sin(veh_yaw)
-        rot_matrix = np.array([[cos_yaw, -sin_yaw],
-                               [sin_yaw,  cos_yaw]])
-        
-        waypoints_map_frame = np.dot(waypoints_veh_frame, rot_matrix) + vehicle_pos
-
-        self.publish_trajectory(waypoints_map_frame)
-        
-        return waypoints_map_frame
-
-    def publish_trajectory(self, waypoints):
-        marker = Marker()
-        marker.header.stamp = rospy.Time.now()
-        marker.header.frame_id = "map"
-        marker.ns = "trajectory"
-        marker.id = 0
-        marker.type = Marker.LINE_STRIP
-        
-        if len(waypoints) == 0:
-            marker.action = Marker.DELETE
-        else:
-            marker.action = Marker.ADD
-            marker.scale.x = 0.2  # Line width
-            marker.color.a = 1.0
-            marker.color.r = 0.0
-            marker.color.g = 1.0
-            marker.color.b = 0.0
-            
-            marker.points = []
-            for wp in waypoints:
-                p = Point()
-                p.x = wp[0]
-                p.y = wp[1]
-                p.z = 0.1 # Slightly above ground
-                marker.points.append(p)
-            
-        self.trajectory_publisher.publish(marker)
-
-    def publish_accumulated_midpoints(self, midpoints_list):
-        marker = Marker()
-        marker.header.stamp = rospy.Time.now()
-        marker.header.frame_id = "map"
-        marker.ns = "accumulated_midpoints"
-        marker.id = 0
-        marker.type = Marker.POINTS # Use POINTS type for accumulated midpoints
-        
-        if len(midpoints_list) == 0:
-            marker.action = Marker.DELETE
-        else:
-            marker.action = Marker.ADD
-            marker.scale.x = 0.3  # Point size
-            marker.scale.y = 0.3
-            marker.color.a = 1.0
-            marker.color.r = 1.0  # Red color for accumulated midpoints
-            marker.color.g = 0.0
-            marker.color.b = 0.0
-            
-            marker.points = []
-            for mp in midpoints_list:
-                p = Point()
-                p.x = mp[0]
-                p.y = mp[1]
-                p.z = 0.2 # Slightly above ground, different from trajectory
-                marker.points.append(p)
-            
-        self.accumulated_midpoints_publisher.publish(marker)
-
-class StanleyController:
-    def __init__(self):
-        self.k = rospy.get_param("/control/stanley/k_gain", 1.0)
-        # self.ks = rospy.get_param("/control/stanley/k_softening", 0.1)
-        self.L = rospy.get_param("/control/vehicle/wheelbase", 1.53)
-        self.max_steer = rospy.get_param("/control/PurePursuit/max_steer_angle", 25.0)
-        self.target_speed = rospy.get_param("/control/SpeedControl/target_speed", 5.0)
-        self.kp_speed = rospy.get_param("/control/SpeedControl/pid_kp", 1.0)
-
-    def compute_control(self, vehicle_state, waypoints):
-        if len(waypoints) < 2: return 0.0, 0.0, 0.0
-
-        veh_x, veh_y, veh_yaw = vehicle_state[0], vehicle_state[1], vehicle_state[2]
-        current_speed = math.sqrt(vehicle_state[3]**2 + vehicle_state[4]**2)
-
-        front_axle_pos = np.array([veh_x + self.L * math.cos(veh_yaw), veh_y + self.L * math.sin(veh_yaw)])
-        distances = np.linalg.norm(waypoints - front_axle_pos, axis=1)
-        closest_idx = np.argmin(distances)
-
-        if closest_idx + 1 >= len(waypoints):
-            closest_idx = len(waypoints) - 2
-
-        p1, p2 = waypoints[closest_idx], waypoints[closest_idx + 1]
-        path_heading = math.atan2(p2[1] - p1[1], p2[0] - p1[0])
-        
-        cte = np.min(distances)
-        error_vec = waypoints[closest_idx] - front_axle_pos
-        path_normal = np.array([-math.sin(path_heading), math.cos(path_heading)])
-        if np.dot(path_normal, error_vec) > 0: cte = -cte
-
-        heading_error = self.normalize_angle(path_heading - veh_yaw)
-        delta = heading_error + math.atan2(self.k * cte,current_speed)
-        steer_angle = np.clip(math.degrees(delta), -self.max_steer, self.max_steer)
-
-        speed_error = self.target_speed - current_speed
-        throttle = np.clip(self.kp_speed * speed_error, 0.0, 1.0)
-        brake = 0.2 if speed_error < -0.5 else 0.0
-        if brake > 0: throttle = 0.0
-
-        return throttle, steer_angle, brake
-
-    def normalize_angle(self, angle):
-        while angle > math.pi: angle -= 2 * math.pi
-        while angle < -math.pi: angle += 2 * math.pi
-        return angle
-
-# ==================== Kalman Tracker ====================
-
-class KalmanConeTracker:
-    """A class for a single tracked cone using a Kalman Filter."""
-    def __init__(self, detection, track_id):
-        # State: [x, y, z, vx, vy, vz]
-        # Measurement: [x, y, z]
-        self.id = track_id
-        self.kf = cv2.KalmanFilter(6, 3)
-        self.kf.transitionMatrix = np.array([[1, 0, 0, 1, 0, 0],
-                                              [0, 1, 0, 0, 1, 0],
-                                              [0, 0, 1, 0, 0, 1],
-                                              [0, 0, 0, 1, 0, 0],
-                                              [0, 0, 0, 0, 1, 0],
-                                              [0, 0, 0, 0, 0, 1]], np.float32)
-        self.kf.measurementMatrix = np.array([[1, 0, 0, 0, 0, 0],
-                                               [0, 1, 0, 0, 0, 0],
-                                               [0, 0, 1, 0, 0, 0]], np.float32)
-        
-        # Initial state
-        self.kf.statePost = np.array([detection[0], detection[1], detection[2], 0, 0, 0], np.float32).reshape(6, 1)
-        
-        # Process noise covariance
-        self.kf.processNoiseCov = np.eye(6, dtype=np.float32) * 0.1
-        self.kf.processNoiseCov[3:, 3:] *= 10.0 # Higher uncertainty for velocity
-
-        # Measurement noise covariance
-        self.kf.measurementNoiseCov = np.eye(3, dtype=np.float32) * 0.5
-
-        # Error covariance
-        self.kf.errorCovPost = np.eye(6, dtype=np.float32) * 1
-
-        self.time_since_update = 0
-        self.hits = 1
-
-    def predict(self):
-        """Predict the next state."""
-        return self.kf.predict()
-
-    def update(self, detection):
-        """Update the state with a new measurement."""
-        self.kf.correct(np.array(detection, dtype=np.float32).reshape(3, 1))
-        self.time_since_update = 0
-        self.hits += 1
-
-    @property
-    def state(self):
-        return self.kf.statePost.flatten()
-
-
-class ConeTracker:
-    """Manages multiple KalmanConeTracker objects and a persistent map."""
-    def __init__(self, dist_thresh=1.5, max_age=5, min_hits_for_confirmation=2):
-        self.dist_thresh = dist_thresh
-        self.max_age = max_age
-        self.min_hits_for_confirmation = min_hits_for_confirmation
-        self.next_track_id = 0
-        self.tracks = []  # Active tracks for real-time association
-        self.map_landmarks = {}  # Persistent map of confirmed cones {id: state}
-
-    def update(self, detections):
-        """
-        Update tracks with new detections.
-        
-        detections: np.array of shape (N, 3) for (x, y, z)
-        """
-        # 1. Predict next state for all active tracks
-        if len(self.tracks) > 0:
-            predicted_positions = np.array([t.predict()[:3].flatten() for t in self.tracks])
-        else:
-            predicted_positions = np.empty((0, 3))
-
-        # 2. Associate detections with predictions
-        if len(detections) > 0 and len(predicted_positions) > 0:
-            cost_matrix = cdist(predicted_positions, detections)
-            row_ind, col_ind = linear_sum_assignment(cost_matrix)
-            
-            matched_indices = []
-            for r, c in zip(row_ind, col_ind):
-                if cost_matrix[r, c] < self.dist_thresh:
-                    matched_indices.append((r, c))
-            
-            matched_track_indices = [r for r, c in matched_indices]
-            matched_det_indices = [c for r, c in matched_indices]
-        else:
-            matched_track_indices = []
-            matched_det_indices = []
-
-        # 3. Update matched tracks and populate the persistent map
-        for r, c in zip(matched_track_indices, matched_det_indices):
-            track = self.tracks[r]
-            track.update(detections[c])
-            # If track is confirmed, add/update it in the persistent map
-            if track.hits >= self.min_hits_for_confirmation:
-                self.map_landmarks[track.id] = track.state
-
-        # 4. Create new tracks for unmatched detections
-        unmatched_det_indices = set(range(len(detections))) - set(matched_det_indices)
-        for i in unmatched_det_indices:
-            new_track = KalmanConeTracker(detections[i], self.next_track_id)
-            self.tracks.append(new_track)
-            self.next_track_id += 1
-
-        # 5. Manage active track lifecycle (remove stale tracks from active list)
-        updated_tracks = []
-        for track in self.tracks:
-            if track.time_since_update <= self.max_age:
-                updated_tracks.append(track)
-            track.time_since_update += 1
-        self.tracks = updated_tracks
-
-    def get_active_tracks(self):
-        """Return all confirmed landmarks from the map for visualization."""
-        map_data = []
-        for track_id, state in self.map_landmarks.items():
-            map_data.append([track_id, state[0], state[1], state[2]])
-        return np.array(map_data)
-
-    def get_all_tracks_for_saving(self):
-        """Return all confirmed landmarks from the map for saving."""
-        # This now returns the same data as get_active_tracks
-        saved_tracks = []
-        for track_id, state in self.map_landmarks.items():
-            saved_tracks.append([track_id, state[0], state[1], state[2]])
-        return np.array(saved_tracks)
+    def compute_control(self, current_state, target_state):
+        # 제어 알고리즘 구현
+        pass
