@@ -584,25 +584,13 @@ class FormulaAutonomousSystem:
         # Get raw predictions from the model
         with torch.no_grad(): # Disable gradient calculation for inference
             raw_predictions1 = self.model(img1_tensor)
-            if isinstance(raw_predictions1, torch.Tensor):
-                print(f"Shape of raw_predictions1: {raw_predictions1.shape}")
-                print(f"Content of raw_predictions1 (first 5 rows): {raw_predictions1[:5]}")
-            # If raw_predictions1 is a tuple, also print its elements
-            elif isinstance(raw_predictions1, tuple):
-                print(f"raw_predictions1 is a tuple with {len(raw_predictions1)} elements.")
-                for i, item in enumerate(raw_predictions1):
-                        print(f"  Element {i} type: {type(item)}, shape: {item.shape if hasattr(item, 'shape') else 'N/A'}")
-                        if hasattr(item, 'shape') and len(item.shape) > 0:
-                            print(f"  Element {i} content (first 5 rows): {item[:5]}")
-            else:
-                print(f"raw_predictions1 is of unexpected type: {type(raw_predictions1)}")
             raw_predictions2 = self.model(img2_tensor)
 
         # Process raw predictions and draw bounding boxes
         # Assuming raw_predictions is a tensor of shape [num_boxes, 6] where each row is
         # [x1, y1, x2, y2, confidence, class_id].
-        rendered_img1 = self._process_and_draw_detections(image1, raw_predictions1)
-        rendered_img2 = self._process_and_draw_detections(image2, raw_predictions2)
+        rendered_img1 = self.camera_util._process_and_draw_detections(image1, raw_predictions1)
+        rendered_img2 = self.camera_util._process_and_draw_detections(image2, raw_predictions2)
         # --- End YOLOv5 Inference (Manual Processing) ---
 
         # --- Time Synchronization Compensation ---
@@ -647,8 +635,8 @@ class FormulaAutonomousSystem:
                 if i < len(cam1_pts):
                     cone_2d_img_frame = cam1_pts[i]
                     # Use original image for color detection, but draw debug info on the rendered image
-                    detected_color_left = self.camera_util.detectConeColor(cone_2d_img_frame, image1, debug_image=rendered_img1)
-                    detected_color_right = self.camera_util.detectConeColor(cam2_pts[i], image2, debug_image=rendered_img2)
+                    detected_color_left = self.camera_util.detectConeColor(cone_2d_img_frame, rendered_img1, debug_image=rendered_img1)
+                    detected_color_right = self.camera_util.detectConeColor(cam2_pts[i], rendered_img1, debug_image=rendered_img2)
                     
                     color_id = 0 # Default to unknown
                     if detected_color_left == "blue" or detected_color_right == "blue":
@@ -1059,6 +1047,7 @@ class FormulaAutonomousSystem:
         cv2.imshow("image1", img1)
         cv2.imshow("image2", img2)
         cv2.waitKey(1)
+<<<<<<< HEAD
         
         # print(f"left = {left}, right = {right}")
 
@@ -1098,6 +1087,9 @@ class FormulaAutonomousSystem:
 >>>>>>> [control] 251008 @Doyeop-knut | Trajectory + Stanley controller
 =======
 >>>>>>> [ConeDetection] 251010 @Doyeop-knut | Cone Detection method 개선 및 Mapping 기능 추가
+=======
+        self.lidar_util.publish_point_cloud(cluster)        
+>>>>>>> [ConeDetection] 251011 @Doyeop-knut, @marigold0916 | Cone Detection With YOLOv5
 
         ## GO_SIGNAL
         if go_signal_msg.mission != "None" and go_signal_msg.mission != "":
@@ -1421,74 +1413,7 @@ class FormulaAutonomousSystem:
         altitude = msg.altitude
         return latitude, longitude, altitude
 
-    def _process_and_draw_detections(self, image, raw_predictions, conf_threshold=0.25, iou_threshold=0.45):
-        """
-        Processes raw model predictions (Tensor) and draws bounding boxes on the image.
-        Assumes raw_predictions is a tuple and the first element is a tensor of shape [1, 5, num_predictions]
-        where the 5 features are [x, y, w, h, confidence] or [x1, y1, x2, y2, confidence].
-        """
-        img_copy = image.copy()
-        
-        # Assuming raw_predictions is a tuple and the first element is the predictions tensor
-        predictions_tensor = raw_predictions[0] # Shape: [1, 5, 6300]
-
-        # Transpose the tensor to [num_predictions, 5] for easier processing
-        predictions_tensor = predictions_tensor.squeeze(0).transpose(0, 1) # Shape: [num_predictions, 5]
-
-        predictions_np = predictions_tensor.cpu().numpy() # Shape: [6300, 5]
-
-        # Filter out low confidence predictions
-     # Check if predictions_np has enough columns before indexing
-        if predictions_np.shape[1] < 5:
-            rospy.logwarn("Predictions tensor has fewer than 5 columns. Cannot filter by confidence.")
-            return img_copy
-     
-        confidence_mask = predictions_np[:, 4] > conf_threshold
-        predictions_np = predictions_np[confidence_mask, :]
-        # Filter out low confidence predictions
-        # Now predictions_np[:, 4] will correctly access the confidence scores for each prediction
-        # predictions_np = predictions_np[predictions_np[:, 4] > conf_threshold]
-
-        if predictions_np.shape[0] == 0:
-            return img_copy # No detections, return original image
-
-        boxes = predictions_np[:, :4]
-        scores = predictions_np[:, 4]
-        # If class_id is not explicitly in the tensor, assume a single class (e.g., 0)
-        class_ids = np.zeros(predictions_np.shape[0], dtype=int) # Assuming single class, ID 0
-
-        # Apply NMS
-        # Convert boxes from [x1, y1, x2, y2] to [x, y, w, h] for NMSBoxes
-        # Assuming the 4 box coordinates are already in x1, y1, x2, y2 format.
-        # If they are x, y, w, h, then the conversion needs to be different.
-        # Given the content, it looks like x1, y1, x2, y2.
-        boxes_xyxy = []
-        for cx_norm, cy_norm, w_norm, h_norm in boxes:
-            x1 = int((cx_norm - w_norm / 2) )
-            y1 = int((cy_norm - h_norm / 2) )
-            x2 = int((cx_norm + w_norm / 2) )
-            y2 = int((cy_norm + h_norm / 2) )
-            boxes_xyxy.append([x1, y1, x2, y2])
-            print(f"Box coordinates: x1={x1}, y1={y1}, x2={x2}, y2={y2}")
-        boxes_xywh = np.array([[x1, y1, x2, y2] for x1, y1, x2, y2 in boxes_xyxy])
-        
-        indices = cv2.dnn.NMSBoxes(boxes_xywh.tolist(), scores.tolist(), conf_threshold, iou_threshold)
-        
-        if len(indices) > 0:
-            for i in indices.flatten():
-                x1, y1, x2, y2 = map(int, boxes_xywh[i])
-                confidence = scores[i]
-                class_id = class_ids[i] # Use the assumed class ID
-
-                # Draw bounding box
-                color = (0, 255, 0) # Green for bounding box
-                cv2.rectangle(img_copy, (x1, y1), (x2, y2), color, 2)
-
-                # Draw label
-                label = f"Class {class_id}: {confidence:.2f}"
-                cv2.putText(img_copy, label, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
-        
-        return img_copy
+    
 class CameraProcessor:
     def __init__(self):
         self.fx, self.fy = rospy.get_param("/perception/camera_intrinsics/focal_length_x"), rospy.get_param("/perception/camera_intrinsics/focal_length_y")
@@ -3466,7 +3391,79 @@ class PathPlanner:
              cv2.putText(debug_image, dominant_color, (x_min, y_min - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255,255,255), 1)
 
         return dominant_color
+<<<<<<< HEAD
 >>>>>>> [ConeDetection] 251010 @Doyeop-knut | Cone Detection method 개선 및 Mapping 기능 추가
+=======
+
+    def _process_and_draw_detections(self, image, raw_predictions, conf_threshold=0.25, iou_threshold=0.45):
+        """
+        Processes raw model predictions (Tensor) and draws bounding boxes on the image.
+        Assumes raw_predictions is a tuple and the first element is a tensor of shape [1, 5, num_predictions]
+        where the 5 features are [x, y, w, h, confidence] or [x1, y1, x2, y2, confidence].
+        """
+        img_copy = image.copy()
+        
+        # Assuming raw_predictions is a tuple and the first element is the predictions tensor
+        predictions_tensor = raw_predictions[0] # Shape: [1, 5, 6300]
+
+        # Transpose the tensor to [num_predictions, 5] for easier processing
+        predictions_tensor = predictions_tensor.squeeze(0).transpose(0, 1) # Shape: [num_predictions, 5]
+
+        predictions_np = predictions_tensor.cpu().numpy() # Shape: [6300, 5]
+
+        # Filter out low confidence predictions
+     # Check if predictions_np has enough columns before indexing
+        if predictions_np.shape[1] < 5:
+            rospy.logwarn("Predictions tensor has fewer than 5 columns. Cannot filter by confidence.")
+            return img_copy
+     
+        confidence_mask = predictions_np[:, 4] > conf_threshold
+        predictions_np = predictions_np[confidence_mask, :]
+        # Filter out low confidence predictions
+        # Now predictions_np[:, 4] will correctly access the confidence scores for each prediction
+        # predictions_np = predictions_np[predictions_np[:, 4] > conf_threshold]
+
+        if predictions_np.shape[0] == 0:
+            return img_copy # No detections, return original image
+
+        boxes = predictions_np[:, :4]
+        scores = predictions_np[:, 4]
+        # If class_id is not explicitly in the tensor, assume a single class (e.g., 0)
+        class_ids = np.zeros(predictions_np.shape[0], dtype=int) # Assuming single class, ID 0
+
+        # Apply NMS
+        # Convert boxes from [x1, y1, x2, y2] to [x, y, w, h] for NMSBoxes
+        # Assuming the 4 box coordinates are already in x1, y1, x2, y2 format.
+        # If they are x, y, w, h, then the conversion needs to be different.
+        # Given the content, it looks like x1, y1, x2, y2.
+        boxes_xyxy = []
+        for cx_norm, cy_norm, w_norm, h_norm in boxes:
+            x1 = int((cx_norm - w_norm / 2) )
+            y1 = int((cy_norm - h_norm / 2) )
+            x2 = int((cx_norm + w_norm / 2) )
+            y2 = int((cy_norm + h_norm / 2) )
+            boxes_xyxy.append([x1, y1, x2, y2])
+            # print(f"Box coordinates: x1={x1}, y1={y1}, x2={x2}, y2={y2}")
+        boxes_xywh = np.array([[x1, y1, x2, y2] for x1, y1, x2, y2 in boxes_xyxy])
+        
+        indices = cv2.dnn.NMSBoxes(boxes_xywh.tolist(), scores.tolist(), conf_threshold, iou_threshold)
+        
+        if len(indices) > 0:
+            for i in indices.flatten():
+                x1, y1, x2, y2 = map(int, boxes_xyxy[i])
+                confidence = scores[i]
+                class_id = class_ids[i] # Use the assumed class ID
+
+                # Draw bounding box
+                color = (0, 255, 0) # Green for bounding box
+                cv2.rectangle(img_copy, (x1, y1), (x2, y2), color, 2)
+
+                # Draw label
+                label = f"Class {class_id}: {confidence:.2f}"
+                cv2.putText(img_copy, label, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+        
+        return img_copy
+>>>>>>> [ConeDetection] 251011 @Doyeop-knut, @marigold0916 | Cone Detection With YOLOv5
         
         # Apply convolution
         smoothed_path_transposed = torch.nn.functional.conv1d(path_transposed, gaussian_kernel.repeat(2, 1, 1), padding=padding, groups=2)
