@@ -71,6 +71,9 @@ from scipy.spatial.distance import cdist
 from scipy.interpolate import splprep, splev
 from scipy.spatial import Delaunay
 
+# Camera
+import torch
+
 # Data Logger
 import os
 import csv
@@ -314,7 +317,15 @@ class FormulaAutonomousSystem:
 >>>>>>> [ConeDetection] 251008 @Doyeop-knut | Map data 생성 코드 작성
 =======
         self.path_planner = PathPlanner()
+<<<<<<< HEAD
 >>>>>>> [ConeDetection] 251010 @Doyeop-knut | Cone Detection method 개선 및 Mapping 기능 추가
+=======
+
+        self.model = torch.load('/home/user/fsds_ws/yolo5_bundle.pt', weights_only=False)  # Adjust path as needed
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        self.model.to(self.device) # Move model to GPU if available
+        self.model.eval()  # Set model to evaluation mode
+>>>>>>> [ConeDetection]  251011 @Doyeop-knut | YOLOv5 모델 적용
         
     def init(self):
         """Initialize the system"""
@@ -556,6 +567,44 @@ class FormulaAutonomousSystem:
         image1 = self.camera_util.preprocessImage(image1)
         image2 = self.camera_util.preprocessImage(image2)
         
+        # --- Run YOLOv5 Inference (Manual Processing) ---
+        # Convert numpy array to torch tensor and preprocess for model
+        # Assuming model expects input in (batch_size, channels, height, width) format, RGB, normalized to 0-1.
+        
+        # Process image1
+        img1_rgb = cv2.cvtColor(image1, cv2.COLOR_BGR2RGB) # BGR to RGB
+        img1_tensor = torch.from_numpy(img1_rgb).permute(2, 0, 1).float() / 255.0 # HWC to CHW, float, normalize
+        img1_tensor = img1_tensor.unsqueeze(0).to(self.device) # Add batch dimension and move to device
+
+        # Process image2
+        img2_rgb = cv2.cvtColor(image2, cv2.COLOR_BGR2RGB) # BGR to RGB
+        img2_tensor = torch.from_numpy(img2_rgb).permute(2, 0, 1).float() / 255.0 # HWC to CHW, float, normalize
+        img2_tensor = img2_tensor.unsqueeze(0).to(self.device) # Add batch dimension and move to device
+
+        # Get raw predictions from the model
+        with torch.no_grad(): # Disable gradient calculation for inference
+            raw_predictions1 = self.model(img1_tensor)
+            if isinstance(raw_predictions1, torch.Tensor):
+                print(f"Shape of raw_predictions1: {raw_predictions1.shape}")
+                print(f"Content of raw_predictions1 (first 5 rows): {raw_predictions1[:5]}")
+            # If raw_predictions1 is a tuple, also print its elements
+            elif isinstance(raw_predictions1, tuple):
+                print(f"raw_predictions1 is a tuple with {len(raw_predictions1)} elements.")
+                for i, item in enumerate(raw_predictions1):
+                        print(f"  Element {i} type: {type(item)}, shape: {item.shape if hasattr(item, 'shape') else 'N/A'}")
+                        if hasattr(item, 'shape') and len(item.shape) > 0:
+                            print(f"  Element {i} content (first 5 rows): {item[:5]}")
+            else:
+                print(f"raw_predictions1 is of unexpected type: {type(raw_predictions1)}")
+            raw_predictions2 = self.model(img2_tensor)
+
+        # Process raw predictions and draw bounding boxes
+        # Assuming raw_predictions is a tensor of shape [num_boxes, 6] where each row is
+        # [x1, y1, x2, y2, confidence, class_id].
+        rendered_img1 = self._process_and_draw_detections(image1, raw_predictions1)
+        rendered_img2 = self._process_and_draw_detections(image2, raw_predictions2)
+        # --- End YOLOv5 Inference (Manual Processing) ---
+
         # --- Time Synchronization Compensation ---
         # Compensate for vehicle motion between LiDAR scan time and Camera image time
         # This is a first-order correction for high-speed alignment issues.
@@ -597,8 +646,9 @@ class FormulaAutonomousSystem:
                 # Note: cam1_pts is a list of projected points, need to get the i-th one
                 if i < len(cam1_pts):
                     cone_2d_img_frame = cam1_pts[i]
-                    detected_color_left = self.camera_util.detectConeColor(cone_2d_img_frame, image1, debug_image=image1)
-                    detected_color_right = self.camera_util.detectConeColor(cam2_pts[i], image2, debug_image=image2)
+                    # Use original image for color detection, but draw debug info on the rendered image
+                    detected_color_left = self.camera_util.detectConeColor(cone_2d_img_frame, image1, debug_image=rendered_img1)
+                    detected_color_right = self.camera_util.detectConeColor(cam2_pts[i], image2, debug_image=rendered_img2)
                     
                     color_id = 0 # Default to unknown
                     if detected_color_left == "blue" or detected_color_right == "blue":
@@ -1002,12 +1052,12 @@ class FormulaAutonomousSystem:
         if path is not None:
             self.publish_path(path)
         # =====================================================
-        img1 = self.camera_util.visualization(cam1_pts, image1)
-        img2 = self.camera_util.visualization(cam2_pts, image2)
+        # Draw LiDAR points on the images that already have bounding boxes
+        img1 = self.camera_util.visualization(cam1_pts, rendered_img1)
+        img2 = self.camera_util.visualization(cam2_pts, rendered_img2)
+
         cv2.imshow("image1", img1)
         cv2.imshow("image2", img2)
-        # cv2.imshow("Camera1", self.get_camera_image(camera1_msg))
-        # cv2.imshow("Camera2", self.get_camera_image(camera2_msg))
         cv2.waitKey(1)
         
         # print(f"left = {left}, right = {right}")
@@ -1346,9 +1396,107 @@ class FormulaAutonomousSystem:
 
         self.path_publisher.publish(path_msg)
 
+<<<<<<< HEAD
         # Publish markers for indices
         marker_array = MarkerArray()
         header = path_msg.header
+=======
+    def get_imu_data(self, msg):
+        """Extract IMU data from ROS message"""
+        # Extract orientation
+        orientation = [msg.orientation.w, msg.orientation.x, msg.orientation.y, msg.orientation.z]
+        
+        # Extract acceleration
+        acc = [msg.linear_acceleration.x, msg.linear_acceleration.y, msg.linear_acceleration.z]
+        
+        # Extract angular velocity
+        gyro = [msg.angular_velocity.x, msg.angular_velocity.y, msg.angular_velocity.z]
+        
+        return acc, gyro, orientation
+    
+    def get_gps_data(self, msg):
+        """Extract GPS data from ROS message"""
+        latitude = msg.latitude
+        longitude = msg.longitude
+        altitude = msg.altitude
+        return latitude, longitude, altitude
+
+    def _process_and_draw_detections(self, image, raw_predictions, conf_threshold=0.25, iou_threshold=0.45):
+        """
+        Processes raw model predictions (Tensor) and draws bounding boxes on the image.
+        Assumes raw_predictions is a tuple and the first element is a tensor of shape [1, 5, num_predictions]
+        where the 5 features are [x, y, w, h, confidence] or [x1, y1, x2, y2, confidence].
+        """
+        img_copy = image.copy()
+        
+        # Assuming raw_predictions is a tuple and the first element is the predictions tensor
+        predictions_tensor = raw_predictions[0] # Shape: [1, 5, 6300]
+
+        # Transpose the tensor to [num_predictions, 5] for easier processing
+        predictions_tensor = predictions_tensor.squeeze(0).transpose(0, 1) # Shape: [num_predictions, 5]
+
+        predictions_np = predictions_tensor.cpu().numpy() # Shape: [6300, 5]
+
+        # Filter out low confidence predictions
+     # Check if predictions_np has enough columns before indexing
+        if predictions_np.shape[1] < 5:
+            rospy.logwarn("Predictions tensor has fewer than 5 columns. Cannot filter by confidence.")
+            return img_copy
+     
+        confidence_mask = predictions_np[:, 4] > conf_threshold
+        predictions_np = predictions_np[confidence_mask, :]
+        # Filter out low confidence predictions
+        # Now predictions_np[:, 4] will correctly access the confidence scores for each prediction
+        # predictions_np = predictions_np[predictions_np[:, 4] > conf_threshold]
+
+        if predictions_np.shape[0] == 0:
+            return img_copy # No detections, return original image
+
+        boxes = predictions_np[:, :4]
+        scores = predictions_np[:, 4]
+        # If class_id is not explicitly in the tensor, assume a single class (e.g., 0)
+        class_ids = np.zeros(predictions_np.shape[0], dtype=int) # Assuming single class, ID 0
+
+        # Apply NMS
+        # Convert boxes from [x1, y1, x2, y2] to [x, y, w, h] for NMSBoxes
+        # Assuming the 4 box coordinates are already in x1, y1, x2, y2 format.
+        # If they are x, y, w, h, then the conversion needs to be different.
+        # Given the content, it looks like x1, y1, x2, y2.
+        boxes_xyxy = []
+        for cx_norm, cy_norm, w_norm, h_norm in boxes:
+            x1 = int((cx_norm - w_norm / 2) )
+            y1 = int((cy_norm - h_norm / 2) )
+            x2 = int((cx_norm + w_norm / 2) )
+            y2 = int((cy_norm + h_norm / 2) )
+            boxes_xyxy.append([x1, y1, x2, y2])
+            print(f"Box coordinates: x1={x1}, y1={y1}, x2={x2}, y2={y2}")
+        boxes_xywh = np.array([[x1, y1, x2, y2] for x1, y1, x2, y2 in boxes_xyxy])
+        
+        indices = cv2.dnn.NMSBoxes(boxes_xywh.tolist(), scores.tolist(), conf_threshold, iou_threshold)
+        
+        if len(indices) > 0:
+            for i in indices.flatten():
+                x1, y1, x2, y2 = map(int, boxes_xywh[i])
+                confidence = scores[i]
+                class_id = class_ids[i] # Use the assumed class ID
+
+                # Draw bounding box
+                color = (0, 255, 0) # Green for bounding box
+                cv2.rectangle(img_copy, (x1, y1), (x2, y2), color, 2)
+
+                # Draw label
+                label = f"Class {class_id}: {confidence:.2f}"
+                cv2.putText(img_copy, label, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+        
+        return img_copy
+class CameraProcessor:
+    def __init__(self):
+        self.fx, self.fy = rospy.get_param("/perception/camera_intrinsics/focal_length_x"), rospy.get_param("/perception/camera_intrinsics/focal_length_y")
+        self.px, self.py = rospy.get_param("/perception/camera_intrinsics/principal_point_x"), rospy.get_param("/perception/camera_intrinsics/principal_point_y")
+        self.preprocess = rospy.get_param("/perception/camera_image_processing/enable_preprocessing")
+        self.sigma = rospy.get_param("/perception/camera_image_processing/gaussian_blur_sigma")
+        self.bilateral = rospy.get_param("/perception/camera_image_processing/bilateral_filter_diameter")
+>>>>>>> [ConeDetection]  251011 @Doyeop-knut | YOLOv5 모델 적용
         
         # Add text markers for each path point
         for i, point in enumerate(path_np):
