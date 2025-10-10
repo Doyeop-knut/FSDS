@@ -226,8 +226,12 @@ perception:
     color_score_separation_threshold: 1.5 # The best color score must be X times higher than the second best
 
   camera_hsv_window_size:
+<<<<<<< HEAD
     base_size: 20 # Base window size in pixels at 0 distance
     distance_factor: 0.3 # Pixels to add to half-size per meter of distance
+=======
+    window_size: 25
+>>>>>>> [ConeDetection] 251010 @Doyeop-knut | Cone Detection method 개선 및 Mapping 기능 추가
 
   camera_hsv_yellow:
     # HSV thresholds for yellow cone detection
@@ -270,8 +274,16 @@ localization:
     ref_wgs84_altitude: 0.0
     
     # Velocity Estimation
+<<<<<<< HEAD
     alpha_velocity: 0.1 # Reduced to 0 to eliminate lag
     yaw_filter_alpha : 0.4 # Reduced to make fused yaw smoother
+=======
+    alpha_velocity: 0.1
+    yaw_filter_alpha : 0.8
+
+behavior_planning:
+  default: {}
+>>>>>>> [ConeDetection] 251010 @Doyeop-knut | Cone Detection method 개선 및 Mapping 기능 추가
 
 local_planning:
   trajectory:
