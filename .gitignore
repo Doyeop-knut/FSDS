@@ -1,5 +1,11 @@
-build/
-devel/
+build/*
+devel/*
 
 *.avi
 *.csv
+
+*.pyc
+*.xlsx
+*.o
+*cmake
+

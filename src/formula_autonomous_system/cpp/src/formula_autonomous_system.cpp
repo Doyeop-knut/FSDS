@@ -794,13 +794,13 @@ Eigen::Vector2d Localization::wgs84ToEnu(const Eigen::Vector2d& wgs84_pos) const
     // Convert WGS84 to ENU coordinates: x = (lon - ref_lon) * EARTH_RADIUS * cos(ref_lat), y = (lat - ref_lat) * EARTH_RADIUS
     double x = EARTH_RADIUS * dlon * cos(ref_lat_rad);
     double y = EARTH_RADIUS * dlat;
+
+    std::cout << "WGS84 to ENU conversion: WGS84(" << wgs84_pos[0] << ", " << wgs84_pos[1] << ") -> ENU(" << x << ", " << y << ")" << std::endl;
     
     return Eigen::Vector2d(x, y);
 }
 
 // ==================== Planning ====================
-
-
 StateMachine::StateMachine()
     : current_state_(ASState::AS_OFF)
     , previous_state_(ASState::AS_OFF)
@@ -1473,13 +1473,13 @@ bool FormulaAutonomousSystem::run(sensor_msgs::PointCloud2& lidar_msg,
     projected_right_cones_image_ = color_detection_->visualizeProjection(cones_, camera2_image);  // For Debugging
 
     // DEBUG
-    if (!camera1_image.empty()){
-        cv::imshow("left_camera",projected_cones_image_);
-    }
-    if (!camera2_image.empty()){
-        cv::imshow("right_camera",projected_right_cones_image_);
-    }
-    cv::waitKey(1);
+    // if (!camera1_image.empty()){
+    //     cv::imshow("left_camera",projected_cones_image_);
+    // }
+    // if (!camera2_image.empty()){
+    //     cv::imshow("right_camera",projected_right_cones_image_);
+    // }
+    // cv::waitKey(1);
     // // Debug array @Doyeop-knut
     // std::vector<Cone> blue_c, yellow_c;
     // for (const auto& c : cones_){

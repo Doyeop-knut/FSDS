@@ -50,7 +50,7 @@ if src_python_dir not in sys.path:
     sys.path.insert(0, src_python_dir)
 
 # Now import from the source
-from formula_autonomous_system import FormulaAutonomousSystem
+from formula_autonomous_system_test import FormulaAutonomousSystem
 
 
 class FormulaAutonomousSystemNode:
@@ -122,7 +122,7 @@ class FormulaAutonomousSystemNode:
             self.go_signal_sub = rospy.Subscriber("/fsds/signal/go", GoSignal, self.go_signal_callback, queue_size=1)
             
             # Initialize publishers
-            self.control_pub = rospy.Publisher("/fsds/control_command", ControlCommand, queue_size=1)
+            self.control_pub = rospy.Publisher("/fsds/command_control", ControlCommand, queue_size=1)
             self.autonomous_mode_pub = rospy.Publisher("/fsds/AS_status", String, queue_size=1)
 
             # Initialize parameters

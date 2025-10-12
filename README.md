@@ -9,3 +9,4 @@
 - [Optimal Trajectory] @Doyeop-knut | 250819 기본 map 파일 복사 및 RRT* 기초 코드
 - [Optimal Trajectory] @Doyeop-knut | 250820 동적 RRT* 알고리즘을 활용한 경로 생성
 - [Cone Detection] @Doyeop-knut | 250820 stereo 이미지 생성
+- [Cone Detection] @marigold0916 | 251007 cone detection 코드추가, yolo모델파일 추가

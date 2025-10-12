@@ -9,6 +9,7 @@
 
 @copyright Copyright (c) 2025
 """
+## TESTING
 
 import rospy
 import numpy as np
@@ -35,7 +36,312 @@ from sklearn.linear_model import RANSACRegressor
 import os
 import csv
 import datetime
- 
+
+
+# 필요한 import 문을 상단에 추가하세요.
+from google.auth.transport.requests import Request
+from google.oauth2.credentials import Credentials
+from google_auth_oauthlib.flow import InstalledAppFlow
+from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
+from googleapiclient.http import MediaFileUpload
+import os
+import cv2
+import rospy
+import datetime
+from fs_msgs.msg import ControlCommand
+import numpy as np
+
+import threading
+import queue
+# ==================== CloudDataLogger (새로운 통합 클래스) ====================
+
+# API 권한 범위를 Drive와 Sheets 모두 포함하도록 수정합니다.
+SCOPES = ['https://www.googleapis.com/auth/drive', 'https://www.googleapis.com/auth/spreadsheets']
+
+class CloudDataLogger:
+    
+    """
+    센서 데이터를 Google Sheets에 실시간으로 기록하고, 
+    영상 파일은 종료 시 Google Drive에 업로드하는 클래스.
+    """
+    def __init__(self, session_name: str, video_log_directory: str, video_fps: float = 10.0, max_lidar_points: int = 50,  batch_size: int = 100, batch_timeout: float = 1.0):
+        self.session_name = session_name
+        self.video_session_path = os.path.join(video_log_directory, self.session_name)
+        os.makedirs(self.video_session_path, exist_ok=True)
+
+        self.max_lidar_points = max_lidar_points
+        self.frame_count = 0
+        # ==================== 배치 설정 추가 ====================
+        self.BATCH_SIZE = batch_size      # 한 번에 보낼 최대 로그 개수
+        self.BATCH_TIMEOUT = batch_timeout  # 배치를 보내기 전 최대 대기 시간 (초)
+        # =======================================================
+        # --- Google API 서비스 초기화 ---
+        self.drive_service, self.sheets_service = self._authenticate()
+        self.spreadsheet_id = None
+        self.session_drive_folder_id = None
+
+        if self.drive_service and self.sheets_service:
+            self._setup_cloud_session()
+        else:
+            rospy.logerr("Failed to initialize Google services. Cloud logging disabled.")
+
+        # --- 비디오 녹화 설정 (로컬 임시 저장) ---
+        self.video_paths = {
+            'cam1': os.path.join(self.video_session_path, "camera1.avi"),
+            'cam2': os.path.join(self.video_session_path, "camera2.avi")
+        }
+        self.video_writers = {'cam1': None, 'cam2': None}
+        self.video_fps = video_fps
+        self.fourcc = cv2.VideoWriter_fourcc(*'XVID')
+        
+        rospy.loginfo(f"CloudDataLogger initialized for session: {self.session_name}")
+        if self.spreadsheet_id:
+            rospy.loginfo(f"Logging to Google Sheet ID: {self.spreadsheet_id}")
+
+        # ==================== 쓰레딩 관련 설정 추가 ====================
+        self.log_queue = queue.Queue()
+        self.shutdown_event = threading.Event()
+        self.log_thread = threading.Thread(target=self._log_worker, daemon=True)
+        self.log_thread.start()
+        # ============================================================
+        rospy.loginfo(f"Batching CloudDataLogger initialized for session: {self.session_name}")
+
+    def _authenticate(self):
+        """OAuth 2.0 인증을 수행하고 Drive와 Sheets 서비스 객체를 반환합니다."""
+        creds = None
+        token_path = 'token.json'
+        credentials_path = 'credentials.json'
+
+        if os.path.exists(token_path):
+            creds = Credentials.from_authorized_user_file(token_path, SCOPES)
+        
+        if not creds or not creds.valid:
+            if creds and creds.expired and creds.refresh_token:
+                creds.refresh(Request())
+            else:
+                flow = InstalledAppFlow.from_client_secrets_file(credentials_path, SCOPES)
+                creds = flow.run_local_server(port=0)
+            with open(token_path, 'w') as token:
+                token.write(creds.to_json())
+        
+        try:
+            drive_service = build('drive', 'v3', credentials=creds)
+            sheets_service = build('sheets', 'v4', credentials=creds)
+            rospy.loginfo("Google Drive and Sheets API services created successfully.")
+            return drive_service, sheets_service
+        except HttpError as error:
+            rospy.logerr(f"An error occurred creating Google services: {error}")
+            return None, None
+
+    def _setup_cloud_session(self):
+        """세션을 위한 구글 드라이브 폴더와 스프레드시트를 생성 및 설정합니다."""
+        try:
+            # 1. 최상위 로그 폴더 찾기 또는 생성
+            main_log_folder_id = self._find_or_create_drive_folder("FSDS_Logs")
+
+            # 2. 이번 세션을 위한 폴더 생성
+            self.session_drive_folder_id = self._find_or_create_drive_folder(self.session_name, parent_id=main_log_folder_id)
+
+            # 3. 새 스프레드시트 생성
+            spreadsheet_body = {
+                'properties': {'title': f"{self.session_name}_Log"},
+                'sheets': [{'properties': {'title': 'Metadata'}}, {'properties': {'title': 'LiDAR'}}]
+            }
+            spreadsheet = self.sheets_service.spreadsheets().create(body=spreadsheet_body).execute()
+            self.spreadsheet_id = spreadsheet['spreadsheetId']
+            rospy.loginfo(f"Created new Google Sheet: {spreadsheet['properties']['title']}")
+
+            # 4. 생성된 스프레드시트를 세션 폴더로 이동
+            self.drive_service.files().update(
+                fileId=self.spreadsheet_id,
+                addParents=self.session_drive_folder_id,
+                removeParents='root',
+                fields='id, parents'
+            ).execute()
+
+            # 5. 각 시트에 헤더 추가
+            self._append_to_sheet('Metadata', [
+                'timestamp', 'frame_id', 'autonomous_mode',
+                'control_steering', 'control_throttle', 'control_brake',
+                'imu_acc_x', 'imu_acc_y', 'imu_acc_z',
+                'imu_gyro_x', 'imu_gyro_y', 'imu_gyro_z',
+                'gps_x', 'gps_y', 'gps_z', 'lidar_point_count'
+            ])
+            lidar_header = ['frame_id'] + [f'p{i}_{axis}' for i in range(self.max_lidar_points) for axis in ['x', 'y']]
+            self._append_to_sheet('LiDAR', lidar_header)
+
+        except HttpError as error:
+            rospy.logerr(f"Failed to setup cloud session: {error}")
+            self.spreadsheet_id = None
+            self.session_drive_folder_id = None
+            
+    def _find_or_create_drive_folder(self, name, parent_id=None):
+        """구글 드라이브에서 폴더를 찾거나 생성합니다."""
+        query = f"name='{name}' and mimeType='application/vnd.google-apps.folder' and trashed=false"
+        if parent_id:
+            query += f" and '{parent_id}' in parents"
+        
+        response = self.drive_service.files().list(q=query, spaces='drive', fields='files(id)').execute()
+        if response['files']:
+            return response['files'][0]['id']
+        else:
+            meta = {'name': name, 'mimeType': 'application/vnd.google-apps.folder'}
+            if parent_id: meta['parents'] = [parent_id]
+            return self.drive_service.files().create(body=meta, fields='id').execute()['id']
+
+    def _append_to_sheet(self, sheet_name, values):
+        """스프레드시트에 여러 행(values)을 한 번에 추가합니다."""
+        if not self.spreadsheet_id or not values: return
+        try:
+            self.sheets_service.spreadsheets().values().append(
+                spreadsheetId=self.spreadsheet_id,
+                range=f"'{sheet_name}'!A1",
+                valueInputOption='USER_ENTERED',
+                # body에 [values]가 아닌 values를 직접 전달하여 여러 행을 보냅니다.
+                body={'values': values} 
+            ).execute()
+        except HttpError as error:
+            # 에러 메시지에 몇 개의 행을 보내려다 실패했는지 추가하면 디버깅에 용이
+            rospy.logwarn(f"Could not append batch of {len(values)} rows to sheet '{sheet_name}': {error}")
+
+    
+    def _upload_file_to_drive(self, file_path):
+        """로컬 파일을 세션의 드라이브 폴더에 업로드합니다."""
+        if not self.session_drive_folder_id:
+            rospy.logerr("Session Drive folder ID not set. Cannot upload video.")
+            return
+        
+        file_name = os.path.basename(file_path)
+        rospy.loginfo(f"Uploading {file_name} to Google Drive...")
+        media = MediaFileUpload(file_path, resumable=True)
+        request = self.drive_service.files().create(
+            body={'name': file_name, 'parents': [self.session_drive_folder_id]},
+            media_body=media,
+            fields='id'
+        )
+        response = None
+        while response is None:
+            status, response = request.next_chunk()
+            if status:
+                rospy.loginfo(f"  -> {int(status.progress() * 100)}%")
+        rospy.loginfo(f"File '{file_name}' uploaded successfully.")
+
+
+    def _log_worker(self):
+        """
+        Queue에서 로그를 가져와 배치로 묶은 뒤, 한 번의 API 호출로 전송하는 작업자 함수.
+        """
+        rospy.loginfo("Log worker thread with batching started.")
+        
+        # 각 시트별로 데이터를 모을 임시 버퍼(배치)
+        metadata_batch = []
+        lidar_batch = []
+        last_sent_time = time.time()
+
+        while not self.shutdown_event.is_set():
+            try:
+                # 타임아웃을 짧게 설정하여 루프가 너무 오래 멈추지 않도록 함
+                log_item = self.log_queue.get(timeout=0.1)
+                
+                # 데이터 타입에 따라 각자의 배치에 추가
+                if log_item['type'] == 'metadata':
+                    metadata_batch.append(log_item['data'])
+                elif log_item['type'] == 'lidar':
+                    lidar_batch.append(log_item['data'])
+                
+                self.log_queue.task_done()
+
+            except queue.Empty:
+                # Queue가 비어있으면 아무것도 하지 않음
+                pass
+
+            # 배치를 보낼 조건 확인:
+            # 1. 메타데이터 배치가 꽉 찼거나
+            # 2. 마지막 전송 후 일정 시간이 지났고, 보낼 데이터가 있을 때
+            if (len(metadata_batch) >= self.BATCH_SIZE) or \
+               (time.time() - last_sent_time > self.BATCH_TIMEOUT and (metadata_batch or lidar_batch)):
+                
+                if metadata_batch:
+                    self._append_to_sheet('Metadata', metadata_batch)
+                    metadata_batch = [] # 배치 비우기
+                
+                if lidar_batch:
+                    self._append_to_sheet('LiDAR', lidar_batch)
+                    lidar_batch = [] # 배치 비우기
+
+                last_sent_time = time.time() # 마지막 전송 시간 갱신
+        
+        # 종료 직전, 남아있는 모든 데이터를 전송
+        rospy.loginfo("Log worker shutting down, sending remaining data...")
+        if metadata_batch:
+            self._append_to_sheet('Metadata', metadata_batch)
+        if lidar_batch:
+            self._append_to_sheet('LiDAR', lidar_batch)
+
+    def log_entry(self, autonomous_mode: str, control_command: ControlCommand,
+                  imu_acc: list, imu_gyro: list, gps_data: tuple,
+                  camera1_image: np.ndarray, camera2_image: np.ndarray, lidar_points: np.ndarray):
+        
+        # ==================== 매우 빠르게 동작하도록 수정 ====================
+        # 이 메서드는 이제 데이터를 Queue에 넣기만 하고 즉시 반환됩니다.
+        
+        timestamp = rospy.Time.now().to_sec()
+        point_count = len(lidar_points) if lidar_points is not None else 0
+
+        # 1. 메타데이터를 Dictionary 형태로 만들어 Queue에 넣음
+        metadata_row = [
+            timestamp, self.frame_count, autonomous_mode,
+            control_command.steering, control_command.throttle, control_command.brake,
+            imu_acc[0], imu_acc[1], imu_acc[2], imu_gyro[0], imu_gyro[1], imu_gyro[2],
+            gps_data[0], gps_data[1], gps_data[2], point_count
+        ]
+        self.log_queue.put({'type': 'metadata', 'data': metadata_row})
+
+        # 2. LiDAR 데이터를 만들어 Queue에 넣음
+        lidar_row = [self.frame_count]
+        if point_count > 0:
+            points_flat = lidar_points[:self.max_lidar_points, :2].flatten().tolist()
+            lidar_row.extend(points_flat)
+        padding_len = (1 + self.max_lidar_points * 2) - len(lidar_row)
+        lidar_row.extend([''] * padding_len)
+        self.log_queue.put({'type': 'lidar', 'data': lidar_row})
+        # ===================================================================
+
+        # 3. 카메라 데이터 로깅 (로컬 저장이므로 그대로 둠)
+        images = {'cam1': camera1_image, 'cam2': camera2_image}
+        for cam_id, img in images.items():
+            if img is None: continue
+            if self.video_writers[cam_id] is None:
+                h, w, _ = img.shape
+                self.video_writers[cam_id] = cv2.VideoWriter(self.video_paths[cam_id], self.fourcc, self.video_fps, (w, h))
+            self.video_writers[cam_id].write(img)
+
+        self.frame_count += 1
+
+    def close(self):
+        """
+        로깅 쓰레드를 안전하게 종료하고 비디오 파일을 업로드합니다.
+        """
+        rospy.loginfo("Closing logger...")
+
+        # 1. 로깅 쓰레드에 종료 신호 보내기
+        rospy.loginfo("Waiting for log queue to be processed...")
+        self.log_queue.join()  # Queue에 쌓인 모든 아이템이 처리될 때까지 대기
+        self.shutdown_event.set() # 쓰레드의 while 루프를 빠져나가도록 신호
+        self.log_thread.join() # 쓰레드가 완전히 종료될 때까지 대기
+
+        rospy.loginfo("Log thread successfully shut down.")
+
+        # 2. 비디오 파일 핸들 닫고 드라이브에 업로드 (기존과 동일)
+        for cam_id, writer in self.video_writers.items():
+            if writer is not None:
+                writer.release()
+                rospy.loginfo(f"Locally saved video: {self.video_paths[cam_id]}")
+                self._upload_file_to_drive(self.video_paths[cam_id])
+        
+        rospy.loginfo("CloudDataLogger session finished.")
+    
 # ==================== Enums ====================
 class AutonomousMode(Enum):
     AS_OFF = 0
@@ -60,10 +366,10 @@ class FormulaAutonomousSystem:
         self.dbscan_points = 0
         
         # ==================== 데이터 로거 추가 ====================
-        self.data_logger = DataLogger(
-        log_directory="/home/user/fsds_ws/src/tutorial/log",
-        session_name=datetime.datetime.now().strftime("%Y%m%d_%H%M%S"),
-        max_lidar_points=50  # 필요시 이 값을 조절
+        self.data_logger = CloudDataLogger(
+            session_name=datetime.datetime.now().strftime("%Y%m%d_%H%M%S"),
+            video_log_directory="/home/user/fsds_ws/src/tutorial/log/video_temp", # 비디오 임시 저장 폴더
+            max_lidar_points=50
         )
         # =========================================================
 
