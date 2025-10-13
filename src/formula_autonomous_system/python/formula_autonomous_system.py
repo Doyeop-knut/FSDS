@@ -586,8 +586,8 @@ class FormulaAutonomousSystem:
             raw_predictions1 = self.model(img1_tensor)
             raw_predictions2 = self.model(img2_tensor)
 
-        rendered_img1, left_bbox, left_conf, left_label = self.camera_util._process_and_draw_detections(image1, raw_predictions1)
-        rendered_img2, right_bbox, right_conf, right_label = self.camera_util._process_and_draw_detections(image2, raw_predictions2)
+        rendered_img1, left_bbox, left_conf = self.camera_util._process_and_draw_detections(image1, raw_predictions1)
+        rendered_img2, right_bbox, right_conf = self.camera_util._process_and_draw_detections(image2, raw_predictions2)
         
         try:
             dt_cam_lidar = camera1_msg.header.stamp.to_sec() - lidar_msg.header.stamp.to_sec()
@@ -3463,7 +3463,7 @@ class PathPlanner:
      # Check if predictions_np has enough columns before indexing
         if predictions_np.shape[1] < 5:
             rospy.logwarn("Predictions tensor has fewer than 5 columns. Cannot filter by confidence.")
-            return img_copy, np.array([]),  np.array([]),  np.array([])
+            return img_copy, np.array([]),  np.array([])
             #  return img_copy
      
         confidence_mask = predictions_np[:, 4] > conf_threshold
@@ -3473,7 +3473,7 @@ class PathPlanner:
         # predictions_np = predictions_np[predictions_np[:, 4] > conf_threshold]
 
         if predictions_np.shape[0] == 0:
-            return img_copy, np.array([]),  np.array([]),  np.array([])  # No detections, return original image
+            return img_copy, np.array([]),  np.array([])  # No detections, return original image
             # return img_copy # No detections, return original image
 
         boxes = predictions_np[:, :4]
@@ -3488,7 +3488,6 @@ class PathPlanner:
         # Given the content, it looks like x1, y1, x2, y2.
         boxes_xyxy = []
         confidence = []
-        class_id = []
         box_output = []
         for cx_norm, cy_norm, w_norm, h_norm in boxes:
             x1 = int((cx_norm - w_norm / 2) )
@@ -3506,10 +3505,7 @@ class PathPlanner:
                 box_output.append([x1, y1, x2, y2])
                 # confidence = scores[i]
                 # class_id = class_ids[i] # Use the assumed class ID
-                if class_ids[i] == 0:
-                    class_label = "cone"
                 confidence.append(scores[i])
-                class_id.append(class_label)
 
                 # Draw bounding box
                 color = (0, 255, 0) # Green for bounding box
@@ -3520,10 +3516,14 @@ class PathPlanner:
                 cv2.putText(img_copy, label, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
         
 <<<<<<< HEAD
+<<<<<<< HEAD
         return img_copy
 >>>>>>> [ConeDetection] 251011 @Doyeop-knut, @marigold0916 | Cone Detection With YOLOv5
 =======
         return img_copy, np.array(box_output), np.array(confidence), np.array(class_id)
+=======
+        return img_copy, np.array(box_output), np.array(confidence)
+>>>>>>> [Cone Detection] 251013 @Doyeop-knut | 자잘한 수정
 
     def is_point_in_bbox(self, point, bbox):
         """Checks if a 2D point is inside a bounding box."""
