@@ -73,6 +73,7 @@ from scipy.spatial import Delaunay
 
 # Camera
 import torch
+import torchvision
 
 # Data Logger
 import os
@@ -1051,17 +1052,21 @@ class FormulaAutonomousSystem:
 =======
         # Plan path using the map
 <<<<<<< HEAD
+<<<<<<< HEAD
         path = self.path_planner.plan_path(self.track_map.get_cones(), vehicle_state[:2])
 >>>>>>> [ConeDetection] 251010 @Doyeop-knut | Cone Detection method 개선 및 Mapping 기능 추가
 
         # Visualize Map and Path
 =======
         path, tri, tri_points = self.path_planner.plan_path(self.track_map.get_cones(), vehicle_state[:2])
+=======
+        path, tri, tri_points, tri_colors = self.path_planner.plan_path(self.track_map.get_cones(), vehicle_state[:2])
+>>>>>>> [PathPlanning] @Doyeop-knut | Delaunay Triangle cone 색 정보 반영
         
                     # Visualize Map and Path
 >>>>>>> [Trajectory] 251010 @Doyeop-knut | Delaunay Triangulation 적용 -> Path 수정 필요
         self.publish_map_cones()
-        self.publish_triangulation(tri, tri_points)
+        self.publish_triangulation(tri, tri_points, tri_colors)
         if path is not None:
             self.publish_path(path)
         # =====================================================
@@ -1329,6 +1334,7 @@ class FormulaAutonomousSystem:
         if self.visualization_frame_counter % self.visualization_publish_interval != 0:
             return
 
+<<<<<<< HEAD
         path_msg = Path()
         path_msg.header.stamp = rospy.Time.now()
         path_msg.header.frame_id = "map"
@@ -1346,6 +1352,10 @@ class FormulaAutonomousSystem:
 =======
     def publish_triangulation(self, tri, points):
         if tri is None or points is None:
+=======
+    def publish_triangulation(self, tri, points, colors):
+        if tri is None or points is None or colors is None:
+>>>>>>> [PathPlanning] @Doyeop-knut | Delaunay Triangle cone 색 정보 반영
             # Clear previous markers if triangulation is not available
             marker = Marker()
             marker.header.stamp = rospy.Time.now()
@@ -1364,11 +1374,12 @@ class FormulaAutonomousSystem:
         marker.type = Marker.LINE_LIST
         marker.action = Marker.ADD
         marker.pose.orientation.w = 1.0
-        marker.scale.x = 0.05  # Line width
-        marker.color.a = 0.4
-        marker.color.r = 0.6
-        marker.color.g = 0.6
-        marker.color.b = 0.6 # Gray color for the mesh
+        marker.scale.x = 0.1  # Line width
+        
+        # Define colors
+        blue = ColorRGBA(0.0, 0.0, 1.0, 0.8)
+        yellow = ColorRGBA(1.0, 1.0, 0.0, 0.8)
+        gray = ColorRGBA(0.6, 0.6, 0.6, 0.4)
 
         # Use the same max edge length from the path planner for consistency
         max_len_sq = self.path_planner.max_edge_length ** 2
@@ -1398,6 +1409,18 @@ class FormulaAutonomousSystem:
 
                     marker.points.append(p1)
                     marker.points.append(p2)
+
+                    color1 = colors[p1_idx]
+                    color2 = colors[p2_idx]
+
+                    line_color = gray
+                    if color1 == 1 and color2 == 1: # Blue
+                        line_color = blue
+                    elif color1 == 2 and color2 == 2: # Yellow
+                        line_color = yellow
+                    
+                    marker.colors.append(line_color)
+                    marker.colors.append(line_color)
                 
         self.triangulation_publisher.publish(marker)
 
@@ -3440,7 +3463,8 @@ class PathPlanner:
      # Check if predictions_np has enough columns before indexing
         if predictions_np.shape[1] < 5:
             rospy.logwarn("Predictions tensor has fewer than 5 columns. Cannot filter by confidence.")
-            return img_copy
+            return img_copy, np.array([]),  np.array([]),  np.array([])
+            #  return img_copy
      
         confidence_mask = predictions_np[:, 4] > conf_threshold
         predictions_np = predictions_np[confidence_mask, :]
@@ -3449,7 +3473,8 @@ class PathPlanner:
         # predictions_np = predictions_np[predictions_np[:, 4] > conf_threshold]
 
         if predictions_np.shape[0] == 0:
-            return img_copy # No detections, return original image
+            return img_copy, np.array([]),  np.array([]),  np.array([])  # No detections, return original image
+            # return img_copy # No detections, return original image
 
         boxes = predictions_np[:, :4]
         scores = predictions_np[:, 4]
@@ -4052,19 +4077,19 @@ class PathPlanner:
         cones: TrackMap의 self.cones 리스트
         current_car_pos: 차량의 현재 위치 [x, y]
         Returns:
-            (path, tri, all_points) or (None, None, None)
+            (path, tri, all_points, colors) or (None, None, None, None)
         """
         # 1. Get blue (1) and yellow (2) cones
         blue_cones = [c for c in cones if c['color_id'] == 1]
         yellow_cones = [c for c in cones if c['color_id'] == 2]
 
         if len(blue_cones) < 2 or len(yellow_cones) < 2:
-            return None, None, None # Not enough cones to define a path
+            return None, None, None, None # Not enough cones to define a path
 
         # 2. Prepare points for triangulation
         all_points = np.array([[c['x'], c['y']] for c in blue_cones] + [[c['x'], c['y']] for c in yellow_cones])
         if len(all_points) < 3:
-            return None, None, None # Triangulation requires at least 3 points
+            return None, None, None, None # Triangulation requires at least 3 points
 
         # Create a mapping from point index back to cone color
         # 1 for blue, 2 for yellow
@@ -4076,7 +4101,7 @@ class PathPlanner:
             tri = Delaunay(all_points)
         except Exception as e:
             rospy.logwarn(f"Delaunay triangulation failed: {e}")
-            return None, None, None
+            return None, None, None, None
 
         # 4. Find centerline edges (connecting blue and yellow cones)
         midpoints = []
@@ -4101,7 +4126,7 @@ class PathPlanner:
                         midpoints.append(midpoint)
         
         if len(midpoints) < 3: # Not enough midpoints to create a spline
-            return None, tri, all_points
+            return None, tri, all_points, colors
 
         # 5. Sort midpoints by distance from the car and smooth with a spline
         midpoints = np.array(sorted(midpoints, key=lambda p: np.hypot(p[0]-current_car_pos[0], p[1]-current_car_pos[1])))
@@ -4111,10 +4136,10 @@ class PathPlanner:
         midpoints = unique_midpoints[np.argsort(indices)]
 
         if len(midpoints) < 3:
-            return None, tri, all_points
+            return None, tri, all_points, colors
 
         k = min(2, len(midpoints)-1)
-        if k < 1: return None, tri, all_points
+        if k < 1: return None, tri, all_points, colors
 
         tck, u = splprep([midpoints[:, 0], midpoints[:, 1]], s=0.5, k=k) # s: smoothing factor
         
@@ -4122,7 +4147,7 @@ class PathPlanner:
         x_new, y_new = splev(u_new, tck)
 
         path = np.vstack((x_new, y_new)).T
-        return path, tri, all_points
+        return path, tri, all_points, colors
 
 >>>>>>> [ConeDetection] 251010 @Doyeop-knut | Cone Detection method 개선 및 Mapping 기능 추가
 # ==================== Utility Classes ====================
