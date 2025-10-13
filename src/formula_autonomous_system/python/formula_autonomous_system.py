@@ -173,60 +173,39 @@ class FormulaAutonomousSystem:
         # =====================================================
 
         rospy.loginfo_throttle(1.0,f"v = {round(math.sqrt(vehicle_state[3]**2 + vehicle_state[4]**2),4)} m/s")
-        # print(f"state = {self.gps_util.state}, yaw = {math.degrees(self.gps_util.state[2])}")
         ## LiDAR Processed
-        # print(f"parameters = {self.dbscan_eps, self.dbscan_points, self.ransac_distance, self.ransac_iter, self.x_min, self.x_max}")
         points=self.get_lidar_point_cloud(lidar_msg)
         filtered = self.lidar_util.filtering_points(points, (self.x_min, self.x_max), (self.y_min, self.y_max), (self.z_min, self.z_max))
         removal =  self.lidar_util.ransac_plane_removal(filtered, threshold=self.ransac_distance, max_trials=self.ransac_iter)
-        # print(self.dbscan_eps)
         cluster = self.lidar_util.cluster_points(removal, eps=self.dbscan_eps, min_samples=self.dbscan_points)
-        # print(f"cluster = {cluster}")
-        # print(f"gps_data = {gps_data}")
-        # print(f"x = {self.gps_util.state[0]}, y = {self.gps_util.state[1]}, yaw = {math.degrees(self.gps_util.state[2])}")
-        # print(cluster*math.sin(yaw))
        
         image1 = self.get_camera_image(camera1_msg)
         image2 = self.get_camera_image(camera2_msg)
         cam_mat = self.camera_util.cam_matrix()
         cam1_transform = self.camera_util.transform_matrix(-self.left_tx, -self.left_ty, -self.left_tz, self.left_rr, self.left_rp, self.left_ry)
         cam2_transform = self.camera_util.transform_matrix(-self.right_tx, -self.right_ty, -self.right_tz, self.right_rr, self.right_rp, self.right_ry)
-        # print(cam2_transform)
         image1 = self.camera_util.preprocessImage(image1)
         image2 = self.camera_util.preprocessImage(image2)
         
-        # --- Run YOLOv5 Inference (Manual Processing) ---
-        # Convert numpy array to torch tensor and preprocess for model
-        # Assuming model expects input in (batch_size, channels, height, width) format, RGB, normalized to 0-1.
-        
         # Process image1
-        img1_rgb = cv2.cvtColor(image1, cv2.COLOR_BGR2RGB) # BGR to RGB
-        img1_tensor = torch.from_numpy(img1_rgb).permute(2, 0, 1).float() / 255.0 # HWC to CHW, float, normalize
-        img1_tensor = img1_tensor.unsqueeze(0).to(self.device) # Add batch dimension and move to device
+        img1_rgb = cv2.cvtColor(image1, cv2.COLOR_BGR2RGB) 
+        img1_tensor = torch.from_numpy(img1_rgb).permute(2, 0, 1).float() / 255.0 
+        img1_tensor = img1_tensor.unsqueeze(0).to(self.device) 
 
         # Process image2
-        img2_rgb = cv2.cvtColor(image2, cv2.COLOR_BGR2RGB) # BGR to RGB
-        img2_tensor = torch.from_numpy(img2_rgb).permute(2, 0, 1).float() / 255.0 # HWC to CHW, float, normalize
-        img2_tensor = img2_tensor.unsqueeze(0).to(self.device) # Add batch dimension and move to device
+        img2_rgb = cv2.cvtColor(image2, cv2.COLOR_BGR2RGB) 
+        img2_tensor = torch.from_numpy(img2_rgb).permute(2, 0, 1).float() / 255.0 
+        img2_tensor = img2_tensor.unsqueeze(0).to(self.device) 
 
         # Get raw predictions from the model
         with torch.no_grad(): # Disable gradient calculation for inference
             raw_predictions1 = self.model(img1_tensor)
             raw_predictions2 = self.model(img2_tensor)
 
-        # Process raw predictions and draw bounding boxes
-        # Assuming raw_predictions is a tensor of shape [num_boxes, 6] where each row is
-        # [x1, y1, x2, y2, confidence, class_id].
-        rendered_img1 = self.camera_util._process_and_draw_detections(image1, raw_predictions1)
-        rendered_img2 = self.camera_util._process_and_draw_detections(image2, raw_predictions2)
-        # --- End YOLOv5 Inference (Manual Processing) ---
-
-        # --- Time Synchronization Compensation ---
-        # Compensate for vehicle motion between LiDAR scan time and Camera image time
-        # This is a first-order correction for high-speed alignment issues.
+        rendered_img1, left_bbox, left_conf, left_label = self.camera_util._process_and_draw_detections(image1, raw_predictions1)
+        rendered_img2, right_bbox, right_conf, right_label = self.camera_util._process_and_draw_detections(image2, raw_predictions2)
+        
         try:
-            # Note: A negative dt means the lidar message is newer than the camera, which is unusual but possible.
-            # The compensation will move the points backward in that case, which is correct.
             dt_cam_lidar = camera1_msg.header.stamp.to_sec() - lidar_msg.header.stamp.to_sec()
             vx = vehicle_state[3] # Longitudinal velocity
             compensation_dist = vx * dt_cam_lidar
@@ -236,12 +215,10 @@ class FormulaAutonomousSystem:
         except Exception as e:
             rospy.logwarn_throttle(1.0, f"Could not perform time compensation: {e}")
             compensated_cluster = cluster
-        # --- End Compensation ---
 
         # print(color)
         cam1_pts = self.camera_util.projectToCam(compensated_cluster, cam1_transform)
         cam2_pts = self.camera_util.projectToCam(compensated_cluster, cam2_transform)
-        # color = self.camera_util.detectConeColor(cam1_pts, image1)
 
         if cluster.size > 0:
             # Transform cluster points to map frame
@@ -256,37 +233,74 @@ class FormulaAutonomousSystem:
             # Prepare a list to store cones with color information
             cones_with_color = []
             left, right = [], []
-            # Iterate through each 3D cluster point and its corresponding 2D projected point
-            for i, cone_3d_veh_frame in enumerate(cluster):
-                # Project 3D cone to camera 1 image plane
-                # Note: cam1_pts is a list of projected points, need to get the i-th one
-                if i < len(cam1_pts):
-                    cone_2d_img_frame = cam1_pts[i]
-                    # Use original image for color detection, but draw debug info on the rendered image
-                    detected_color_left = self.camera_util.detectConeColor(cone_2d_img_frame, rendered_img1, debug_image=rendered_img1)
-                    detected_color_right = self.camera_util.detectConeColor(cam2_pts[i], rendered_img1, debug_image=rendered_img2)
+
+            # Create dictionaries to map LiDAR cluster indices to bounding box indices
+            lidar_to_bbox_map1 = {i: [] for i in range(len(compensated_cluster))}
+            lidar_to_bbox_map2 = {i: [] for i in range(len(compensated_cluster))}
+
+            if left_bbox is not None and len(left_bbox) > 0:
+                for i, proj_point in enumerate(cam1_pts):
+                    for j, bbox in enumerate(left_bbox):
+                        if self.camera_util.is_point_in_bbox(proj_point, bbox):
+                            lidar_to_bbox_map1[i].append(j)
+
+            if right_bbox is not None and len(right_bbox) > 0:
+                for i, proj_point in enumerate(cam2_pts):
+                    for j, bbox in enumerate(right_bbox):
+                        if self.camera_util.is_point_in_bbox(proj_point, bbox):
+                            lidar_to_bbox_map2[i].append(j)
+
+            # Iterate through each 3D cluster point and determine its color
+            for i, cone_3d_veh_frame in enumerate(compensated_cluster):
+                detected_color = "unknown"
+
+                # --- Fusion of Model-based and LiDAR-based detection for color ---
+                
+                # 1. Prioritize color detection using model's bounding box if a LiDAR point is inside it
+                # Check Camera 1
+                if i in lidar_to_bbox_map1 and lidar_to_bbox_map1[i]:
+                    bbox_index = lidar_to_bbox_map1[i][0]  # Use the first matched bbox
+                    bbox = left_bbox[bbox_index]
+                    detected_color = self.camera_util.detect_color_from_bbox(image1, bbox, debug_image=rendered_img1)
+
+                # Check Camera 2 if not found in Camera 1
+                if detected_color == "unknown" and i in lidar_to_bbox_map2 and lidar_to_bbox_map2[i]:
+                    bbox_index = lidar_to_bbox_map2[i][0]
+                    bbox = right_bbox[bbox_index]
+                    detected_color = self.camera_util.detect_color_from_bbox(image2, bbox, debug_image=rendered_img2)
+
+                # 2. Fallback to point-based color detection if no bounding box association was found
+                if detected_color == "unknown":
+                    # Check Camera 1
+                    if i < len(cam1_pts):
+                        color_left = self.camera_util.detectConeColor(cam1_pts[i], image1, debug_image=rendered_img1)
+                        if color_left != "unknown":
+                            detected_color = color_left
                     
-                    color_id = 0 # Default to unknown
-                    if detected_color_left == "blue" or detected_color_right == "blue":
-                        # print("Blue cone detected")
-                        color_id = 1
-                    elif detected_color_left == "yellow" or detected_color_right == "yellow":
-                        # print("Yellow cone detected")
-                        color_id = 2
-                    elif detected_color_left == "orange" or detected_color_right == "orange":
-                        # print("Orange cone detected")
-                        color_id = 3
-                    
-                    # Transform 3D cone from vehicle frame to map frame
-                    # print(f"3D Cone (Vehicle Frame): {cone_3d_veh_frame}, Color ID: {color_id}")
-                    cone_3d_map_frame_xy = np.dot(cone_3d_veh_frame[:2], rot_matrix.T) + np.array([veh_x, veh_y])
-                    cone_3d_map_frame_z = cone_3d_veh_frame[2] # Z-coordinate remains the same
-                    
-                    cones_with_color.append([cone_3d_map_frame_xy[0], cone_3d_map_frame_xy[1], cone_3d_map_frame_z, color_id])
-                    if color_id == 1:
-                        left.append([cone_3d_map_frame_xy[0], cone_3d_map_frame_xy[1]])
-                    elif color_id == 2:
-                        right.append([cone_3d_map_frame_xy[0], cone_3d_map_frame_xy[1]])
+                    # Check Camera 2 if still unknown
+                    if detected_color == "unknown" and i < len(cam2_pts):
+                        color_right = self.camera_util.detectConeColor(cam2_pts[i], image2, debug_image=rendered_img2)
+                        if color_right != "unknown":
+                            detected_color = color_right
+                
+                # --- Color ID assignment ---
+                color_id = 0  # Default to unknown
+                if detected_color == "blue":
+                    color_id = 1
+                elif detected_color == "yellow":
+                    color_id = 2
+                elif detected_color == "orange":
+                    color_id = 3
+                
+                # Transform 3D cone from vehicle frame to map frame
+                cone_3d_map_frame_xy = np.dot(cone_3d_veh_frame[:2], rot_matrix.T) + np.array([veh_x, veh_y])
+                cone_3d_map_frame_z = cone_3d_veh_frame[2]
+                
+                cones_with_color.append([cone_3d_map_frame_xy[0], cone_3d_map_frame_xy[1], cone_3d_map_frame_z, color_id])
+                if color_id == 1:
+                    left.append([cone_3d_map_frame_xy[0], cone_3d_map_frame_xy[1]])
+                elif color_id == 2:
+                    right.append([cone_3d_map_frame_xy[0], cone_3d_map_frame_xy[1]])
             
             global_clusters = np.array(cones_with_color)
         else:
@@ -737,6 +751,9 @@ class CameraProcessor:
         # If they are x, y, w, h, then the conversion needs to be different.
         # Given the content, it looks like x1, y1, x2, y2.
         boxes_xyxy = []
+        confidence = []
+        class_id = []
+        box_output = []
         for cx_norm, cy_norm, w_norm, h_norm in boxes:
             x1 = int((cx_norm - w_norm / 2) )
             y1 = int((cy_norm - h_norm / 2) )
@@ -747,22 +764,81 @@ class CameraProcessor:
         boxes_xywh = np.array([[x1, y1, x2, y2] for x1, y1, x2, y2 in boxes_xyxy])
         
         indices = cv2.dnn.NMSBoxes(boxes_xywh.tolist(), scores.tolist(), conf_threshold, iou_threshold)
-        
         if len(indices) > 0:
             for i in indices.flatten():
-                x1, y1, x2, y2 = map(int, boxes_xyxy[i])
-                confidence = scores[i]
-                class_id = class_ids[i] # Use the assumed class ID
+                x1, y1, x2, y2 = map(int, boxes_xywh[i])
+                box_output.append([x1, y1, x2, y2])
+                # confidence = scores[i]
+                # class_id = class_ids[i] # Use the assumed class ID
+                if class_ids[i] == 0:
+                    class_label = "cone"
+                confidence.append(scores[i])
+                class_id.append(class_label)
 
                 # Draw bounding box
                 color = (0, 255, 0) # Green for bounding box
                 cv2.rectangle(img_copy, (x1, y1), (x2, y2), color, 2)
 
                 # Draw label
-                label = f"Class {class_id}: {confidence:.2f}"
+                label = f"Class {class_ids[i]}: {scores[i]:.2f}"
                 cv2.putText(img_copy, label, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
         
-        return img_copy
+        return img_copy, np.array(box_output), np.array(confidence), np.array(class_id)
+
+    def is_point_in_bbox(self, point, bbox):
+        """Checks if a 2D point is inside a bounding box."""
+        if point is None or bbox is None:
+            return False
+        u, v = point
+        x1, y1, x2, y2 = bbox
+        return x1 <= u <= x2 and y1 <= v <= y2
+
+    def detect_color_from_bbox(self, image, bbox, debug_image=None):
+        """Detects the dominant color within a given bounding box."""
+        x1, y1, x2, y2 = map(int, bbox)
+
+        # Clamp coordinates to be within image dimensions
+        x1 = max(0, x1)
+        y1 = max(0, y1)
+        x2 = min(image.shape[1], x2)
+        y2 = min(image.shape[0], y2)
+
+        if x2 <= x1 or y2 <= y1:
+            return "unknown"
+
+        roi = image[y1:y2, x1:x2]
+
+        if roi.size == 0:
+            return "unknown"
+
+        if debug_image is not None:
+            cv2.rectangle(debug_image, (x1, y1), (x2, y2), (255, 0, 255), 1) # Draw magenta box for the ROI
+
+        hsv_roi = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
+
+        # Color detection logic (reused from detectConeColor)
+        color_counts = {
+            "yellow": cv2.countNonZero(cv2.inRange(hsv_roi, self.hsv_yellow_min, self.hsv_yellow_max)),
+            "blue": cv2.countNonZero(cv2.inRange(hsv_roi, self.hsv_blue_min, self.hsv_blue_max)),
+            "orange": cv2.countNonZero(cv2.inRange(hsv_roi, self.hsv_orange_min, self.hsv_orange_max))
+        }
+
+        # Determine dominant color
+        dominant_color = "unknown"
+        max_count = 0
+        for color, count in color_counts.items():
+            if count > max_count:
+                max_count = count
+                dominant_color = color
+
+        # Threshold to avoid detecting noise
+        if max_count < (roi.size * 0.05): # e.g., at least 5% of ROI pixels must be of a color
+            return "unknown"
+
+        if debug_image is not None and dominant_color != "unknown":
+            cv2.putText(debug_image, dominant_color, (x1, y1 - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+
+        return dominant_color
         
 
 class LiDARProcessor:
