@@ -21,12 +21,13 @@ import time
 from collections import deque, namedtuple
 
 import tf2_ros
-from geometry_msgs.msg import TransformStamped, Point
+from geometry_msgs.msg import TransformStamped, Point, PoseStamped
 
 # ROS
 from std_msgs.msg import String, ColorRGBA
 from fs_msgs.msg import ControlCommand
 from visualization_msgs.msg import Marker, MarkerArray
+from nav_msgs.msg import Path
 from sensor_msgs.msg import PointCloud2, Image, Imu, NavSatFix, PointField
 import sensor_msgs.point_cloud2 as pc2
 from cv_bridge import CvBridge
@@ -82,7 +83,7 @@ class FormulaAutonomousSystem:
         self.tf_broadcaster = tf2_ros.TransformBroadcaster()
 
         # Publishers for visualization
-        self.path_publisher = rospy.Publisher("/centerline_path", Marker, queue_size=1)
+        self.path_publisher = rospy.Publisher("/centerline_path", Path, queue_size=1)
         self.map_cone_publisher = rospy.Publisher("/map_cones", MarkerArray, queue_size=1)
         self.triangulation_publisher = rospy.Publisher("/delaunay_triangulation", Marker, queue_size=1)
 
@@ -418,28 +419,21 @@ class FormulaAutonomousSystem:
         self.map_cone_publisher.publish(marker_array)
 
     def publish_path(self, path):
-        marker = Marker()
-        marker.header.stamp = rospy.Time.now()
-        marker.header.frame_id = "map"
-        marker.ns = "centerline_path"
-        marker.id = 0
-        marker.type = Marker.LINE_STRIP
-        marker.action = Marker.ADD
-        marker.pose.orientation.w = 1.0
-        marker.scale.x = 0.2  # Line width
-        marker.color.a = 1.0
-        marker.color.r = 0.0
-        marker.color.g = 1.0
-        marker.color.b = 0.0
+        path_msg = Path()
+        path_msg.header.stamp = rospy.Time.now()
+        path_msg.header.frame_id = "map"
 
         for point in path:
-            p = Point()
-            p.x = point[0]
-            p.y = point[1]
-            p.z = 0.1 # slightly above ground
-            marker.points.append(p)
+            pose = PoseStamped()
+            pose.header.stamp = path_msg.header.stamp
+            pose.header.frame_id = path_msg.header.frame_id
+            pose.pose.position.x = point[0]
+            pose.pose.position.y = point[1]
+            pose.pose.position.z = 0.1 # slightly above ground
+            pose.pose.orientation.w = 1.0
+            path_msg.poses.append(pose)
 
-        self.path_publisher.publish(marker)
+        self.path_publisher.publish(path_msg)
 
     def publish_triangulation(self, tri, points, colors):
         if tri is None or points is None or colors is None:
@@ -1156,20 +1150,39 @@ class PathPlanner:
         if len(midpoints) < 3: # Not enough midpoints to create a spline
             return None, tri, all_points, colors
 
-        # 5. Sort midpoints by distance from the car and smooth with a spline
-        midpoints = np.array(sorted(midpoints, key=lambda p: np.hypot(p[0]-current_car_pos[0], p[1]-current_car_pos[1])))
+        # 5. Sort midpoints to form a continuous path
+        midpoints_np = np.array(midpoints)
         
-        # Remove duplicate midpoints that might arise from shared edges
-        unique_midpoints, indices = np.unique(midpoints, axis=0, return_index=True)
-        midpoints = unique_midpoints[np.argsort(indices)]
+        # Get unique midpoints.
+        unique_midpoints = np.unique(midpoints_np, axis=0)
 
-        if len(midpoints) < 3:
+        if len(unique_midpoints) < 3:
             return None, tri, all_points, colors
 
-        k = min(2, len(midpoints)-1)
-        if k < 1: return None, tri, all_points, colors
+        midpoints_list = unique_midpoints.tolist()
+        
+        # Find the starting point: the midpoint closest to the car
+        start_idx = np.argmin([np.hypot(p[0] - current_car_pos[0], p[1] - current_car_pos[1]) for p in midpoints_list])
+        
+        ordered_path_points = [midpoints_list.pop(start_idx)]
+        
+        # Iteratively find the next closest point to build the path
+        while midpoints_list:
+            last_point = ordered_path_points[-1]
+            closest_idx = np.argmin([np.hypot(p[0] - last_point[0], p[1] - last_point[1]) for p in midpoints_list])
+            ordered_path_points.append(midpoints_list.pop(closest_idx))
 
-        tck, u = splprep([midpoints[:, 0], midpoints[:, 1]], s=0.5, k=k) # s: smoothing factor
+        ordered_midpoints = np.array(ordered_path_points)
+
+        if len(ordered_midpoints) < 3:
+            return None, tri, all_points, colors
+
+        # 6. Smooth the path with a spline
+        k = min(2, len(ordered_midpoints)-1)
+        if k < 1: 
+            return None, tri, all_points, colors
+
+        tck, u = splprep([ordered_midpoints[:, 0], ordered_midpoints[:, 1]], s=0.5, k=k)
         
         u_new = np.linspace(u.min(), u.max(), 50) # Create 50 points for the path
         x_new, y_new = splev(u_new, tck)
