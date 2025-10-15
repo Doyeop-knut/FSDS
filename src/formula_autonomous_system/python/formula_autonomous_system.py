@@ -1083,8 +1083,15 @@ class FormulaAutonomousSystem:
 >>>>>>> [PathPlanning] @Doyeop-knut | Delaunay Triangle cone 색 정보 반영
 =======
         path, tri, tri_points, tri_colors = self.path_planner.plan_path(self.track_map.get_cones(), vehicle_state)
+<<<<<<< HEAD
 >>>>>>> [Control] 251014 @Doyeop-knut | Controller 구현 (Pure Pursuit, Stanley, MPC)
         
+=======
+        print(f"current_car_pos: x={vehicle_state[0]:.2f}, y={vehicle_state[1]:.2f}")
+
+        for i in range(len(path)):
+            print(f"Path point {i}: x={path[i][0]:.2f}, y={path[i][1]:.2f}")        
+>>>>>>> [PathPlanning] 251016 @Doyeop-knut | path planner 점검 및 수정
                     # Visualize Map and Path
 >>>>>>> [Trajectory] 251010 @Doyeop-knut | Delaunay Triangulation 적용 -> Path 수정 필요
         self.publish_map_cones()
@@ -5098,6 +5105,7 @@ class Control:
         # Stanley
         self.k_crosstrack = rospy.get_param("/control/Stanley/k_gain", 0.7)
 
+<<<<<<< HEAD
         # MPC
 <<<<<<< HEAD
         self.mpc_horizon = rospy.get_param("/control/MPC/horizon", 5)
@@ -5160,6 +5168,112 @@ class Control:
         self.rel_alpha      = rospy.get_param("/control/SpeedControl/reliability/lpf_alpha", 0.9)
         self._rel_scale_flt = None
 >>>>>>> test
+=======
+class PathPlanner:
+    def __init__(self):
+        self.max_edge_length = rospy.get_param("/local_planning/trajectory/max_edge_length", 7.0)
+        self.spline_smoothing_factor = rospy.get_param("/local_planning/trajectory/spline_smoothing_factor", 0.5)
+
+    def _normalize_angle(self, angle):
+        """Normalize an angle to [-pi, pi]."""
+        while angle > math.pi:
+            angle -= 2.0 * math.pi
+        while angle < -math.pi:
+            angle += 2.0 * math.pi
+        return angle
+
+    def _angle_between_vectors(self, v1, v2):
+        """Calculates the angle in radians between two vectors."""
+        v1_u = v1 / (np.linalg.norm(v1) + 1e-6)
+        v2_u = v2 / (np.linalg.norm(v2) + 1e-6)
+        return np.arccos(np.clip(np.dot(v1_u, v2_u), -1.0, 1.0))
+
+    def _generate_fallback_path(self, blue_cones, yellow_cones, car_pos):
+        """Generates a simple straight path if Delaunay is not possible."""
+        if not blue_cones or not yellow_cones:
+            return None, None, None, None
+
+        rospy.logwarn_throttle(1.0, "PathPlanner: Not enough cones for triangulation, generating fallback path.")
+        
+        avg_blue = np.mean(np.array([[c['x'], c['y']] for c in blue_cones]), axis=0)
+        avg_yellow = np.mean(np.array([[c['x'], c['y']] for c in yellow_cones]), axis=0)
+        
+        midpoint = (avg_blue + avg_yellow) / 2.0
+        direction_vec = midpoint - car_pos
+        
+        if np.linalg.norm(direction_vec) < 0.1:
+            return None, None, None, None
+
+        direction_vec_normalized = direction_vec / np.linalg.norm(direction_vec)
+        
+        path = [car_pos + direction_vec_normalized * i for i in range(1, 6)]
+        return np.array(path), None, None, None
+
+    def _sort_midpoints(self, midpoints, car_pos, car_yaw):
+        """Sorts midpoints into a logical path, starting near the car and following the track's flow."""
+        if len(midpoints) < 2:
+            return midpoints
+
+        midpoints_list = midpoints.tolist()
+        
+        # Find the best starting point: close and in front of the car
+        start_idx = -1
+        min_cost = float('inf')
+        for i, p in enumerate(midpoints_list):
+            dist = np.hypot(p[0] - car_pos[0], p[1] - car_pos[1])
+            angle_to_point = math.atan2(p[1] - car_pos[1], p[0] - car_pos[0])
+            angle_diff = self._normalize_angle(angle_to_point - car_yaw)
+            
+            if abs(angle_diff) < (math.pi / 1.5): # Wider 120-degree arc
+                cost = dist * (1 + abs(angle_diff)) # Penalize points off to the side
+                if cost < min_cost:
+                    min_cost = cost
+                    start_idx = i
+        
+        if start_idx == -1: # If no points are in the front arc, fall back to closest
+            start_idx = np.argmin([np.hypot(p[0] - car_pos[0], p[1] - car_pos[1]) for p in midpoints_list])
+
+        ordered_path = [midpoints_list.pop(start_idx)]
+
+        # Establish initial direction with the second point
+        if midpoints_list:
+            last_point = ordered_path[-1]
+            closest_idx = np.argmin([np.hypot(p[0] - last_point[0], p[1] - last_point[1]) for p in midpoints_list])
+            ordered_path.append(midpoints_list.pop(closest_idx))
+
+        # Sort the rest based on a cost function of distance and angle
+        while midpoints_list and len(ordered_path) >= 2:
+            last_point = np.array(ordered_path[-1])
+            second_last_point = np.array(ordered_path[-2])
+            path_vec = last_point - second_last_point
+
+            best_candidate_idx = -1
+            min_cost = float('inf')
+
+            for i, candidate_point in enumerate(midpoints_list):
+                candidate_point = np.array(candidate_point)
+                dist = np.linalg.norm(candidate_point - last_point)
+                
+                if dist > self.max_edge_length * 2.0: # Don't jump too far
+                    continue
+
+                candidate_vec = candidate_point - last_point
+                angle = self._angle_between_vectors(path_vec, candidate_vec)
+
+                # Cost: distance weighted by turning angle. Penalize sharp turns.
+                cost = dist * (1 + 2.0 * (angle / math.pi))
+                
+                if cost < min_cost:
+                    min_cost = cost
+                    best_candidate_idx = i
+            
+            if best_candidate_idx != -1:
+                ordered_path.append(midpoints_list.pop(best_candidate_idx))
+            else:
+                break # No suitable point found
+        
+        return np.array(ordered_path)
+>>>>>>> [PathPlanning] 251016 @Doyeop-knut | path planner 점검 및 수정
 
 
         # --- Assign the compute function based on selected type ---
@@ -5176,6 +5290,7 @@ class Control:
         rospy.loginfo(f"Control: Using {self.controller_type} controller.")
     def _reliability_scale(self, reliability):
         """
+<<<<<<< HEAD
         reliability in [0,1] (예: 최근 1s 카메라 검출 성공률, 경로 지속률 등)
         낮을수록 속도 스케일 다운.
         """
@@ -5424,6 +5539,74 @@ class Control:
         # 1. Find the closest point on the path to the vehicle
         distances = torch.linalg.norm(path_tensor - veh_pos_tensor, dim=1)
         closest_idx = torch.argmin(distances)
+=======
+        Generates a driving path based on the detected cones.
+        Uses Delaunay triangulation and a robust sorting algorithm.
+        Falls back to a simple path if not enough cones are available.
+        """
+        current_car_pos = vehicle_state[:2]
+        vehicle_yaw = vehicle_state[2]
+        
+        blue_cones = [c for c in cones if c['color_id'] == 1]
+        yellow_cones = [c for c in cones if c['color_id'] == 2]
+
+        # --- Condition for Delaunay Path ---
+        if len(blue_cones) < 2 or len(yellow_cones) < 2:
+            return self._generate_fallback_path(blue_cones, yellow_cones, current_car_pos)
+
+        # 1. Prepare points for triangulation
+        all_points = np.array([[c['x'], c['y']] for c in blue_cones] + [[c['x'], c['y']] for c in yellow_cones])
+        if len(all_points) < 3:
+            return self._generate_fallback_path(blue_cones, yellow_cones, current_car_pos)
+
+        num_blue = len(blue_cones)
+        colors = np.array([1] * num_blue + [2] * len(yellow_cones))
+
+        # 2. Perform Delaunay Triangulation
+        try:
+            tri = Delaunay(all_points)
+        except Exception as e:
+            rospy.logwarn(f"Delaunay triangulation failed: {e}")
+            return None, None, None, None
+
+        # 3. Find centerline midpoints
+        midpoints = []
+        for simplex in tri.simplices:
+            for i in range(3):
+                p1_idx, p2_idx = simplex[i], simplex[(i + 1) % 3]
+                if colors[p1_idx] != colors[p2_idx]:
+                    p1, p2 = all_points[p1_idx], all_points[p2_idx]
+                    if np.linalg.norm(p1 - p2) < self.max_edge_length:
+                        midpoints.append((p1 + p2) / 2.0)
+        
+        if not midpoints:
+            return None, tri, all_points, colors
+
+        # 4. Sort midpoints to form a continuous path
+        unique_midpoints = np.unique(np.array(midpoints), axis=0)
+        if len(unique_midpoints) < 2:
+            return None, tri, all_points, colors
+
+        ordered_midpoints = self._sort_midpoints(unique_midpoints, current_car_pos, vehicle_yaw)
+        if ordered_midpoints is None or len(ordered_midpoints) < 2:
+            return None, tri, all_points, colors
+
+        # 5. Smooth the path with a spline
+        if len(ordered_midpoints) < 3: # Spline needs at least 3 points for k=2
+            return ordered_midpoints, tri, all_points, colors # Return raw midpoints
+
+        try:
+            k = min(2, len(ordered_midpoints) - 1)
+            tck, u = splprep([ordered_midpoints[:, 0], ordered_midpoints[:, 1]], s=self.spline_smoothing_factor, k=k)
+            u_new = np.linspace(u.min(), u.max(), 50)
+            x_new, y_new = splev(u_new, tck)
+            path = np.vstack((x_new, y_new)).T
+        except Exception as e:
+            rospy.logwarn(f"Spline generation failed: {e}. Returning raw midpoints.")
+            path = ordered_midpoints # Fallback to unsmoothed path
+
+        return path, tri, all_points, colors
+>>>>>>> [PathPlanning] 251016 @Doyeop-knut | path planner 점검 및 수정
 
         # 2. Find the lookahead point
         lookahead_point = None
@@ -6579,7 +6762,7 @@ class Control:
         # Ensure target_idx is not the last point of the path to calculate path heading
         if target_idx >= len(path_points) - 1:
             target_idx = len(path_points) - 2
-        
+
         # 2. Calculate path heading (yaw)
         p1 = path_points[target_idx]
         p2 = path_points[target_idx + 1]

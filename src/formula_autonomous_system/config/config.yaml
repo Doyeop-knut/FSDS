@@ -325,6 +325,8 @@ planning:
     max_x_diff_for_pairing: 10.0
     cone_filter_max_distance: 20.0 # Max distance from vehicle to consider cones for planning
     cone_filter_max_angle: 60.0 # Max angle (degrees) from vehicle's forward axis to consider cones
+    max_edge_length: 7.0
+    spline_smoothing_factor: 0.5
     
     # Cone-based path planning (meters)
     max_cone_distance: 10.0
