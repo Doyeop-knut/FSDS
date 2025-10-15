@@ -325,7 +325,10 @@ class FormulaAutonomousSystem:
 
         # Plan path using the map
         path, tri, tri_points, tri_colors = self.path_planner.plan_path(self.track_map.get_cones(), vehicle_state)
-        
+        print(f"current_car_pos: x={vehicle_state[0]:.2f}, y={vehicle_state[1]:.2f}")
+
+        for i in range(len(path)):
+            print(f"Path point {i}: x={path[i][0]:.2f}, y={path[i][1]:.2f}")        
                     # Visualize Map and Path
         self.publish_map_cones()
         self.publish_triangulation(tri, tri_points, tri_colors)
@@ -1105,120 +1108,176 @@ class TrackMap:
 
 class PathPlanner:
     def __init__(self):
-        self.max_edge_length = 7.0 # A reasonable track width, meters
+        self.max_edge_length = rospy.get_param("/local_planning/trajectory/max_edge_length", 7.0)
+        self.spline_smoothing_factor = rospy.get_param("/local_planning/trajectory/spline_smoothing_factor", 0.5)
+
+    def _normalize_angle(self, angle):
+        """Normalize an angle to [-pi, pi]."""
+        while angle > math.pi:
+            angle -= 2.0 * math.pi
+        while angle < -math.pi:
+            angle += 2.0 * math.pi
+        return angle
+
+    def _angle_between_vectors(self, v1, v2):
+        """Calculates the angle in radians between two vectors."""
+        v1_u = v1 / (np.linalg.norm(v1) + 1e-6)
+        v2_u = v2 / (np.linalg.norm(v2) + 1e-6)
+        return np.arccos(np.clip(np.dot(v1_u, v2_u), -1.0, 1.0))
+
+    def _generate_fallback_path(self, blue_cones, yellow_cones, car_pos):
+        """Generates a simple straight path if Delaunay is not possible."""
+        if not blue_cones or not yellow_cones:
+            return None, None, None, None
+
+        rospy.logwarn_throttle(1.0, "PathPlanner: Not enough cones for triangulation, generating fallback path.")
+        
+        avg_blue = np.mean(np.array([[c['x'], c['y']] for c in blue_cones]), axis=0)
+        avg_yellow = np.mean(np.array([[c['x'], c['y']] for c in yellow_cones]), axis=0)
+        
+        midpoint = (avg_blue + avg_yellow) / 2.0
+        direction_vec = midpoint - car_pos
+        
+        if np.linalg.norm(direction_vec) < 0.1:
+            return None, None, None, None
+
+        direction_vec_normalized = direction_vec / np.linalg.norm(direction_vec)
+        
+        path = [car_pos + direction_vec_normalized * i for i in range(1, 6)]
+        return np.array(path), None, None, None
+
+    def _sort_midpoints(self, midpoints, car_pos, car_yaw):
+        """Sorts midpoints into a logical path, starting near the car and following the track's flow."""
+        if len(midpoints) < 2:
+            return midpoints
+
+        midpoints_list = midpoints.tolist()
+        
+        # Find the best starting point: close and in front of the car
+        start_idx = -1
+        min_cost = float('inf')
+        for i, p in enumerate(midpoints_list):
+            dist = np.hypot(p[0] - car_pos[0], p[1] - car_pos[1])
+            angle_to_point = math.atan2(p[1] - car_pos[1], p[0] - car_pos[0])
+            angle_diff = self._normalize_angle(angle_to_point - car_yaw)
+            
+            if abs(angle_diff) < (math.pi / 1.5): # Wider 120-degree arc
+                cost = dist * (1 + abs(angle_diff)) # Penalize points off to the side
+                if cost < min_cost:
+                    min_cost = cost
+                    start_idx = i
+        
+        if start_idx == -1: # If no points are in the front arc, fall back to closest
+            start_idx = np.argmin([np.hypot(p[0] - car_pos[0], p[1] - car_pos[1]) for p in midpoints_list])
+
+        ordered_path = [midpoints_list.pop(start_idx)]
+
+        # Establish initial direction with the second point
+        if midpoints_list:
+            last_point = ordered_path[-1]
+            closest_idx = np.argmin([np.hypot(p[0] - last_point[0], p[1] - last_point[1]) for p in midpoints_list])
+            ordered_path.append(midpoints_list.pop(closest_idx))
+
+        # Sort the rest based on a cost function of distance and angle
+        while midpoints_list and len(ordered_path) >= 2:
+            last_point = np.array(ordered_path[-1])
+            second_last_point = np.array(ordered_path[-2])
+            path_vec = last_point - second_last_point
+
+            best_candidate_idx = -1
+            min_cost = float('inf')
+
+            for i, candidate_point in enumerate(midpoints_list):
+                candidate_point = np.array(candidate_point)
+                dist = np.linalg.norm(candidate_point - last_point)
+                
+                if dist > self.max_edge_length * 2.0: # Don't jump too far
+                    continue
+
+                candidate_vec = candidate_point - last_point
+                angle = self._angle_between_vectors(path_vec, candidate_vec)
+
+                # Cost: distance weighted by turning angle. Penalize sharp turns.
+                cost = dist * (1 + 2.0 * (angle / math.pi))
+                
+                if cost < min_cost:
+                    min_cost = cost
+                    best_candidate_idx = i
+            
+            if best_candidate_idx != -1:
+                ordered_path.append(midpoints_list.pop(best_candidate_idx))
+            else:
+                break # No suitable point found
+        
+        return np.array(ordered_path)
 
     def plan_path(self, cones, vehicle_state):
         """
         Generates a driving path based on the detected cones.
-        If not enough cones are available for triangulation, it creates a simple initial path.
-        cones: List of cone dictionaries from TrackMap.
-        vehicle_state: The current state of the vehicle [x, y, yaw, ...].
-        Returns:
-            (path, tri, all_points, colors) or (None, None, None, None)
+        Uses Delaunay triangulation and a robust sorting algorithm.
+        Falls back to a simple path if not enough cones are available.
         """
         current_car_pos = vehicle_state[:2]
+        vehicle_yaw = vehicle_state[2]
         
         blue_cones = [c for c in cones if c['color_id'] == 1]
         yellow_cones = [c for c in cones if c['color_id'] == 2]
 
-        # --- Initial Path Generation ---
-        if (len(blue_cones) >= 1 and len(yellow_cones) >= 1) and (len(blue_cones) < 2 or len(yellow_cones) < 2):
-            rospy.logwarn_throttle(1.0, "PathPlanner: Not enough cones for triangulation, generating initial path.")
-            
-            avg_blue = np.mean(np.array([[c['x'], c['y']] for c in blue_cones]), axis=0)
-            avg_yellow = np.mean(np.array([[c['x'], c['y']] for c in yellow_cones]), axis=0)
-            
-            midpoint = (avg_blue + avg_yellow) / 2.0
-            
-            # Create a path from current position towards the midpoint and extend it
-            direction_vec = midpoint - current_car_pos
-            # print(f"Direction vector: {np.linalg.norm(direction_vec)}")
-            
-            if np.linalg.norm(direction_vec) < 0.1:
-                return None, None, None, None # Cannot determine path if car is on the midpoint
-            
-            direction_vec_normalized = direction_vec / np.linalg.norm(direction_vec)
-            
-            # Create a path of 5 points, 5 meters long, starting 1m ahead of the car
-            path = [current_car_pos + direction_vec_normalized * i for i in range(1, 6)]
-            
-            return np.array(path), None, None, None
-
-        # --- Delaunay Triangulation Path (Original Logic) ---
+        # --- Condition for Delaunay Path ---
         if len(blue_cones) < 2 or len(yellow_cones) < 2:
-            return None, None, None, None # Not enough cones to define a path
+            return self._generate_fallback_path(blue_cones, yellow_cones, current_car_pos)
 
-        # 2. Prepare points for triangulation
+        # 1. Prepare points for triangulation
         all_points = np.array([[c['x'], c['y']] for c in blue_cones] + [[c['x'], c['y']] for c in yellow_cones])
         if len(all_points) < 3:
-            return None, None, None, None # Triangulation requires at least 3 points
+            return self._generate_fallback_path(blue_cones, yellow_cones, current_car_pos)
 
-        # Create a mapping from point index back to cone color
         num_blue = len(blue_cones)
         colors = np.array([1] * num_blue + [2] * len(yellow_cones))
 
-        # 3. Perform Delaunay Triangulation
+        # 2. Perform Delaunay Triangulation
         try:
             tri = Delaunay(all_points)
         except Exception as e:
             rospy.logwarn(f"Delaunay triangulation failed: {e}")
             return None, None, None, None
 
-        # 4. Find centerline edges (connecting blue and yellow cones)
+        # 3. Find centerline midpoints
         midpoints = []
         for simplex in tri.simplices:
             for i in range(3):
-                p1_idx = simplex[i]
-                p2_idx = simplex[(i + 1) % 3]
-                
-                color1 = colors[p1_idx]
-                color2 = colors[p2_idx]
-
-                if color1 != color2:
-                    p1 = all_points[p1_idx]
-                    p2 = all_points[p2_idx]
-                    
-                    edge_length = np.linalg.norm(p1 - p2)
-                    if edge_length < self.max_edge_length:
-                        midpoint = (p1 + p2) / 2.0
-                        midpoints.append(midpoint)
+                p1_idx, p2_idx = simplex[i], simplex[(i + 1) % 3]
+                if colors[p1_idx] != colors[p2_idx]:
+                    p1, p2 = all_points[p1_idx], all_points[p2_idx]
+                    if np.linalg.norm(p1 - p2) < self.max_edge_length:
+                        midpoints.append((p1 + p2) / 2.0)
         
-        if len(midpoints) < 3: # Not enough midpoints to create a spline
+        if not midpoints:
             return None, tri, all_points, colors
 
-        # 5. Sort midpoints to form a continuous path
+        # 4. Sort midpoints to form a continuous path
         unique_midpoints = np.unique(np.array(midpoints), axis=0)
-
-        if len(unique_midpoints) < 3:
+        if len(unique_midpoints) < 2:
             return None, tri, all_points, colors
 
-        midpoints_list = unique_midpoints.tolist()
-        
-        start_idx = np.argmin([np.hypot(p[0] - current_car_pos[0], p[1] - current_car_pos[1]) for p in midpoints_list])
-        
-        ordered_path_points = [midpoints_list.pop(start_idx)]
-        
-        while midpoints_list:
-            last_point = ordered_path_points[-1]
-            closest_idx = np.argmin([np.hypot(p[0] - last_point[0], p[1] - last_point[1]) for p in midpoints_list])
-            ordered_path_points.append(midpoints_list.pop(closest_idx))
-
-        ordered_midpoints = np.array(ordered_path_points)
-
-        if len(ordered_midpoints) < 3:
+        ordered_midpoints = self._sort_midpoints(unique_midpoints, current_car_pos, vehicle_yaw)
+        if ordered_midpoints is None or len(ordered_midpoints) < 2:
             return None, tri, all_points, colors
 
-        # 6. Smooth the path with a spline
-        k = min(2, len(ordered_midpoints)-1)
-        if k < 1: 
-            return None, tri, all_points, colors
+        # 5. Smooth the path with a spline
+        if len(ordered_midpoints) < 3: # Spline needs at least 3 points for k=2
+            return ordered_midpoints, tri, all_points, colors # Return raw midpoints
 
-        tck, u = splprep([ordered_midpoints[:, 0], ordered_midpoints[:, 1]], s=0.5, k=k)
-        
-        u_new = np.linspace(u.min(), u.max(), 50) # Create 50 points for the path
-        x_new, y_new = splev(u_new, tck)
+        try:
+            k = min(2, len(ordered_midpoints) - 1)
+            tck, u = splprep([ordered_midpoints[:, 0], ordered_midpoints[:, 1]], s=self.spline_smoothing_factor, k=k)
+            u_new = np.linspace(u.min(), u.max(), 50)
+            x_new, y_new = splev(u_new, tck)
+            path = np.vstack((x_new, y_new)).T
+        except Exception as e:
+            rospy.logwarn(f"Spline generation failed: {e}. Returning raw midpoints.")
+            path = ordered_midpoints # Fallback to unsmoothed path
 
-        path = np.vstack((x_new, y_new)).T
         return path, tri, all_points, colors
 
 # ==================== Utility Classes ====================
@@ -1764,7 +1823,7 @@ class Control:
         # Ensure target_idx is not the last point of the path to calculate path heading
         if target_idx >= len(path_points) - 1:
             target_idx = len(path_points) - 2
-        
+
         # 2. Calculate path heading (yaw)
         p1 = path_points[target_idx]
         p2 = path_points[target_idx + 1]
