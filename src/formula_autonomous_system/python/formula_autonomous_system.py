@@ -710,7 +710,8 @@ class FormulaAutonomousSystem:
 
         # ==================== Map & Path ===================
         # Update map with new cone observations
-        self.track_map.update(global_clusters)
+        self.track_map.update(global_clusters, vehicle_state)
+        print(f"closed loop  = {self.track_map.is_loop_closed}")
 
 <<<<<<< HEAD
         # Publish the active tracks for visualization
@@ -1084,6 +1085,7 @@ class FormulaAutonomousSystem:
 =======
         path, tri, tri_points, tri_colors = self.path_planner.plan_path(self.track_map.get_cones(), vehicle_state)
 <<<<<<< HEAD
+<<<<<<< HEAD
 >>>>>>> [Control] 251014 @Doyeop-knut | Controller 구현 (Pure Pursuit, Stanley, MPC)
         
 =======
@@ -1092,6 +1094,12 @@ class FormulaAutonomousSystem:
         for i in range(len(path)):
             print(f"Path point {i}: x={path[i][0]:.2f}, y={path[i][1]:.2f}")        
 >>>>>>> [PathPlanning] 251016 @Doyeop-knut | path planner 점검 및 수정
+=======
+        # print(f"current_car_pos: x={vehicle_state[0]:.2f}, y={vehicle_state[1]:.2f}")
+
+        # for i in range(len(path)):
+        #     print(f"Path point {i}: x={path[i][0]:.2f}, y={path[i][1]:.2f}")        
+>>>>>>> [PathPlanning] 251016 @Doyeop-knut | Loop Closure 구현
                     # Visualize Map and Path
 >>>>>>> [Trajectory] 251010 @Doyeop-knut | Delaunay Triangulation 적용 -> Path 수정 필요
         self.publish_map_cones()
@@ -4969,6 +4977,7 @@ class StateMachine:
         self.mission_active = True
         return True
 
+<<<<<<< HEAD
     def _exit_as_off(self) -> bool: return True
     def _exit_as_ready(self) -> bool: return True
     def _exit_as_driving(self) -> bool: return True
@@ -4989,16 +4998,71 @@ class StateMachine:
         active_str = "Yes" if self.mission_active else "No"
         print(f"Mission: {self.current_mission} (Active: {active_str})")
         print("==========================")
+=======
+class TrackMap:
+    def __init__(self):
+        self.cones = []
+        self.next_cone_id = 0
+        self.association_threshold = rospy.get_param("/mapping/association_threshold", 1.5)
+
+        # --- Loop Closure Parameters ---
+        self.is_loop_closed = False
+        self.min_cones_for_lc = rospy.get_param("/mapping/lc/min_cones", 20)
+        self.lc_trigger_distance = rospy.get_param("/mapping/lc/trigger_distance", 8.0)
+        self.lc_search_radius = rospy.get_param("/mapping/lc/search_radius", 15.0)
+        self.lc_min_match_pairs = rospy.get_param("/mapping/lc/min_pairs", 4)
+        self.lc_max_transform_error = rospy.get_param("/mapping/lc/max_error", 0.75)
+        self.start_line_center = None
+        self.update_count = 0
+        self.lc_cooldown_period = rospy.get_param("/mapping/lc/cooldown_updates", 100) # Cooldown in number of updates
+
+    def update(self, new_cones_observations, vehicle_state):
+        """
+        Updates the map with new cone observations, and attempts loop closure.
+        """
+        self.update_count += 1
+
+        # 1. Find start line if not already found
+        if self.start_line_center is None and len(new_cones_observations) > 1:
+            self._find_start_line(new_cones_observations)
+
+        # 2. Attempt loop closure and get corrected observations
+        # This will return transformed observations if LC is successful
+        processed_observations = self._detect_and_correct_loop_closure(new_cones_observations, vehicle_state)
+
+        # 3. Continue with original update logic
+        if not self.cones:
+            for cone_obs in processed_observations:
+                self._add_new_cone(cone_obs)
+            return
+
+        if processed_observations.size == 0:
+            return
+
+        map_cone_positions = np.array([[c['x'], c['y']] for c in self.cones])
+        obs_cone_positions = processed_observations[:, :2]
+        distance_matrix = cdist(map_cone_positions, obs_cone_positions)
+>>>>>>> [PathPlanning] 251016 @Doyeop-knut | Loop Closure 구현
 
     def get_time_in_current_state(self) -> float:
         return time.monotonic() - self.state_entry_time
 
+<<<<<<< HEAD
     def get_current_state_string(self) -> str:
         return self._state_to_string(self.current_state)
 
     @staticmethod
     def _state_to_string(state: AutonomousMode) -> str:
         return state.name if state in AutonomousMode else "UNKNOWN"
+=======
+        for map_idx, map_cone in enumerate(self.cones):
+            if map_idx in matched_map_indices:
+                continue
+
+            possible_matches_mask = (processed_observations[:, 3] == map_cone['color_id'])
+            if not np.any(possible_matches_mask):
+                continue
+>>>>>>> [PathPlanning] 251016 @Doyeop-knut | Loop Closure 구현
 
     @staticmethod
     def _event_to_string(event: AutonomousEvent) -> str:
@@ -5006,6 +5070,7 @@ class StateMachine:
 
     def _log_state_transition(self, from_state: AutonomousMode, to_state: AutonomousMode, reason: str):
 
+<<<<<<< HEAD
         print(f"StateMachine: {self._state_to_string(from_state)} -> "
 
               f"{self._state_to_string(to_state)} (Reason: {reason})")
@@ -5033,6 +5098,133 @@ class Control:
             self.controller_type = "PurePursuit"
             rospy.logwarn("Control: '/control/controller_type' parameter not found. Defaulting to 'PurePursuit'.")
         self.start_time = rospy.Time.now()
+=======
+            if min_dist < self.association_threshold:
+                obs_idx = obs_indices_for_color[best_match_local_idx]
+                
+                if obs_idx not in matched_obs_indices:
+                    self._update_cone(map_idx, processed_observations[obs_idx])
+                    matched_obs_indices.add(obs_idx)
+                    matched_map_indices.add(map_idx)
+
+        for obs_idx, cone_obs in enumerate(processed_observations):
+            if obs_idx not in matched_obs_indices:
+                self._add_new_cone(cone_obs)
+
+    def _find_start_line(self, observations):
+        blue_cones = observations[observations[:, 3] == 1]
+        yellow_cones = observations[observations[:, 3] == 2]
+        if blue_cones.shape[0] > 0 and yellow_cones.shape[0] > 0:
+            avg_blue = np.mean(blue_cones[:, :2], axis=0)
+            avg_yellow = np.mean(yellow_cones[:, :2], axis=0)
+            self.start_line_center = (avg_blue + avg_yellow) / 2.0
+            rospy.loginfo(f"TrackMap: Start line center established at {self.start_line_center}")
+
+    def _detect_and_correct_loop_closure(self, new_observations, vehicle_state):
+        # --- 1. Check Trigger Conditions ---
+        if self.is_loop_closed or len(self.cones) < self.min_cones_for_lc or self.start_line_center is None or self.update_count < self.lc_cooldown_period:
+            return new_observations
+
+        car_pos = vehicle_state[:2]
+        dist_to_start = np.linalg.norm(car_pos - self.start_line_center)
+
+        if dist_to_start > self.lc_trigger_distance:
+            return new_observations
+
+        rospy.loginfo_throttle(1.0, f"TrackMap: Loop closure check triggered (dist to start: {dist_to_start:.2f}m)")
+
+        # --- 2. Find Candidate Cones for Matching ---
+        map_cones_np = np.array([[c['x'], c['y'], c['color_id']] for c in self.cones])
+        
+        # Reference cones: old cones from the map near the start line
+        dist_from_start = np.linalg.norm(map_cones_np[:, :2] - self.start_line_center, axis=1)
+        reference_mask = dist_from_start < self.lc_search_radius
+        reference_cones = map_cones_np[reference_mask]
+
+        # Current cones: new observations near the car
+        dist_from_car = np.linalg.norm(new_observations[:, :2] - car_pos, axis=1)
+        current_mask = dist_from_car < self.lc_search_radius
+        current_cones = new_observations[current_mask]
+
+        if len(reference_cones) < self.lc_min_match_pairs or len(current_cones) < self.lc_min_match_pairs:
+            rospy.logwarn_throttle(1.0, "TrackMap: Not enough cones for loop closure matching.")
+            return new_observations
+
+        # --- 3. Find Matching Pairs ---
+        src_pts, dst_pts = [], []
+        # Use distance matrix between current and reference cones
+        dist_matrix = cdist(current_cones[:, :2], reference_cones[:, :2])
+        
+        for i, c_cone in enumerate(current_cones):
+            # Find potential matches of the same color
+            color_mask = reference_cones[:, 2] == c_cone[3]
+            if not np.any(color_mask):
+                continue
+            
+            row = dist_matrix[i, color_mask]
+            ref_indices = np.where(color_mask)[0]
+
+            if row.size == 0:
+                continue
+
+            best_ref_local_idx = np.argmin(row)
+            if row[best_ref_local_idx] < self.association_threshold:
+                src_pts.append(c_cone[:2])
+                dst_pts.append(reference_cones[ref_indices[best_ref_local_idx]][:2])
+
+        if len(src_pts) < self.lc_min_match_pairs:
+            rospy.logwarn_throttle(1.0, f"TrackMap: Found only {len(src_pts)} pairs for LC, need {self.lc_min_match_pairs}.")
+            return new_observations
+
+        # --- 4. Estimate and Verify Transform ---
+        src_pts_np = np.array(src_pts, dtype=np.float32)
+        dst_pts_np = np.array(dst_pts, dtype=np.float32)
+        
+        # Using estimateAffine2D as it's more robust than the deprecated estimateRigidTransform
+        transform_matrix, _ = cv2.estimateAffine2D(src_pts_np, dst_pts_np, ransacReprojThreshold=0.5)
+
+        if transform_matrix is None:
+            rospy.logwarn("TrackMap: Loop closure transform estimation failed.")
+            return new_observations
+
+        # Verify the transformation by checking the error
+        src_transformed = cv2.transform(src_pts_np.reshape(-1, 1, 2), transform_matrix).reshape(-1, 2)
+        avg_error = np.mean(np.linalg.norm(src_transformed - dst_pts_np, axis=1))
+
+        if avg_error > self.lc_max_transform_error:
+            rospy.logwarn(f"TrackMap: Loop closure failed. High transform error: {avg_error:.2f}m")
+            return new_observations
+
+        # --- 5. Apply Correction ---
+        rospy.loginfo(f"*** Loop Closure Successful! *** Error: {avg_error:.2f}m. Correcting observations.")
+        self.is_loop_closed = True
+        
+        # Apply the transform to ALL new observations for this timestep
+        new_obs_pts = new_observations[:, :2].astype(np.float32)
+        corrected_obs_pts = cv2.transform(new_obs_pts.reshape(-1, 1, 2), transform_matrix).reshape(-1, 2)
+        
+        corrected_observations = new_observations.copy()
+        corrected_observations[:, :2] = corrected_obs_pts
+        
+        return corrected_observations
+
+    def _add_new_cone(self, cone_obs):
+        new_cone = {
+            'id': self.next_cone_id,
+            'x': cone_obs[0],
+            'y': cone_obs[1],
+            'z': cone_obs[2],
+            'color_id': int(cone_obs[3]),
+            'covariance': np.eye(2) * 0.5
+        }
+        self.cones.append(new_cone)
+        self.next_cone_id += 1
+
+    def _update_cone(self, map_idx, cone_obs):
+        alpha = 0.5 
+        self.cones[map_idx]['x'] = alpha * self.cones[map_idx]['x'] + (1 - alpha) * cone_obs[0]
+        self.cones[map_idx]['y'] = alpha * self.cones[map_idx]['y'] + (1 - alpha) * cone_obs[1]
+>>>>>>> [PathPlanning] 251016 @Doyeop-knut | Loop Closure 구현
 
         # --- Get all parameters for all controllers ---
         # Vehicle
@@ -5171,8 +5363,10 @@ class Control:
 =======
 class PathPlanner:
     def __init__(self):
-        self.max_edge_length = rospy.get_param("/local_planning/trajectory/max_edge_length", 7.0)
-        self.spline_smoothing_factor = rospy.get_param("/local_planning/trajectory/spline_smoothing_factor", 0.5)
+        self.max_edge_length = rospy.get_param("/planning/path_planner/max_edge_length", 7.0)
+        self.spline_smoothing_factor = rospy.get_param("/planning/path_planner/spline_smoothing_factor", 0.5)
+        self.w_dist = rospy.get_param("/planning/path_planner/weight_dist", 0.3)
+        self.w_angle = rospy.get_param("/planning/path_planner/weight_angle", 0.7)
 
     def _normalize_angle(self, angle):
         """Normalize an angle to [-pi, pi]."""
@@ -5254,14 +5448,17 @@ class PathPlanner:
                 candidate_point = np.array(candidate_point)
                 dist = np.linalg.norm(candidate_point - last_point)
                 
-                if dist > self.max_edge_length * 2.0: # Don't jump too far
+                if dist > self.max_edge_length * 2.5: # Don't jump too far
                     continue
 
                 candidate_vec = candidate_point - last_point
                 angle = self._angle_between_vectors(path_vec, candidate_vec)
 
-                # Cost: distance weighted by turning angle. Penalize sharp turns.
-                cost = dist * (1 + 2.0 * (angle / math.pi))
+                # Normalize distance and angle to be on a similar scale (0-1) and apply weights.
+                norm_dist = dist / (self.max_edge_length * 2.0) # Normalize by a reasonable max distance
+                norm_angle = angle / math.pi
+
+                cost = self.w_dist * norm_dist + self.w_angle * norm_angle
                 
                 if cost < min_cost:
                     min_cost = cost
