@@ -178,6 +178,10 @@ class FormulaAutonomousSystem:
         self.path_publisher = rospy.Publisher("/centerline_path", Path, queue_size=1)
         self.map_cone_publisher = rospy.Publisher("/map_cones", MarkerArray, queue_size=1)
         self.triangulation_publisher = rospy.Publisher("/delaunay_triangulation", Marker, queue_size=1)
+        self.path_index_publisher = rospy.Publisher("/path_indices", MarkerArray, queue_size=1)
+        self.midpoints_publisher = rospy.Publisher("/cone_midpoints", MarkerArray, queue_size=1)
+        self.last_path_index_count = 0
+        self.last_midpoints_count = 0
 
 >>>>>>> [ConeDetection] 251010 @Doyeop-knut | Cone Detection method 개선 및 Mapping 기능 추가
         # System Components
@@ -186,6 +190,7 @@ class FormulaAutonomousSystem:
         self.lidar_util = LiDARProcessor(self.enable_visualization)
         self.camera_util = CameraProcessor()
         self.track_map = TrackMap()
+<<<<<<< HEAD
 <<<<<<< HEAD
         self.midpoint_map = MidpointMap()
         self.path_planner = PathPlanner()
@@ -322,6 +327,9 @@ class FormulaAutonomousSystem:
         cv2.destroyAllWindows()
 >>>>>>> [ConeDetection] 251008 @Doyeop-knut | Map data 생성 코드 작성
 =======
+=======
+        self.midpoint_map = MidpointMap()
+>>>>>>> [PathPlanning] 251016 @Doyeop-knut | Path Planner 수정
         self.path_planner = PathPlanner()
 <<<<<<< HEAD
 <<<<<<< HEAD
@@ -711,7 +719,7 @@ class FormulaAutonomousSystem:
         # ==================== Map & Path ===================
         # Update map with new cone observations
         self.track_map.update(global_clusters, vehicle_state)
-        print(f"closed loop  = {self.track_map.is_loop_closed}")
+        # print(f"closed loop  = {self.track_map.is_loop_closed}")
 
 <<<<<<< HEAD
         # Publish the active tracks for visualization
@@ -1073,6 +1081,7 @@ class FormulaAutonomousSystem:
 <<<<<<< HEAD
 <<<<<<< HEAD
 <<<<<<< HEAD
+<<<<<<< HEAD
         path = self.path_planner.plan_path(self.track_map.get_cones(), vehicle_state[:2])
 >>>>>>> [ConeDetection] 251010 @Doyeop-knut | Cone Detection method 개선 및 Mapping 기능 추가
 
@@ -1102,10 +1111,17 @@ class FormulaAutonomousSystem:
 >>>>>>> [PathPlanning] 251016 @Doyeop-knut | Loop Closure 구현
                     # Visualize Map and Path
 >>>>>>> [Trajectory] 251010 @Doyeop-knut | Delaunay Triangulation 적용 -> Path 수정 필요
+=======
+        path, tri, tri_points, tri_colors, midpoints = self.path_planner.plan_path(self.track_map.get_cones(), vehicle_state)
+        
+        # Visualize Map and Path
+>>>>>>> [PathPlanning] 251016 @Doyeop-knut | Path Planner 수정
         self.publish_map_cones()
         self.publish_triangulation(tri, tri_points, tri_colors)
+        self.publish_midpoints(midpoints)
         if path is not None:
             self.publish_path(path)
+
         # =====================================================
         # Draw LiDAR points on the images that already have bounding boxes
         img1 = self.camera_util.visualization(cam1_pts, rendered_img1)
@@ -1405,6 +1421,7 @@ class FormulaAutonomousSystem:
         path_msg.header.frame_id = "map"
 
 <<<<<<< HEAD
+<<<<<<< HEAD
         for point in path_np:
             pose = PoseStamped()
             pose.header.stamp = path_msg.header.stamp
@@ -1418,6 +1435,121 @@ class FormulaAutonomousSystem:
     def publish_triangulation(self, tri, points):
         if tri is None or points is None:
 =======
+=======
+        # Publish markers for indices
+        marker_array = MarkerArray()
+        header = path_msg.header
+        
+        # Add text markers for each path point
+        for i, point in enumerate(path):
+            marker = Marker()
+            marker.header = header
+            marker.ns = "path_indices"
+            marker.id = i
+            marker.type = Marker.TEXT_VIEW_FACING
+            marker.action = Marker.ADD
+            marker.pose.position.x = point[0]
+            marker.pose.position.y = point[1]
+            marker.pose.position.z = 0.5  # Offset text above the path
+            marker.pose.orientation.w = 1.0
+            marker.scale.z = 0.5  # Text size
+            marker.color.a = 1.0
+            marker.color.r = 1.0
+            marker.color.g = 1.0
+            marker.color.b = 0.0
+            marker.text = str(i)
+            marker_array.markers.append(marker)
+
+        # Add delete markers for old markers that are no longer present
+        for i in range(len(path), self.last_path_index_count):
+            marker = Marker()
+            marker.header = header
+            marker.ns = "path_indices"
+            marker.id = i
+            marker.action = Marker.DELETE
+            marker_array.markers.append(marker)
+
+        self.last_path_index_count = len(path)
+        if len(marker_array.markers) > 0:
+            self.path_index_publisher.publish(marker_array)
+
+        # Publish markers for indices
+        marker_array = MarkerArray()
+        header = path_msg.header
+        
+        # Add text markers for each path point
+        for i, point in enumerate(path):
+            marker = Marker()
+            marker.header = header
+            marker.ns = "path_indices"
+            marker.id = i
+            marker.type = Marker.TEXT_VIEW_FACING
+            marker.action = Marker.ADD
+            marker.pose.position.x = point[0]
+            marker.pose.position.y = point[1]
+            marker.pose.position.z = 0.5  # Offset text above the path
+            marker.pose.orientation.w = 1.0
+            marker.scale.z = 0.5  # Text size
+            marker.color.a = 1.0
+            marker.color.r = 1.0
+            marker.color.g = 1.0
+            marker.color.b = 0.0
+            marker.text = str(i)
+            marker_array.markers.append(marker)
+
+        # Add delete markers for old markers that are no longer present
+        for i in range(len(path), self.last_path_index_count):
+            marker = Marker()
+            marker.header = header
+            marker.ns = "path_indices"
+            marker.id = i
+            marker.action = Marker.DELETE
+            marker_array.markers.append(marker)
+
+        self.last_path_index_count = len(path)
+        if len(marker_array.markers) > 0:
+            self.path_index_publisher.publish(marker_array)
+
+    def publish_midpoints(self, midpoints):
+        marker_array = MarkerArray()
+        header = rospy.Header()
+        header.stamp = rospy.Time.now()
+        header.frame_id = "map"
+
+        if midpoints is not None:
+            for i, point in enumerate(midpoints):
+                marker = Marker()
+                marker.header = header
+                marker.ns = "cone_midpoints"
+                marker.id = i
+                marker.type = Marker.SPHERE
+                marker.action = Marker.ADD
+                marker.pose.position.x = point[0]
+                marker.pose.position.y = point[1]
+                marker.pose.position.z = 0.1 # slightly above ground
+                marker.pose.orientation.w = 1.0
+                marker.scale.x = 0.2
+                marker.scale.y = 0.2
+                marker.scale.z = 0.2
+                marker.color.a = 1.0
+                marker.color.r = 0.0
+                marker.color.g = 1.0
+                marker.color.b = 0.0
+                marker_array.markers.append(marker)
+        
+        # Add delete markers for old markers
+        for i in range(len(midpoints) if midpoints is not None else 0, self.last_midpoints_count):
+            marker = Marker()
+            marker.header = header
+            marker.ns = "cone_midpoints"
+            marker.id = i
+            marker.action = Marker.DELETE
+            marker_array.markers.append(marker)
+        
+        self.last_midpoints_count = len(midpoints) if midpoints is not None else 0
+        self.midpoints_publisher.publish(marker_array)
+
+>>>>>>> [PathPlanning] 251016 @Doyeop-knut | Path Planner 수정
     def publish_triangulation(self, tri, points, colors):
         if tri is None or points is None or colors is None:
 >>>>>>> [PathPlanning] @Doyeop-knut | Delaunay Triangle cone 색 정보 반영
@@ -5298,6 +5430,7 @@ class Control:
         self.k_crosstrack = rospy.get_param("/control/Stanley/k_gain", 0.7)
 
 <<<<<<< HEAD
+<<<<<<< HEAD
         # MPC
 <<<<<<< HEAD
         self.mpc_horizon = rospy.get_param("/control/MPC/horizon", 5)
@@ -5361,12 +5494,71 @@ class Control:
         self._rel_scale_flt = None
 >>>>>>> test
 =======
+=======
+class MidpointMap:
+    def __init__(self):
+        self.midpoints = []
+        self.next_midpoint_id = 0
+        self.association_threshold = rospy.get_param("/planning/midpoint_map/association_threshold", 1.5)
+        self.smoothing_alpha = rospy.get_param("/planning/midpoint_map/smoothing_alpha", 0.5)
+
+    def update(self, new_midpoints_obs):
+        if new_midpoints_obs is None or len(new_midpoints_obs) == 0:
+            return
+
+        if not self.midpoints:
+            for p in new_midpoints_obs:
+                self._add_new_midpoint(p)
+            return
+
+        map_points = np.array([[m['x'], m['y']] for m in self.midpoints])
+        obs_points = np.array(new_midpoints_obs)
+        distance_matrix = cdist(map_points, obs_points)
+
+        matched_obs_indices = set()
+        for map_idx, map_point in enumerate(self.midpoints):
+            if distance_matrix.shape[1] == 0:
+                break
+
+            best_match_obs_idx = np.argmin(distance_matrix[map_idx])
+            min_dist = distance_matrix[map_idx, best_match_obs_idx]
+
+            if min_dist < self.association_threshold:
+                if best_match_obs_idx not in matched_obs_indices:
+                    self._update_midpoint(map_idx, obs_points[best_match_obs_idx])
+                    matched_obs_indices.add(best_match_obs_idx)
+        
+        for obs_idx, obs_point in enumerate(obs_points):
+            if obs_idx not in matched_obs_indices:
+                self._add_new_midpoint(obs_point)
+
+    def _add_new_midpoint(self, point):
+        new_midpoint = {
+            'id': self.next_midpoint_id,
+            'x': point[0],
+            'y': point[1],
+        }
+        self.midpoints.append(new_midpoint)
+        self.next_midpoint_id += 1
+
+    def _update_midpoint(self, map_idx, obs_point):
+        self.midpoints[map_idx]['x'] = (1 - self.smoothing_alpha) * self.midpoints[map_idx]['x'] + self.smoothing_alpha * obs_point[0]
+        self.midpoints[map_idx]['y'] = (1 - self.smoothing_alpha) * self.midpoints[map_idx]['y'] + self.smoothing_alpha * obs_point[1]
+
+    def get_all_midpoints(self):
+        # Sort by id to maintain path order
+        sorted_midpoints = sorted(self.midpoints, key=lambda p: p['id'])
+        return [[p['x'], p['y']] for p in sorted_midpoints]
+
+>>>>>>> [PathPlanning] 251016 @Doyeop-knut | Path Planner 수정
 class PathPlanner:
     def __init__(self):
         self.max_edge_length = rospy.get_param("/planning/path_planner/max_edge_length", 7.0)
         self.spline_smoothing_factor = rospy.get_param("/planning/path_planner/spline_smoothing_factor", 0.5)
         self.w_dist = rospy.get_param("/planning/path_planner/weight_dist", 0.3)
         self.w_angle = rospy.get_param("/planning/path_planner/weight_angle", 0.7)
+        self.max_path_distance = rospy.get_param("/planning/path_planner/max_path_distance", 20.0)
+
 
     def _normalize_angle(self, angle):
         """Normalize an angle to [-pi, pi]."""
@@ -5385,7 +5577,7 @@ class PathPlanner:
     def _generate_fallback_path(self, blue_cones, yellow_cones, car_pos):
         """Generates a simple straight path if Delaunay is not possible."""
         if not blue_cones or not yellow_cones:
-            return None, None, None, None
+            return None, None, None, None, None
 
         rospy.logwarn_throttle(1.0, "PathPlanner: Not enough cones for triangulation, generating fallback path.")
         
@@ -5396,12 +5588,12 @@ class PathPlanner:
         direction_vec = midpoint - car_pos
         
         if np.linalg.norm(direction_vec) < 0.1:
-            return None, None, None, None
+            return None, None, None, None, None
 
         direction_vec_normalized = direction_vec / np.linalg.norm(direction_vec)
         
         path = [car_pos + direction_vec_normalized * i for i in range(1, 6)]
-        return np.array(path), None, None, None
+        return np.array(path), None, None, None, None
 
     def _sort_midpoints(self, midpoints, car_pos, car_yaw):
         """Sorts midpoints into a logical path, starting near the car and following the track's flow."""
@@ -5432,8 +5624,21 @@ class PathPlanner:
         # Establish initial direction with the second point
         if midpoints_list:
             last_point = ordered_path[-1]
-            closest_idx = np.argmin([np.hypot(p[0] - last_point[0], p[1] - last_point[1]) for p in midpoints_list])
-            ordered_path.append(midpoints_list.pop(closest_idx))
+            
+            best_next_idx = -1
+            min_cost = float('inf')
+            for i, p in enumerate(midpoints_list):
+                dist = np.hypot(p[0] - last_point[0], p[1] - last_point[1])
+                angle_to_point = math.atan2(p[1] - last_point[1], p[0] - last_point[0])
+                angle_diff = self._normalize_angle(angle_to_point - car_yaw) # Compare with car's yaw
+
+                cost = dist * (1 + abs(angle_diff))
+                if cost < min_cost:
+                    min_cost = cost
+                    best_next_idx = i
+            
+            if best_next_idx != -1:
+                ordered_path.append(midpoints_list.pop(best_next_idx))
 
         # Sort the rest based on a cost function of distance and angle
         while midpoints_list and len(ordered_path) >= 2:
@@ -5452,13 +5657,18 @@ class PathPlanner:
                     continue
 
                 candidate_vec = candidate_point - last_point
-                angle = self._angle_between_vectors(path_vec, candidate_vec)
+                
+                # Angle relative to the current path segment
+                angle_path_segment = self._angle_between_vectors(path_vec, candidate_vec)
+                
+                # Angle relative to the car's overall direction (car_yaw) is not used here
+                # It was used in the previous version, but removed for simplicity.
 
-                # Normalize distance and angle to be on a similar scale (0-1) and apply weights.
-                norm_dist = dist / (self.max_edge_length * 2.0) # Normalize by a reasonable max distance
-                norm_angle = angle / math.pi
+                # Combine these angles into the cost function
+                norm_dist = dist / (self.max_edge_length * 2.0)
+                norm_angle_path = angle_path_segment / math.pi
 
-                cost = self.w_dist * norm_dist + self.w_angle * norm_angle
+                cost = self.w_dist * norm_dist + self.w_angle * norm_angle_path
                 
                 if cost < min_cost:
                     min_cost = cost
@@ -5733,10 +5943,58 @@ class PathPlanner:
             target_speed = np.clip(target_speed, self.min_speed, base_target_speed)
 >>>>>>> test
 
+<<<<<<< HEAD
         # 1. Find the closest point on the path to the vehicle
         distances = torch.linalg.norm(path_tensor - veh_pos_tensor, dim=1)
         closest_idx = torch.argmin(distances)
 =======
+=======
+    def _correct_path_detours(self, path, car_yaw):
+        if len(path) < 2:
+            return path
+
+        corrected_path = [path[0]]
+        for i in range(len(path) - 1):
+            p1 = corrected_path[-1]
+            p2 = path[i+1]
+
+            segment_vec = p2 - p1
+            
+            # Check if the segment is going backward relative to the car's yaw
+            angle_to_car_yaw = self._normalize_angle(math.atan2(segment_vec[1], segment_vec[0]) - car_yaw)
+            
+            if abs(angle_to_car_yaw) > (math.pi / 2.0): # If segment is pointing more than 90 degrees away from car_yaw
+                # This segment is going backward or sharply sideways. Ignore this point.
+                continue
+            else:
+                corrected_path.append(p2)
+        
+        return np.array(corrected_path)
+
+    def _correct_path_detours(self, path, car_yaw):
+        if len(path) < 2:
+            return path
+
+        corrected_path = [path[0]]
+        for i in range(len(path) - 1):
+            p1 = corrected_path[-1]
+            p2 = path[i+1]
+
+            segment_vec = p2 - p1
+            
+            # Check if the segment is going backward relative to the car's yaw
+            angle_to_car_yaw = self._normalize_angle(math.atan2(segment_vec[1], segment_vec[0]) - car_yaw)
+            
+            if abs(angle_to_car_yaw) > (math.pi / 2.0): # If segment is pointing more than 90 degrees away from car_yaw
+                # This segment is going backward or sharply sideways. Ignore this point.
+                continue
+            else:
+                corrected_path.append(p2)
+        
+        return np.array(corrected_path)
+    def plan_path(self, cones, vehicle_state):
+        """
+>>>>>>> [PathPlanning] 251016 @Doyeop-knut | Path Planner 수정
         Generates a driving path based on the detected cones.
         Uses Delaunay triangulation and a robust sorting algorithm.
         Falls back to a simple path if not enough cones are available.
@@ -5764,7 +6022,7 @@ class PathPlanner:
             tri = Delaunay(all_points)
         except Exception as e:
             rospy.logwarn(f"Delaunay triangulation failed: {e}")
-            return None, None, None, None
+            return None, None, None, None, None
 
         # 3. Find centerline midpoints
         midpoints = []
@@ -5777,33 +6035,49 @@ class PathPlanner:
                         midpoints.append((p1 + p2) / 2.0)
         
         if not midpoints:
-            return None, tri, all_points, colors
+            return None, tri, all_points, colors, None
 
         # 4. Sort midpoints to form a continuous path
         unique_midpoints = np.unique(np.array(midpoints), axis=0)
         if len(unique_midpoints) < 2:
-            return None, tri, all_points, colors
+            return None, tri, all_points, colors, unique_midpoints
 
         ordered_midpoints = self._sort_midpoints(unique_midpoints, current_car_pos, vehicle_yaw)
         if ordered_midpoints is None or len(ordered_midpoints) < 2:
-            return None, tri, all_points, colors
+            return None, tri, all_points, colors, unique_midpoints
+
+        # Correct any detours in the path
+        corrected_path = self._correct_path_detours(ordered_midpoints, vehicle_yaw)
+
+        # Filter path to include only points within max_path_distance from the car
+        filtered_path = []
+        for p in corrected_path:
+            if np.linalg.norm(p - current_car_pos) < self.max_path_distance:
+                filtered_path.append(p)
+        
+        if len(filtered_path) < 2:
+            return None, tri, all_points, colors, unique_midpoints
 
         # 5. Smooth the path with a spline
-        if len(ordered_midpoints) < 3: # Spline needs at least 3 points for k=2
-            return ordered_midpoints, tri, all_points, colors # Return raw midpoints
+        if len(filtered_path) < 3: # Spline needs at least 3 points for k=2
+            return np.array(filtered_path), tri, all_points, colors, unique_midpoints
 
         try:
-            k = min(2, len(ordered_midpoints) - 1)
-            tck, u = splprep([ordered_midpoints[:, 0], ordered_midpoints[:, 1]], s=self.spline_smoothing_factor, k=k)
+            k = min(2, len(filtered_path) - 1)
+            tck, u = splprep([np.array(filtered_path)[:, 0], np.array(filtered_path)[:, 1]], s=self.spline_smoothing_factor, k=k)
             u_new = np.linspace(u.min(), u.max(), 50)
             x_new, y_new = splev(u_new, tck)
             path = np.vstack((x_new, y_new)).T
         except Exception as e:
             rospy.logwarn(f"Spline generation failed: {e}. Returning raw midpoints.")
-            path = ordered_midpoints # Fallback to unsmoothed path
+            path = np.array(filtered_path) # Fallback to unsmoothed path
 
+<<<<<<< HEAD
         return path, tri, all_points, colors
 >>>>>>> [PathPlanning] 251016 @Doyeop-knut | path planner 점검 및 수정
+=======
+        return path, tri, all_points, colors, unique_midpoints
+>>>>>>> [PathPlanning] 251016 @Doyeop-knut | Path Planner 수정
 
         # 2. Find the lookahead point
         lookahead_point = None

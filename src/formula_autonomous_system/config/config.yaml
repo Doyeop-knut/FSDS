@@ -336,6 +336,11 @@ planning:
     safety_margin: 0.5
 >>>>>>> [control] 251008 @Doyeop-knut | Trajectory + Stanley controller
 
+planning:
+  path_planner:
+    weight_dist: 0.2
+    weight_angle: 0.8
+
 control:
   ControllerSelection:
     # lateral_controller_type: "PurePursuit", "Stanley", "MPC"
@@ -349,6 +354,7 @@ control:
     lookahead_distance: 1.0
 
   Stanley:
+<<<<<<< HEAD
     k_gain: 1.1
 
   MPC:
@@ -378,6 +384,9 @@ control:
       w_accel: 1.0
       w_steer_rate: 1.0
       w_accel_rate: 1.0
+=======
+    k_gain: 0.1
+>>>>>>> [PathPlanning] 251016 @Doyeop-knut | Path Planner 수정
 
   MPC:
     horizon: 10
