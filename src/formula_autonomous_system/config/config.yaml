@@ -17,11 +17,19 @@ perception:
   
   lidar_roi_extraction:
     # LiDAR ROI extraction parameters
+<<<<<<< HEAD
     x_min: 1.0
     x_max: 15.0
     y_min: -10.0
     y_max: 10.0
     z_min: -5.0
+=======
+    x_min: 0.0
+    x_max: 150.0
+    y_min: -30.0
+    y_max: 30.0
+    z_min: -10.0
+>>>>>>> [control] 251016 @Doyeop-knut | 자잘한 수정
     z_max: 10.0
 
   lidar_ground_removal:
@@ -227,11 +235,15 @@ perception:
 
   camera_hsv_window_size:
 <<<<<<< HEAD
+<<<<<<< HEAD
     base_size: 20 # Base window size in pixels at 0 distance
     distance_factor: 0.3 # Pixels to add to half-size per meter of distance
 =======
     window_size: 25
 >>>>>>> [ConeDetection] 251010 @Doyeop-knut | Cone Detection method 개선 및 Mapping 기능 추가
+=======
+    window_size: 50
+>>>>>>> [control] 251016 @Doyeop-knut | 자잘한 수정
 
   camera_hsv_yellow:
     # HSV thresholds for yellow cone detection
@@ -346,6 +358,7 @@ control:
     # lateral_controller_type: "PurePursuit", "Stanley", "MPC"
 <<<<<<< HEAD
 <<<<<<< HEAD
+<<<<<<< HEAD
     lateral_controller_type: "MPC" 
 =======
     lateral_controller_type: "Stanley" 
@@ -353,6 +366,9 @@ control:
 =======
     lateral_controller_type: "PurePursuit" 
 >>>>>>> [Control] 251016 @Doyeop-knut | Steer값 부호 변경
+=======
+    lateral_controller_type: "Stanley" 
+>>>>>>> [control] 251016 @Doyeop-knut | 자잘한 수정
 
   PurePursuit:
     lookahead_distance: 1.0
