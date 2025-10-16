@@ -330,7 +330,7 @@ class FormulaAutonomousSystem:
         # print(f"closed loop  = {self.track_map.is_loop_closed}")
 
         # Plan path using the map
-        path, tri, tri_points, tri_colors, midpoints = self.path_planner.plan_path(self.track_map.get_cones(), vehicle_state)
+        path, tri, tri_points, tri_colors, midpoints = self.path_planner.plan_path(self.track_map.get_cones(), self.midpoint_map, vehicle_state)
         
         # Visualize Map and Path
         self.publish_map_cones()
@@ -1395,6 +1395,7 @@ class PathPlanner:
         self.w_dist = rospy.get_param("/planning/path_planner/weight_dist", 0.3)
         self.w_angle = rospy.get_param("/planning/path_planner/weight_angle", 0.7)
         self.max_path_distance = rospy.get_param("/planning/path_planner/max_path_distance", 20.0)
+        self.lane_width = rospy.get_param("/planning/path_planner/virtual_lane_width", 3.5) # For virtual cone generation
 
 
     def _normalize_angle(self, angle):
@@ -1567,7 +1568,7 @@ class PathPlanner:
                 corrected_path.append(p2)
         
         return np.array(corrected_path)
-    def plan_path(self, cones, vehicle_state):
+    def plan_path(self, cones, midpoint_map, vehicle_state):
         """
         Generates a driving path based on the detected cones.
         Uses Delaunay triangulation and a robust sorting algorithm.
@@ -1581,12 +1582,12 @@ class PathPlanner:
 
         # --- Condition for Delaunay Path ---
         if len(blue_cones) < 2 or len(yellow_cones) < 2:
-            return self._generate_fallback_path(blue_cones, yellow_cones, current_car_pos)
+            return self._generate_fallback_path(blue_cones, yellow_cones, vehicle_state)
 
         # 1. Prepare points for triangulation
         all_points = np.array([[c['x'], c['y']] for c in blue_cones] + [[c['x'], c['y']] for c in yellow_cones])
         if len(all_points) < 3:
-            return self._generate_fallback_path(blue_cones, yellow_cones, current_car_pos)
+            return self._generate_fallback_path(blue_cones, yellow_cones, vehicle_state)
 
         num_blue = len(blue_cones)
         colors = np.array([1] * num_blue + [2] * len(yellow_cones))
@@ -1611,17 +1612,31 @@ class PathPlanner:
         if not midpoints:
             return None, tri, all_points, colors, None
 
-        # 4. Sort midpoints to form a continuous path
         unique_midpoints = np.unique(np.array(midpoints), axis=0)
-        if len(unique_midpoints) < 2:
-            return None, tri, all_points, colors, unique_midpoints
+        
+        # 4. Update midpoint map and get the global path
+        midpoint_map.update(unique_midpoints)
+        ordered_midpoints_list = midpoint_map.get_all_midpoints()
 
-        ordered_midpoints = self._sort_midpoints(unique_midpoints, current_car_pos, vehicle_yaw)
-        if ordered_midpoints is None or len(ordered_midpoints) < 2:
+        path_to_process = None
+        if ordered_midpoints_list and len(ordered_midpoints_list) >= 2:
+            ordered_midpoints = np.array(ordered_midpoints_list)
+            # Check if the global path is reasonably close. If not, use a local path.
+            dist_to_path = np.min(np.linalg.norm(ordered_midpoints - current_car_pos, axis=1))
+            if dist_to_path < self.max_path_distance:
+                 path_to_process = ordered_midpoints
+
+        # If no global path is available or it's too far, generate a local one
+        if path_to_process is None:
+            if len(unique_midpoints) < 2:
+                return None, tri, all_points, colors, unique_midpoints
+            path_to_process = self._sort_midpoints(unique_midpoints, current_car_pos, vehicle_yaw)
+
+        if path_to_process is None or len(path_to_process) < 2:
             return None, tri, all_points, colors, unique_midpoints
 
         # Correct any detours in the path
-        corrected_path = self._correct_path_detours(ordered_midpoints, vehicle_yaw)
+        corrected_path = self._correct_path_detours(path_to_process, vehicle_yaw)
 
         # Filter path to include only points within max_path_distance from the car
         filtered_path = []
@@ -2084,14 +2099,22 @@ class Control:
 
         # --- Get all parameters for all controllers ---
         # Vehicle
-        self.wheelbase = rospy.get_param("/vehicle/wheelbase", 1.54)
-        self.max_steer = rospy.get_param("/vehicle/max_steer_angle", 1) # radians
+        # Corrected parameter names to match config.yaml
+        self.wheelbase = rospy.get_param("/control/Vehicle/wheel_base", 1.54) 
+        self.max_steer = rospy.get_param("/control/PurePursuit/max_steer_angle", 1.0) # radians
         self.max_accel = rospy.get_param("/vehicle/max_accel", 0.5) # m/s^2
         self.min_accel = rospy.get_param("/vehicle/min_accel", -0.5) # m/s^2 (braking)
 
         # Common
         self.target_speed = rospy.get_param("/control/SpeedControl/target_speed", 5.0) # m/s
+        
+        # PID Speed Controller Gains & State
         self.kp_throttle = rospy.get_param("/control/SpeedControl/pid_kp", 0.5)
+        self.ki_throttle = rospy.get_param("/control/SpeedControl/pid_ki", 0.05)
+        self.kd_throttle = rospy.get_param("/control/SpeedControl/pid_kd", 0.005)
+        self.pid_integral = 0.0
+        self.pid_prev_error = 0.0
+        self.pid_prev_time = None
 
         # Pure Pursuit
         self.lookahead_dist = rospy.get_param("/control/pure_pursuit/lookahead_distance", 2.5)
@@ -2122,6 +2145,52 @@ class Control:
             self.compute_control = self._compute_pure_pursuit
             
         rospy.loginfo(f"Control: Using {self.controller_type} controller.")
+
+    def _compute_pid_throttle(self, current_speed):
+        """
+        Computes throttle command using a PID controller.
+        """
+        # Initialize on first run
+        if self.pid_prev_time is None:
+            self.pid_prev_time = rospy.Time.now()
+            # Return a simple P-control for the first frame
+            throttle = self.kp_throttle * (self.target_speed - current_speed)
+            return np.clip(throttle, 0.0, 1.0)
+
+        # Calculate dt
+        current_time = rospy.Time.now()
+        dt = (current_time - self.pid_prev_time).to_sec()
+
+        # On the very first frame, dt can be 0, handle this
+        if dt <= 0:
+            # Return a simple P-control if dt is not valid
+            throttle = self.kp_throttle * (self.target_speed - current_speed)
+            return np.clip(throttle, 0.0, 1.0)
+
+        # PID calculations
+        error = self.target_speed - current_speed
+        
+        # Integral term
+        self.pid_integral += error * dt
+        
+        # Anti-windup for integral term
+        # Clamp the integral to prevent it from growing too large
+        if self.ki_throttle > 0:
+             self.pid_integral = np.clip(self.pid_integral, -1.0/self.ki_throttle, 1.0/self.ki_throttle)
+
+        # Derivative term
+        derivative = (error - self.pid_prev_error) / dt
+
+        # PID formula
+        output = (self.kp_throttle * error) + \
+                 (self.ki_throttle * self.pid_integral) + \
+                 (self.kd_throttle * derivative)
+
+        # Update state for next iteration
+        self.pid_prev_error = error
+        self.pid_prev_time = current_time
+
+        return output
 
     def normalize_angle(self, angle):
         """Normalize an angle to [-pi, pi]."""
@@ -2164,13 +2233,17 @@ class Control:
         steer = math.atan2(2.0 * self.wheelbase * math.sin(alpha), actual_lookahead_dist)
         steer = -np.clip(steer, -self.max_steer, self.max_steer)
 
-        # 5. Throttle control
-        throttle = self.kp_throttle * (self.target_speed - current_speed)
-        throttle = np.clip(throttle, 0.0, 1.0)
+        # 5. Throttle control (using PID)
+        throttle = self._compute_pid_throttle(current_speed)
         
         brake = 0.0
-        if self.target_speed < current_speed:
-            brake = 0.1
+        # If PID output is negative, it implies braking is needed
+        if throttle < 0:
+            # Map negative throttle to brake command
+            brake = np.clip(-throttle, 0.0, 1.0) 
+            throttle = 0.0
+        else:
+            throttle = np.clip(throttle, 0.0, 1.0)
 
         # Normalize steering angle to [-1, 1]
         normalized_steer = steer / self.max_steer
@@ -2180,56 +2253,73 @@ class Control:
     def _compute_stanley(self, vehicle_state, path):
         """
         Computes control commands using the Stanley method.
+        This implementation uses the front axle as the reference point.
         """
-        # Unpack vehicle state
+        # Unpack vehicle state (assumed to be rear axle position)
         veh_x, veh_y, veh_yaw = vehicle_state[0], vehicle_state[1], vehicle_state[2]
         current_speed = math.sqrt(vehicle_state[3]**2 + vehicle_state[4]**2)
 
-        # 1. Find the closest path point (target_idx)
+        # 1. Calculate front axle position
+        front_axle_x = veh_x + self.wheelbase * math.cos(veh_yaw)
+        front_axle_y = veh_y + self.wheelbase * math.sin(veh_yaw)
+        
+        # 2. Find the closest path point to the FRONT AXLE
         path_points = np.array(path)
-        distances = np.linalg.norm(path_points - np.array([veh_x, veh_y]), axis=1)
+        distances = np.linalg.norm(path_points - np.array([front_axle_x, front_axle_y]), axis=1)
         target_idx = np.argmin(distances)
-
+        # print("Target idx:", target_idx, "Path length:", len(path_points))
         # Ensure target_idx is not the last point of the path to calculate path heading
         if target_idx >= len(path_points) - 1:
             target_idx = len(path_points) - 2
-
-        # 2. Calculate path heading (yaw)
+        
+        # 3. Calculate path heading (yaw) at the closest path segment
+        print(target_idx)
         p1 = path_points[target_idx]
         p2 = path_points[target_idx + 1]
         path_yaw = math.atan2(p2[1] - p1[1], p2[0] - p1[0])
 
-        # 3. Calculate heading error (theta_e)
+        # 4. Calculate heading error (theta_e)
+        # This is the difference between the path's heading and the vehicle's heading
         heading_error = self.normalize_angle(path_yaw - veh_yaw)
-
-        # 4. Calculate cross-track error (e_fa)
-        # Vector from closest path point to vehicle
-        vec_path_to_veh = np.array([veh_x, veh_y]) - p1
+        # 5. Calculate cross-track error (e_fa)
+        # This is the distance from the front axle to the path
+        # Vector from closest path point to the front axle
+        vec_path_to_front_axle = np.array([front_axle_x, front_axle_y]) - p1
+        # print(vec_path_to_front_axle)
         # Path vector
         vec_path = p2 - p1
         vec_path_normalized = vec_path / (np.linalg.norm(vec_path) + 1e-6)
         
-        # Cross product to find the error and its sign
-        cross_track_error = np.cross(vec_path_normalized, vec_path_to_veh)
+        # The cross product gives the signed distance
+        cross_track_error = np.cross(vec_path_normalized, vec_path_to_front_axle)
         
-        # 5. Calculate steering angle (delta)
+        # 6. Calculate steering angle (delta)
         # Cross-track steering component
-        cte_steer = math.atan2(self.k_crosstrack * cross_track_error, max(current_speed, 0.1)) # Add small epsilon to avoid division by zero
+        cte_steer = math.atan2(self.k_crosstrack * cross_track_error, max(current_speed, 0.1))
+        print(f"current_speed: {current_speed}, cross_track_error: {cross_track_error}, cte_steer: {cte_steer}")
 
-        # Total steering angle
+        # Total steering angle (Stanley Law)
         steer = heading_error + cte_steer
+        # print(steer, heading_error, cte_steer)
+        
+        # The control output is often inverted depending on the vehicle's steering convention.
+        # The original code had a negation. We keep it, assuming it's correct for the vehicle.
         steer = -np.clip(steer, -self.max_steer, self.max_steer)
-
-        # 6. Throttle control (reusing the same P-controller)
-        throttle = self.kp_throttle * (self.target_speed - current_speed)
-        throttle = np.clip(throttle, 0.0, 1.0)
+        # 7. Throttle control (using PID)
+        throttle = self._compute_pid_throttle(current_speed)
         
         brake = 0.0
-        if self.target_speed < current_speed:
-            brake = 0.1
+        # If PID output is negative, it implies braking is needed
+        if throttle < 0:
+            # Map negative throttle to brake command
+            brake = np.clip(-throttle, 0.0, 1.0)
+            throttle = 0.0
+        else:
+            throttle = np.clip(throttle, 0.0, 1.0)
 
-        # Normalize steering angle to [-1, 1]
+        # Normalize steering angle to [-1, 1] for the command
         normalized_steer = steer / self.max_steer
+        print(steer, normalized_steer)
 
         return throttle, normalized_steer, brake
 
@@ -2337,10 +2427,10 @@ class Control:
         brake = 0.0
         if optimal_accel > 0:
             # Simple mapping: scale accel to [0,1] throttle
-            throttle = np.clip(optimal_accel / self.max_accel, 0.0, 1.0)
+            throttle = np.clip(optimal_accel / self.max_accel, 0.0, 0.5)
         else:
             # Simple mapping: scale decel to [0,1] brake
-            brake = np.clip(-optimal_accel / abs(self.min_accel), 0.0, 1.0)
+            brake = np.clip(-optimal_accel / abs(self.min_accel), 0.0, 0.1)
 
         # Normalize steering angle to [-1, 1]
         normalized_steer = np.clip(-optimal_steer / self.max_steer, -1.0, 1.0)

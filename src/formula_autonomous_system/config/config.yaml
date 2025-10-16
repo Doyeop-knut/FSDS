@@ -137,7 +137,7 @@ local_planning:
     max_accumulated_midpoints: 500
     max_x_diff_for_pairing: 10.0
     cone_filter_max_distance: 20.0 # Max distance from vehicle to consider cones for planning
-    cone_filter_max_angle: 60.0 # Max angle (degrees) from vehicle's forward axis to consider cones
+    cone_filter_max_angle: 90.0 # Max angle (degrees) from vehicle's forward axis to consider cones
     max_edge_length: 7.0
     spline_smoothing_factor: 0.5
     
@@ -156,25 +156,24 @@ planning:
 control:
   ControllerSelection:
     # lateral_controller_type: "PurePursuit", "Stanley", "MPC"
-    lateral_controller_type: "Stanley" 
+    lateral_controller_type: "MPC" 
 
   PurePursuit:
     lookahead_distance: 1.0
     max_steer_angle: 1.0
 
   Stanley:
-    k_gain: 0.7
+    k_gain: 1.1
 
   MPC:
-    horizon: 10
-    dt: 0.1
-    w_cte: 1.0
-    w_etheta: 1.0
-    w_accel: 1.0
-    w_steer: 1.0
-    w_steer_rate: 1.0
-    w_steer_rate: 1.0
-    w_vel : 0.1
+    horizon: 5
+    dt: 0.01
+    w_cte: 0.8
+    w_etheta: 1.6
+    w_accel: 0.8
+    w_steer: 0.08
+    w_steer_rate: 0.15
+    w_vel : 0.5
 
   SpeedControl:
     target_speed: 5.0
