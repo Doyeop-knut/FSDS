@@ -156,14 +156,14 @@ planning:
 control:
   ControllerSelection:
     # lateral_controller_type: "PurePursuit", "Stanley", "MPC"
-    lateral_controller_type: "Stanley" 
+    lateral_controller_type: "PurePursuit" 
 
   PurePursuit:
     lookahead_distance: 1.0
     max_steer_angle: 1.0
 
   Stanley:
-    k_gain: 0.1
+    k_gain: 0.7
 
   MPC:
     horizon: 10
@@ -177,7 +177,7 @@ control:
     w_vel : 0.1
 
   SpeedControl:
-    target_speed: 3.0
+    target_speed: 5.0
     pid_kp: 0.5
     pid_ki: 0.05
     pid_kd: 0.005

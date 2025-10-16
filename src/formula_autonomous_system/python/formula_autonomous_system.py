@@ -2077,9 +2077,9 @@ class Control:
         # --- Get all parameters for all controllers ---
         # Vehicle
         self.wheelbase = rospy.get_param("/vehicle/wheelbase", 1.54)
-        self.max_steer = rospy.get_param("/vehicle/max_steer_angle", 0.3) # radians
-        self.max_accel = rospy.get_param("/vehicle/max_accel", 2.0) # m/s^2
-        self.min_accel = rospy.get_param("/vehicle/min_accel", -5.0) # m/s^2 (braking)
+        self.max_steer = rospy.get_param("/vehicle/max_steer_angle", 1) # radians
+        self.max_accel = rospy.get_param("/vehicle/max_accel", 0.5) # m/s^2
+        self.min_accel = rospy.get_param("/vehicle/min_accel", -0.5) # m/s^2 (braking)
 
         # Common
         self.target_speed = rospy.get_param("/control/SpeedControl/target_speed", 5.0) # m/s
@@ -2092,15 +2092,15 @@ class Control:
         self.k_crosstrack = rospy.get_param("/control/stanley/k_gain", 0.7)
 
         # MPC
-        self.mpc_horizon = rospy.get_param("/control/mpc/horizon", 10)
-        self.mpc_dt = rospy.get_param("/control/mpc/dt", 0.1)
-        self.w_cte = rospy.get_param("/control/mpc/w_cte", 10.0)
-        self.w_etheta = rospy.get_param("/control/mpc/w_etheta", 5.0)
-        self.w_accel = rospy.get_param("/control/mpc/w_accel", 1.0)
-        self.w_steer = rospy.get_param("/control/mpc/w_steer", 1.0)
-        self.w_accel_rate = rospy.get_param("/control/mpc/w_accel_rate", 1.0)
-        self.w_steer_rate = rospy.get_param("/control/mpc/w_steer_rate", 1.0)
-        self.w_v = rospy.get_param("/control/mpc/w_vel", 0.1) # Weight for speed tracking
+        self.mpc_horizon = rospy.get_param("/control/MPC/horizon", 10)
+        self.mpc_dt = rospy.get_param("/control/MPC/dt", 0.1)
+        self.w_cte = rospy.get_param("/control/MPC/w_cte", 10.0)
+        self.w_etheta = rospy.get_param("/control/MPC/w_etheta", 5.0)
+        self.w_accel = rospy.get_param("/control/MPC/w_accel", 1.0)
+        self.w_steer = rospy.get_param("/control/MPC/w_steer", 1.0)
+        self.w_accel_rate = rospy.get_param("/control/MPC/w_accel_rate", 1.0)
+        self.w_steer_rate = rospy.get_param("/control/MPC/w_steer_rate", 1.0)
+        self.w_v = rospy.get_param("/control/MPC/w_vel", 0.1) # Weight for speed tracking
 
         # --- Assign the compute function based on selected type ---
         if self.controller_type == "PurePursuit":
@@ -2154,7 +2154,7 @@ class Control:
         alpha = math.atan2(local_point[1], local_point[0])
         actual_lookahead_dist = np.linalg.norm(lookahead_point - np.array([veh_x, veh_y]))
         steer = math.atan2(2.0 * self.wheelbase * math.sin(alpha), actual_lookahead_dist)
-        steer = np.clip(steer, -self.max_steer, self.max_steer)
+        steer = -np.clip(steer, -self.max_steer, self.max_steer)
 
         # 5. Throttle control
         throttle = self.kp_throttle * (self.target_speed - current_speed)
@@ -2210,7 +2210,7 @@ class Control:
 
         # Total steering angle
         steer = heading_error + cte_steer
-        steer = np.clip(steer, -self.max_steer, self.max_steer)
+        steer = -np.clip(steer, -self.max_steer, self.max_steer)
 
         # 6. Throttle control (reusing the same P-controller)
         throttle = self.kp_throttle * (self.target_speed - current_speed)
@@ -2295,7 +2295,6 @@ class Control:
         distances = np.linalg.norm(path_points - np.array([veh_x, veh_y]), axis=1)
         start_idx = np.argmin(distances)
         ref_path = path_points[start_idx:start_idx + self.mpc_horizon + 2] # Need one extra point for heading calculation
-        
         if len(ref_path) < self.mpc_horizon + 2:
             # Pad the reference path if it's too short
             last_point = ref_path[-1]
@@ -2323,7 +2322,8 @@ class Control:
         # Get the first optimal control input
         optimal_accel = solution.x[0]
         optimal_steer = solution.x[1]
-
+        # print("MPC Optimization Success:", solution.success, "Cost:", solution.fun)
+        print("Optimal Accel:", optimal_accel, "Optimal Steer:", optimal_steer)
         # --- Map acceleration to throttle/brake ---
         throttle = 0.0
         brake = 0.0
@@ -2335,6 +2335,6 @@ class Control:
             brake = np.clip(-optimal_accel / abs(self.min_accel), 0.0, 1.0)
 
         # Normalize steering angle to [-1, 1]
-        normalized_steer = optimal_steer / self.max_steer
+        normalized_steer = np.clip(-optimal_steer / self.max_steer, -1.0, 1.0)
 
         return throttle, normalized_steer, brake
