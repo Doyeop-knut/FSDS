@@ -345,15 +345,20 @@ control:
   ControllerSelection:
     # lateral_controller_type: "PurePursuit", "Stanley", "MPC"
 <<<<<<< HEAD
+<<<<<<< HEAD
     lateral_controller_type: "MPC" 
 =======
     lateral_controller_type: "Stanley" 
 >>>>>>> [Control] 251014 @Doyeop-knut | Controller 구현 (Pure Pursuit, Stanley, MPC)
+=======
+    lateral_controller_type: "PurePursuit" 
+>>>>>>> [Control] 251016 @Doyeop-knut | Steer값 부호 변경
 
   PurePursuit:
     lookahead_distance: 1.0
 
   Stanley:
+<<<<<<< HEAD
 <<<<<<< HEAD
     k_gain: 1.1
 
@@ -387,6 +392,9 @@ control:
 =======
     k_gain: 0.1
 >>>>>>> [PathPlanning] 251016 @Doyeop-knut | Path Planner 수정
+=======
+    k_gain: 0.7
+>>>>>>> [Control] 251016 @Doyeop-knut | Steer값 부호 변경
 
   MPC:
     horizon: 10
@@ -402,12 +410,16 @@ control:
   SpeedControl:
 <<<<<<< HEAD
 <<<<<<< HEAD
+<<<<<<< HEAD
 =======
     target_speed: 1.0
 >>>>>>> [control] 251008 @Doyeop-knut | Trajectory + Stanley controller
 =======
     target_speed: 3.0
 >>>>>>> [Control] 251014 @Doyeop-knut | Controller 구현 (Pure Pursuit, Stanley, MPC)
+=======
+    target_speed: 5.0
+>>>>>>> [Control] 251016 @Doyeop-knut | Steer값 부호 변경
     pid_kp: 0.5
     pre_loop_closure:
       target_speed: 10.0
