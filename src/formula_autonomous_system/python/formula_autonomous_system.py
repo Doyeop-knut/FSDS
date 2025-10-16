@@ -270,7 +270,7 @@ class FormulaAutonomousSystem:
                 # Two algorithms are used for color detection:
                 # 1. Bbox-based detection (YOLOv5 model)
                 # 2. Point-based detection (Projected LiDAR point)
-                # The results are fused, with priority given to the bbox-based method.
+                # The results are fused, with priority given to bbox-based detection in case of conflict.
 
                 # Algorithm 1: Bbox-based detection
                 color_from_bbox = "unknown"
@@ -1540,6 +1540,12 @@ class PathPlanner:
         
         return np.array(corrected_path)
 
+    def _generate_straight_path(self, car_pos, car_yaw, length=5.0, num_points=5):
+        rospy.logwarn_throttle(1.0, "PathPlanner: Generating straight fallback path.")
+        direction_vec = np.array([math.cos(car_yaw), math.sin(car_yaw)])
+        path = [car_pos + direction_vec * i for i in np.linspace(0.5, length, num_points)]
+        return np.array(path)
+
     def _correct_path_detours(self, path, car_yaw):
         if len(path) < 2:
             return path
@@ -1628,7 +1634,9 @@ class PathPlanner:
 
         # 5. Smooth the path with a spline
         if len(filtered_path) < 3: # Spline needs at least 3 points for k=2
-            return np.array(filtered_path), tri, all_points, colors, unique_midpoints
+            # Fallback to a straight path if not enough points for spline
+            fallback_path = self._generate_straight_path(current_car_pos, vehicle_yaw)
+            return fallback_path, tri, all_points, colors, unique_midpoints
 
         try:
             k = min(2, len(filtered_path) - 1)
