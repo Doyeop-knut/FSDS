@@ -148,6 +148,11 @@ local_planning:
     # Safety parameters (meters)
     safety_margin: 0.5
 
+planning:
+  path_planner:
+    weight_dist: 0.2
+    weight_angle: 0.8
+
 control:
   ControllerSelection:
     # lateral_controller_type: "PurePursuit", "Stanley", "MPC"
@@ -158,7 +163,7 @@ control:
     max_steer_angle: 1.0
 
   Stanley:
-    k_gain: 0.8
+    k_gain: 0.1
 
   MPC:
     horizon: 10
