@@ -236,6 +236,7 @@ perception:
   camera_hsv_window_size:
 <<<<<<< HEAD
 <<<<<<< HEAD
+<<<<<<< HEAD
     base_size: 20 # Base window size in pixels at 0 distance
     distance_factor: 0.3 # Pixels to add to half-size per meter of distance
 =======
@@ -244,6 +245,9 @@ perception:
 =======
     window_size: 50
 >>>>>>> [control] 251016 @Doyeop-knut | 자잘한 수정
+=======
+    window_size: 20
+>>>>>>> [YOLO] 251017@Doyeop-knut |New yolo
 
   camera_hsv_yellow:
     # HSV thresholds for yellow cone detection
@@ -256,7 +260,7 @@ perception:
     # HSV thresholds for blue cone detection
     hue_min: 90
     hue_max: 110
-    saturation_min: 90
+    saturation_min: 75
     value_min: 100
 
   camera_hsv_orange:
@@ -434,6 +438,7 @@ control:
 <<<<<<< HEAD
 <<<<<<< HEAD
 <<<<<<< HEAD
+<<<<<<< HEAD
 =======
     target_speed: 1.0
 >>>>>>> [control] 251008 @Doyeop-knut | Trajectory + Stanley controller
@@ -443,6 +448,9 @@ control:
 =======
     target_speed: 5.0
 >>>>>>> [Control] 251016 @Doyeop-knut | Steer값 부호 변경
+=======
+    target_speed: 4.0
+>>>>>>> [YOLO] 251017@Doyeop-knut |New yolo
     pid_kp: 0.5
     pre_loop_closure:
       target_speed: 10.0

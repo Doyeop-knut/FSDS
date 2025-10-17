@@ -115,6 +115,7 @@ class FormulaAutonomousSystem:
         self.dbscan_eps = float()
         self.dbscan_points = 0
         self.prev_x, self.prev_y, self.prev_z = 0,0,0
+        self.delaunay_max_edge_length = rospy.get_param("/planning/path_planner/max_edge_length", 7.0)
         
 <<<<<<< HEAD
         
@@ -165,7 +166,7 @@ class FormulaAutonomousSystem:
 =======
         # ==================== 데이터 로거 추가 ====================
         self.data_logger = DataLogger(
-        log_directory="/home/smac/FSDS/src/tutorial/log",
+        log_directory="/home/user/fsds_ws/src/tutorial/log",
         session_name=datetime.datetime.now().strftime("%Y%m%d_%H%M%S"),
         max_lidar_points=50  # 필요시 이 값을 조절
         )
@@ -621,53 +622,101 @@ class FormulaAutonomousSystem:
             cones_with_color = []
             left, right = [], []
 
-            # Iterate through each 3D cluster point and determine its color
+            # --- Stage 1: Initial Independent Color Classification ---
+            initial_cone_data = []
+            all_points = []
             for i, cone_3d_veh_frame in enumerate(compensated_cluster):
                 detected_color = "unknown"
+                distance_to_cone = cone_3d_veh_frame[0]
 
-                # Algorithm 2: Point-based detection
-                color_from_point = "unknown"
-                if i < len(cam1_pts):
-                    color_from_point = self.camera_util.detectConeColor(cam1_pts[i], image1, debug_image=image1)
+                # Dynamic Bbox Detection
+                bbox_left = self.camera_util.find_cone_bbox_from_point(image1, cam1_pts[i], distance_to_cone) if i < len(cam1_pts) else None
+                bbox_right = self.camera_util.find_cone_bbox_from_point(image2, cam2_pts[i], distance_to_cone) if i < len(cam2_pts) else None
                 
-                if color_from_point == "unknown" and i < len(cam2_pts):
-                    color_from_point = self.camera_util.detectConeColor(cam2_pts[i], image2, debug_image=image2)
+                best_bbox, best_bbox_image = (bbox_left, image1) if (bbox_left and not bbox_right) or (bbox_left and bbox_right and bbox_left[2]*bbox_left[3] >= bbox_right[2]*bbox_right[3]) else (bbox_right, image2)
 
-                detected_color = color_from_point
-                
-                # --- Color ID assignment ---
-                color_id = 0  # Default to unknown
-                if detected_color == "blue":
-                    color_id = 1
-                elif detected_color == "yellow":
-                    color_id = 2
-                elif detected_color == "orange":
-                    color_id = 3
-                
-                # Transform 3D cone from vehicle frame to map frame
+                if best_bbox:
+                    x, y, w, h = best_bbox
+                    roi = best_bbox_image[y:y+h, x:x+w]
+                    detected_color = self.camera_util.detect_color_in_roi(roi)
+
+                # Fallback to Fixed-Window Detection
+                if detected_color == "unknown":
+                    color_from_point = self.camera_util.detectConeColor(cam1_pts[i], image1, debug_image=image1) if i < len(cam1_pts) else "unknown"
+                    if color_from_point == "unknown" and i < len(cam2_pts):
+                        color_from_point = self.camera_util.detectConeColor(cam2_pts[i], image2, debug_image=image2)
+                    detected_color = color_from_point
+
+                # Store initial classification results
+                color_id = 0
+                if detected_color == "blue": color_id = 1
+                elif detected_color == "yellow": color_id = 2
+                elif detected_color == "orange": color_id = 3
+                initial_cone_data.append({'veh_coords': cone_3d_veh_frame, 'color_id': color_id})
+                all_points.append(cone_3d_veh_frame[:2])
+
+            # --- Stage 2: Triangulation and Global Layout ---
+            # Perform Delaunay triangulation first, as it's needed for advanced inference.
+            try:
+                tri = Delaunay(np.array(all_points)) if len(all_points) >= 3 else None
+            except Exception:
+                tri = None
+
+            side_colors = {'left': {'blue': 0, 'yellow': 0}, 'right': {'blue': 0, 'yellow': 0}}
+            for cone in initial_cone_data:
+                if cone['color_id'] in [1, 2]:
+                    side = 'left' if cone['veh_coords'][1] > 0 else 'right'
+                    if cone['color_id'] == 1: side_colors[side]['blue'] += 1
+                    elif cone['color_id'] == 2: side_colors[side]['yellow'] += 1
+            
+            # Require a high confidence (e.g., 3+ cones and a clear majority) to lock in the track layout
+            min_cones_for_rule = 3 
+            left_is_blue = (side_colors['left']['blue'] >= min_cones_for_rule and side_colors['left']['blue'] > side_colors['left']['yellow'])
+            right_is_yellow = (side_colors['right']['yellow'] >= min_cones_for_rule and side_colors['right']['yellow'] > side_colors['right']['blue'])
+
+            # --- Stage 3: Enforce Global Rule or Fallback to Delaunay Inference ---
+            if left_is_blue and right_is_yellow:
+                # If the track layout is confidently known, enforce it strictly.
+                for cone in initial_cone_data:
+                    if cone['color_id'] == 3: # Orange cones are not affected
+                        continue
+                    is_left = cone['veh_coords'][1] > 0
+                    if is_left:
+                        cone['color_id'] = 1 # Force to BLUE
+                    else: # is_right
+                        cone['color_id'] = 2 # Force to YELLOW
+                final_cones_data = initial_cone_data
+            elif tri is not None:
+                # If the global rule fails, use the more robust Delaunay voting method.
+                final_cones_data = self._delaunay_color_inference(initial_cone_data, tri)
+            else:
+                # Fallback if triangulation failed
+                final_cones_data = initial_cone_data
+
+            # --- Stage 4: Finalize Cone List for Mapping and Planning ---
+            for cone_data in final_cones_data:
+                final_color_id = cone_data['color_id']
+                cone_3d_veh_frame = cone_data['veh_coords']
                 cone_3d_map_frame_xy = np.dot(cone_3d_veh_frame[:2], rot_matrix.T) + np.array([veh_x, veh_y])
                 cone_3d_map_frame_z = cone_3d_veh_frame[2]
                 
-                cones_with_color.append([cone_3d_map_frame_xy[0], cone_3d_map_frame_xy[1], cone_3d_map_frame_z, color_id])
-                if color_id == 1:
+                cones_with_color.append([cone_3d_map_frame_xy[0], cone_3d_map_frame_xy[1], cone_3d_map_frame_z, final_color_id])
+                if final_color_id == 1:
                     left.append([cone_3d_map_frame_xy[0], cone_3d_map_frame_xy[1]])
-                elif color_id == 2:
+                elif final_color_id == 2:
                     right.append([cone_3d_map_frame_xy[0], cone_3d_map_frame_xy[1]])
-                elif color_id == 3:
-                    if cone_3d_map_frame_xy[0] < 0 :
-                        left.append([cone_3d_map_frame_xy[0], cone_3d_map_frame_xy[1]])
-                    elif cone_3d_map_frame_xy[0] > 0 :
-                        right_append([cone_3d_map_frame_xy[0], cone_3d_map_frame_xy[1]]) 
-            
+
             global_clusters = np.array(cones_with_color)
         else:
-            global_clusters = np.empty((0, 4)) # Ensure global_clusters is always a 2D array with 4 columns
+            global_clusters = np.empty((0, 4))
+            tri = None
+            all_points = []
 
         # ==================== Map & Path ===================
         # Update map with new cone observations
         self.track_map.update(global_clusters, vehicle_state)
-        # print(f"closed loop  = {self.track_map.is_loop_closed}")
 
+<<<<<<< HEAD
 <<<<<<< HEAD
         # Publish the active tracks for visualization
         active_tracks = self.tracker.get_active_tracks()
@@ -1061,6 +1110,9 @@ class FormulaAutonomousSystem:
                     # Visualize Map and Path
 >>>>>>> [Trajectory] 251010 @Doyeop-knut | Delaunay Triangulation 적용 -> Path 수정 필요
 =======
+=======
+        # Plan path using the map (with newly inferred colors)
+>>>>>>> [YOLO] 251017@Doyeop-knut |New yolo
         path, tri, tri_points, tri_colors, midpoints = self.path_planner.plan_path(self.track_map.get_cones(), vehicle_state)
 =======
         path, tri, tri_points, tri_colors, midpoints = self.path_planner.plan_path(self.track_map.get_cones(), self.midpoint_map, vehicle_state)
@@ -1258,6 +1310,82 @@ class FormulaAutonomousSystem:
         return True, control_command_msg, autonomous_mode
 
 <<<<<<< HEAD
+<<<<<<< HEAD
+=======
+    def _delaunay_color_inference(self, cone_data_list, tri):
+        """
+        Infers cone colors using a voting system based on Delaunay triangulation neighbors.
+        - Along-track neighbors vote for their own color.
+        - Cross-track (diagonal) neighbors vote for the opposite color.
+        """
+        # 1. Build neighbor graph from triangulation
+        neighbors = {i: set() for i in range(len(cone_data_list))}
+        for simplex in tri.simplices:
+            for i in range(3):
+                p1, p2 = simplex[i], simplex[(i + 1) % 3]
+                neighbors[p1].add(p2)
+                neighbors[p2].add(p1)
+
+        # 2. Iteratively infer colors
+        unknown_indices = [i for i, cone in enumerate(cone_data_list) if cone['color_id'] == 0]
+        
+        for _ in range(len(unknown_indices)): # Iterate enough times for color to propagate
+            progress_made = False
+            newly_colored_indices = []
+
+            for unknown_idx in unknown_indices:
+                blue_votes = 0
+                yellow_votes = 0
+                
+                unknown_cone_coords = cone_data_list[unknown_idx]['veh_coords']
+
+                # Gather votes from known neighbors
+                for neighbor_idx in neighbors[unknown_idx]:
+                    neighbor_cone = cone_data_list[neighbor_idx]
+                    neighbor_color = neighbor_cone['color_id']
+                    
+                    if neighbor_color in [1, 2]: # Is the neighbor's color known?
+                        neighbor_coords = neighbor_cone['veh_coords']
+
+                        # --- NEW: More robust 'is_diagonal' check using edge angle ---
+                        edge_vec_x = neighbor_coords[0] - unknown_cone_coords[0]
+                        edge_vec_y = neighbor_coords[1] - unknown_cone_coords[1]
+                        edge_angle = abs(math.atan2(edge_vec_y, edge_vec_x))
+
+                        # An edge is considered "diagonal" (cross-track) if its angle
+                        # relative to the vehicle's x-axis is roughly perpendicular (e.g., 45-135 degrees).
+                        if math.pi / 4 < edge_angle < 3 * math.pi / 4:
+                            is_diagonal = True
+                        else:
+                            is_diagonal = False
+                        # --- END NEW ---
+
+                        if is_diagonal: # Rule B: Cross-track neighbor votes for opposite color
+                            if neighbor_color == 1: yellow_votes += 1
+                            else: blue_votes += 1
+                        else: # Rule A: Along-track neighbor votes for its own color
+                            if neighbor_color == 1: blue_votes += 1
+                            else: yellow_votes += 1
+                
+                # Decide color based on votes
+                if blue_votes > yellow_votes:
+                    cone_data_list[unknown_idx]['color_id'] = 1 # Blue
+                    newly_colored_indices.append(unknown_idx)
+                    progress_made = True
+                elif yellow_votes > blue_votes:
+                    cone_data_list[unknown_idx]['color_id'] = 2 # Yellow
+                    newly_colored_indices.append(unknown_idx)
+                    progress_made = True
+
+            # Update the list of unknown cones for the next iteration
+            if not progress_made:
+                break # Stop if no new colors were inferred in a full pass
+            
+            unknown_indices = [i for i in unknown_indices if i not in newly_colored_indices]
+
+        return cone_data_list
+
+>>>>>>> [YOLO] 251017@Doyeop-knut |New yolo
     def publish_map_cones(self):
         if not self.enable_visualization:
             return
@@ -4683,6 +4811,7 @@ class DataLogger:
 =======
         point_count = len(lidar_points) if lidar_points is not None else 0
 
+<<<<<<< HEAD
         # Log metadata
 >>>>>>> test
 =======
@@ -4705,6 +4834,110 @@ class DataLogger:
 <<<<<<< HEAD
             'lidar_point_count': point_count
         }
+=======
+        # print(f"base = {cone_point_in_base}, cam = {cone_point_in_cam}")
+        # return (u,v)
+    def visualization(self, points, rgb_image):
+        viz = rgb_image.copy()
+        image_size = rgb_image.shape
+        for point in points:
+            if 0 <= point[0] < image_size[1] and 0 <= point[1] < image_size[0]:
+                projected = (int(point[0]), int(point[1]))
+                cv2.circle(viz, projected, 10, (0, 0, 0), 2)
+        return viz
+
+    def find_cone_bbox_from_point(self, image, point, distance):
+        """
+        Dynamically finds a bounding box for a cone starting from a seed point.
+        The search window size is adapted based on the distance to the cone.
+        Returns the bounding box [x, y, w, h] or None if not found.
+        """
+        if point is None or not (0 <= point[0] < image.shape[1] and 0 <= point[1] < image.shape[0]):
+            return None
+
+        # 1. Adapt search window size based on distance
+        # Heuristic: at 5m, window is ~200px; at 50m, window is ~30px.
+        search_window_size = int(np.clip(1000 / max(distance, 1.0), 30, 200))
+
+        u, v = int(point[0]), int(point[1])
+        x_min = max(0, u - search_window_size // 2)
+        x_max = min(image.shape[1], u + search_window_size // 2)
+        y_min = max(0, v - search_window_size // 2)
+        y_max = min(image.shape[0], v + search_window_size // 2)
+        
+        search_roi = image[y_min:y_max, x_min:x_max]
+        if search_roi.size == 0:
+            return None
+
+        # 2. Create a combined color mask
+        hsv_roi = cv2.cvtColor(search_roi, cv2.COLOR_BGR2HSV)
+        mask_yellow = cv2.inRange(hsv_roi, self.hsv_yellow_min, self.hsv_yellow_max)
+        mask_blue = cv2.inRange(hsv_roi, self.hsv_blue_min, self.hsv_blue_max)
+        mask_orange = cv2.inRange(hsv_roi, self.hsv_orange_min, self.hsv_orange_max)
+        combined_mask = cv2.bitwise_or(mask_yellow, cv2.bitwise_or(mask_blue, mask_orange))
+
+        # 3. Clean up the mask with morphology
+        kernel = np.ones((3, 3), np.uint8)
+        cleaned_mask = cv2.morphologyEx(combined_mask, cv2.MORPH_CLOSE, kernel, iterations=2)
+
+        # 4. Find contours
+        contours, _ = cv2.findContours(cleaned_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        if not contours:
+            return None
+
+        # 5. Find the contour that contains the seed point
+        relative_u = u - x_min
+        relative_v = v - y_min
+        
+        found_contour = None
+        for contour in contours:
+            if cv2.pointPolygonTest(contour, (relative_u, relative_v), False) >= 0:
+                found_contour = contour
+                break
+        
+        if found_contour is None:
+            return None
+
+        # 6. Get the bounding box of the correct contour and adjust back to full image coordinates
+        x, y, w, h = cv2.boundingRect(found_contour)
+        return [x + x_min, y + y_min, w, h]
+
+    def detect_color_in_roi(self, roi):
+        """Detects the dominant color within a given ROI."""
+        if roi is None or roi.size == 0:
+            return "unknown"
+
+        hsv_roi = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
+
+        # --- NEW: Equalize the V channel for lighting normalization ---
+        h, s, v = cv2.split(hsv_roi)
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(4, 4))
+        equalized_v = clahe.apply(v)
+        hsv_roi = cv2.merge([h, s, equalized_v])
+        # --- END NEW ---
+
+        color_counts = {
+            "yellow": cv2.countNonZero(cv2.inRange(hsv_roi, self.hsv_yellow_min, self.hsv_yellow_max)),
+            "blue": cv2.countNonZero(cv2.inRange(hsv_roi, self.hsv_blue_min, self.hsv_blue_max)),
+            "orange": cv2.countNonZero(cv2.inRange(hsv_roi, self.hsv_orange_min, self.hsv_orange_max))
+        }
+
+        dominant_color = max(color_counts, key=color_counts.get)
+        max_count = color_counts[dominant_color]
+
+        # Confidence threshold
+        if max_count < (roi.size * 0.05):
+            return "unknown"
+
+        return dominant_color
+    
+    def detectConeColor(self, cone_point_img, rgb_image, debug_image=None):
+        # cone_point_img is expected to be a single (u, v) tuple or list
+        if cone_point_img is None or not isinstance(cone_point_img, (tuple, list)) or len(cone_point_img) != 2:
+            return "unknown"
+        # cv2.imshow("debug", cv2.cvtColor(rgb_image,cv2.COLOR_BGR2HSV))
+        u, v = int(cone_point_img[0]), int(cone_point_img[1])
+>>>>>>> [YOLO] 251017@Doyeop-knut |New yolo
         
         # Add control debug data, using .get() to avoid errors if a key is missing
         log_row['control_target_speed'] = control_debug_data.get('target_speed')
@@ -4730,6 +4963,7 @@ class DataLogger:
 
         self.metadata_csv_writer.writerow(log_row)
 
+<<<<<<< HEAD
 <<<<<<< HEAD
         # --- Log LiDAR Data ---
         if lidar_points is not None and len(lidar_points) > 0:
@@ -4777,6 +5011,9 @@ class DataLogger:
                 h, w, _ = img.shape
                 self.video_writers[cam_id] = cv2.VideoWriter(self.video_paths[cam_id], self.fourcc, self.video_fps, (w, h))
             self.video_writers[cam_id].write(img)
+=======
+        roi = rgb_image[y_min:y_max, x_min:x_max]
+>>>>>>> [YOLO] 251017@Doyeop-knut |New yolo
 
 <<<<<<< HEAD
         # Log LiDAR data
@@ -4809,6 +5046,7 @@ class DataLogger:
                 ]
                 self.map_cones_csv_writer.writerow(cone_row)
 
+<<<<<<< HEAD
         # Log provisional cones
         if provisional_cones:
             for cone in provisional_cones:
@@ -4818,6 +5056,23 @@ class DataLogger:
                     cone['observations'], cone['ttl']
                 ]
                 self.prov_cones_csv_writer.writerow(cone_row)
+=======
+        # --- NEW: Equalize the V channel for lighting normalization ---
+        h, s, v = cv2.split(hsv_roi)
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(4, 4))
+        equalized_v = clahe.apply(v)
+        hsv_roi = cv2.merge([h, s, equalized_v])
+        # --- END NEW ---
+
+        cv2.imshow("hsv_roi", hsv_roi)
+
+        # Detect colors
+        color_counts = {
+            "yellow": 0,
+            "blue": 0,
+            "orange": 0
+        }
+>>>>>>> [YOLO] 251017@Doyeop-knut |New yolo
 
 >>>>>>> test
         self.frame_count += 1
@@ -4833,11 +5088,24 @@ class DataLogger:
                 self.video_writers['cam2'] = cv2.VideoWriter(self.video_paths['cam2'], self.fourcc, self.video_fps, (w, h))
             self.video_writers['cam2'].write(camera2_image)
 
+<<<<<<< HEAD
 
     def close(self):
         """프로그램 종료 시 호출되어 모든 파일 핸들을 안전하게 닫습니다."""
         if not self.enable_logging:
             return
+=======
+        # Orange
+        mask_orange = cv2.inRange(hsv_roi, self.hsv_orange_min, self.hsv_orange_max)
+        color_counts["orange"] = cv2.countNonZero(mask_orange)
+        # Determine dominant color
+        max_count = 0
+        dominant_color = "unknown"
+        for color, count in color_counts.items():
+            if count > max_count:
+                max_count = count
+                dominant_color = color
+>>>>>>> [YOLO] 251017@Doyeop-knut |New yolo
         
         if self.metadata_csv_file:
             self.metadata_csv_file.close()
@@ -4907,6 +5175,7 @@ class DataLogger:
                 ]
                 self.map_cones_csv_writer.writerow(cone_row)
 
+<<<<<<< HEAD
         self.frame_count += 1
 
     def close(self):
@@ -4974,6 +5243,15 @@ class StateMachine:
         self.valid_transitions = {}
         self._initialize_valid_transitions()
 =======
+=======
+        if debug_image is not None and dominant_color != "unknown":
+             # Draw the ROI box ONLY on successful detection
+             cv2.rectangle(debug_image, (x_min, y_min), (x_max, y_max), (0, 255, 255), 1)
+             # Put text for the detected color
+             cv2.putText(debug_image, dominant_color, (x_min, y_min - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255,255,255), 1)
+        print(f"count yellow: {color_counts['yellow']}, blue: {color_counts['blue']}, orange: {color_counts['orange']}")
+        print(f"Detected color: {dominant_color} with count: {max_count} in ROI size: {roi.size * 0.1}")
+>>>>>>> [YOLO] 251017@Doyeop-knut |New yolo
         return dominant_color
 >>>>>>> [ConeDetection] 251017 @sanguk1014 | yolo 비활성화
         
@@ -5956,52 +6234,54 @@ class PathPlanner:
                 corrected_path.append(p2)
         
         return np.array(corrected_path)
+
     def plan_path(self, cones, vehicle_state):
         """
 >>>>>>> [PathPlanning] 251016 @Doyeop-knut | Path Planner 수정
         Generates a driving path based on the detected cones.
         Uses Delaunay triangulation and a robust sorting algorithm.
-        Falls back to a simple path if not enough cones are available.
+        Unknown cones are used to improve triangulation structure.
         """
         current_car_pos = vehicle_state[:2]
         vehicle_yaw = vehicle_state[2]
         
-        blue_cones = [c for c in cones if c['color_id'] == 1]
-        yellow_cones = [c for c in cones if c['color_id'] == 2]
+        # --- 1. Prepare points for triangulation from ALL non-orange cones ---
+        planning_cones = [c for c in cones if c['color_id'] in [0, 1, 2]] # 0:unknown, 1:blue, 2:yellow
 
-        # --- Condition for Delaunay Path ---
-        if len(blue_cones) < 2 or len(yellow_cones) < 2:
-            return self._generate_fallback_path(blue_cones, yellow_cones, current_car_pos)
+        if len(planning_cones) < 3:
+            # Not enough cones to form a triangle, generate a simple straight path.
+            return self._generate_straight_path(current_car_pos, vehicle_yaw), None, None, None, None
 
-        # 1. Prepare points for triangulation
-        all_points = np.array([[c['x'], c['y']] for c in blue_cones] + [[c['x'], c['y']] for c in yellow_cones])
-        if len(all_points) < 3:
-            return self._generate_fallback_path(blue_cones, yellow_cones, current_car_pos)
+        all_points = np.array([[c['x'], c['y']] for c in planning_cones])
+        colors = np.array([c['color_id'] for c in planning_cones])
 
-        num_blue = len(blue_cones)
-        colors = np.array([1] * num_blue + [2] * len(yellow_cones))
-
-        # 2. Perform Delaunay Triangulation
+        # --- 2. Perform Delaunay Triangulation ---
         try:
             tri = Delaunay(all_points)
         except Exception as e:
             rospy.logwarn(f"Delaunay triangulation failed: {e}")
-            return None, None, None, None, None
+            return self._generate_straight_path(current_car_pos, vehicle_yaw), None, all_points, colors, None
 
-        # 3. Find centerline midpoints
+        # --- 3. Find centerline midpoints from BLUE-YELLOW edges ONLY ---
         midpoints = []
         for simplex in tri.simplices:
             for i in range(3):
                 p1_idx, p2_idx = simplex[i], simplex[(i + 1) % 3]
-                if colors[p1_idx] != colors[p2_idx]:
+                
+                color1 = colors[p1_idx]
+                color2 = colors[p2_idx]
+
+                # Explicitly check for a blue-yellow pair for midpoint generation.
+                if (color1 == 1 and color2 == 2) or (color1 == 2 and color2 == 1):
                     p1, p2 = all_points[p1_idx], all_points[p2_idx]
                     if np.linalg.norm(p1 - p2) < self.max_edge_length:
                         midpoints.append((p1 + p2) / 2.0)
         
         if not midpoints:
-            return None, tri, all_points, colors, None
+            # If no blue-yellow edges found, fallback to a straight path.
+            return self._generate_straight_path(current_car_pos, vehicle_yaw), tri, all_points, colors, None
 
-        # 4. Sort midpoints to form a continuous path
+        # --- 4. Sort midpoints to form a continuous path ---
         unique_midpoints = np.unique(np.array(midpoints), axis=0)
         if len(unique_midpoints) < 2:
             return None, tri, all_points, colors, unique_midpoints
@@ -6010,10 +6290,9 @@ class PathPlanner:
         if ordered_midpoints is None or len(ordered_midpoints) < 2:
             return None, tri, all_points, colors, unique_midpoints
 
-        # Correct any detours in the path
+        # --- 5. Correct, Filter, and Smooth the Path ---
         corrected_path = self._correct_path_detours(ordered_midpoints, vehicle_yaw)
 
-        # Filter path to include only points within max_path_distance from the car
         filtered_path = []
         for p in corrected_path:
             if np.linalg.norm(p - current_car_pos) < self.max_path_distance:
@@ -6022,11 +6301,8 @@ class PathPlanner:
         if len(filtered_path) < 2:
             return None, tri, all_points, colors, unique_midpoints
 
-        # 5. Smooth the path with a spline
         if len(filtered_path) < 3: # Spline needs at least 3 points for k=2
-            # Fallback to a straight path if not enough points for spline
-            fallback_path = self._generate_straight_path(current_car_pos, vehicle_yaw)
-            return fallback_path, tri, all_points, colors, unique_midpoints
+            return np.array(filtered_path), tri, all_points, colors, unique_midpoints
 
         try:
             k = min(2, len(filtered_path) - 1)
@@ -6043,6 +6319,7 @@ class PathPlanner:
 >>>>>>> [PathPlanning] 251016 @Doyeop-knut | path planner 점검 및 수정
 =======
         return path, tri, all_points, colors, unique_midpoints
+<<<<<<< HEAD
 >>>>>>> [PathPlanning] 251016 @Doyeop-knut | Path Planner 수정
 
         # 2. Find the lookahead point
@@ -6055,6 +6332,9 @@ class PathPlanner:
         
         if lookahead_point is None:
             lookahead_point = path_tensor[-1]
+=======
+# ==================== Utility Classes ====================
+>>>>>>> [YOLO] 251017@Doyeop-knut |New yolo
 
         # 3. Transform the lookahead point to the vehicle's coordinate frame
         rot_inv = torch.tensor([[math.cos(veh_yaw), math.sin(veh_yaw)],
