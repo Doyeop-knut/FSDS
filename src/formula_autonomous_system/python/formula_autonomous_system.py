@@ -76,7 +76,11 @@ class FormulaAutonomousSystem:
         
         # ==================== 데이터 로거 추가 ====================
         self.data_logger = DataLogger(
+<<<<<<< HEAD
         log_directory="/home/user/fsds_ws/src/tutorial/log",
+=======
+        log_directory="/home/smac/FSDS/src/tutorial/log",
+>>>>>>> 4178c17c2e86feccc41dba457c4693847ff10574
         session_name=datetime.datetime.now().strftime("%Y%m%d_%H%M%S"),
         max_lidar_points=50  # 필요시 이 값을 조절
         )
@@ -102,7 +106,11 @@ class FormulaAutonomousSystem:
         self.path_planner = PathPlanner()
         self.controller = Control()
 
+<<<<<<< HEAD
         self.model = torch.load('/home/user/fsds_ws/yolo5_bundle.pt', weights_only=False)  # Adjust path as needed
+=======
+        self.model = torch.load('/home/smac/FSDS/yolo5-cone-standalone-cpu.pt', weights_only=False)  # Adjust path as needed
+>>>>>>> 4178c17c2e86feccc41dba457c4693847ff10574
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.model.to(self.device) # Move model to GPU if available
         self.model.eval()  # Set model to evaluation mode
