@@ -42,8 +42,6 @@ from scipy.spatial import Delaunay
 from scipy.optimize import minimize
 
 # Camera
-import torch
-import torchvision
 
 # Data Logger
 import os
@@ -76,7 +74,7 @@ class FormulaAutonomousSystem:
         
         # ==================== 데이터 로거 추가 ====================
         self.data_logger = DataLogger(
-        log_directory="/home/user/fsds_ws/src/tutorial/log",
+        log_directory="/home/smac/FSDS/src/tutorial/log",
         session_name=datetime.datetime.now().strftime("%Y%m%d_%H%M%S"),
         max_lidar_points=50  # 필요시 이 값을 조절
         )
@@ -102,10 +100,6 @@ class FormulaAutonomousSystem:
         self.path_planner = PathPlanner()
         self.controller = Control()
 
-        self.model = torch.load('/home/user/fsds_ws/yolo5_bundle.pt', weights_only=False)  # Adjust path as needed
-        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        self.model.to(self.device) # Move model to GPU if available
-        self.model.eval()  # Set model to evaluation mode
         
     def init(self):
         """Initialize the system"""
@@ -196,24 +190,6 @@ class FormulaAutonomousSystem:
         image1 = self.camera_util.preprocessImage(image1)
         image2 = self.camera_util.preprocessImage(image2)
         
-        # Process image1
-        img1_rgb = cv2.cvtColor(image1, cv2.COLOR_BGR2RGB) 
-        img1_tensor = torch.from_numpy(img1_rgb).permute(2, 0, 1).float() / 255.0 
-        img1_tensor = img1_tensor.unsqueeze(0).to(self.device) 
-
-        # Process image2
-        img2_rgb = cv2.cvtColor(image2, cv2.COLOR_BGR2RGB) 
-        img2_tensor = torch.from_numpy(img2_rgb).permute(2, 0, 1).float() / 255.0 
-        img2_tensor = img2_tensor.unsqueeze(0).to(self.device) 
-
-        # Get raw predictions from the model
-        with torch.no_grad(): # Disable gradient calculation for inference
-            raw_predictions1 = self.model(img1_tensor)
-            raw_predictions2 = self.model(img2_tensor)
-
-        rendered_img1, left_bbox, left_conf = self.camera_util._process_and_draw_detections(image1, raw_predictions1)
-        rendered_img2, right_bbox, right_conf = self.camera_util._process_and_draw_detections(image2, raw_predictions2)
-        
         if cluster.size > 0:
             try:
                 dt_cam_lidar = camera1_msg.header.stamp.to_sec() - lidar_msg.header.stamp.to_sec()
@@ -246,60 +222,19 @@ class FormulaAutonomousSystem:
             cones_with_color = []
             left, right = [], []
 
-            # Create dictionaries to map LiDAR cluster indices to bounding box indices
-            lidar_to_bbox_map1 = {i: [] for i in range(len(compensated_cluster))}
-            lidar_to_bbox_map2 = {i: [] for i in range(len(compensated_cluster))}
-
-            if left_bbox is not None and len(left_bbox) > 0:
-                for i, proj_point in enumerate(cam1_pts):
-                    for j, bbox in enumerate(left_bbox):
-                        if self.camera_util.is_point_in_bbox(proj_point, bbox):
-                            lidar_to_bbox_map1[i].append(j)
-
-            if right_bbox is not None and len(right_bbox) > 0:
-                for i, proj_point in enumerate(cam2_pts):
-                    for j, bbox in enumerate(right_bbox):
-                        if self.camera_util.is_point_in_bbox(proj_point, bbox):
-                            lidar_to_bbox_map2[i].append(j)
-
             # Iterate through each 3D cluster point and determine its color
             for i, cone_3d_veh_frame in enumerate(compensated_cluster):
                 detected_color = "unknown"
 
-                # --- Fusion of Model-based and LiDAR-based detection for color ---
-                # Two algorithms are used for color detection:
-                # 1. Bbox-based detection (YOLOv5 model)
-                # 2. Point-based detection (Projected LiDAR point)
-                # The results are fused, with priority given to bbox-based detection in case of conflict.
-
-                # Algorithm 1: Bbox-based detection
-                color_from_bbox = "unknown"
-                if i in lidar_to_bbox_map1 and lidar_to_bbox_map1[i]:
-                    bbox_index = lidar_to_bbox_map1[i][0]
-                    bbox = left_bbox[bbox_index]
-                    color_from_bbox = self.camera_util.detect_color_from_bbox(image1, bbox, debug_image=rendered_img1)
-
-                if color_from_bbox == "unknown" and i in lidar_to_bbox_map2 and lidar_to_bbox_map2[i]:
-                    bbox_index = lidar_to_bbox_map2[i][0]
-                    bbox = right_bbox[bbox_index]
-                    color_from_bbox = self.camera_util.detect_color_from_bbox(image2, bbox, debug_image=rendered_img2)
-
                 # Algorithm 2: Point-based detection
                 color_from_point = "unknown"
                 if i < len(cam1_pts):
-                    color_from_point = self.camera_util.detectConeColor(cam1_pts[i], image1, debug_image=rendered_img1)
+                    color_from_point = self.camera_util.detectConeColor(cam1_pts[i], image1, debug_image=image1)
                 
                 if color_from_point == "unknown" and i < len(cam2_pts):
-                    color_from_point = self.camera_util.detectConeColor(cam2_pts[i], image2, debug_image=rendered_img2)
+                    color_from_point = self.camera_util.detectConeColor(cam2_pts[i], image2, debug_image=image2)
 
-                # Combine results: If either algorithm finds a color, use it.
-                # Priority is given to bbox-based detection in case of conflict.
-                if color_from_bbox != "unknown":
-                    detected_color = color_from_bbox
-                elif color_from_point != "unknown":
-                    detected_color = color_from_point
-                else:
-                    detected_color = "unknown"
+                detected_color = color_from_point
                 
                 # --- Color ID assignment ---
                 color_id = 0  # Default to unknown
@@ -319,6 +254,11 @@ class FormulaAutonomousSystem:
                     left.append([cone_3d_map_frame_xy[0], cone_3d_map_frame_xy[1]])
                 elif color_id == 2:
                     right.append([cone_3d_map_frame_xy[0], cone_3d_map_frame_xy[1]])
+                elif color_id == 3:
+                    if cone_3d_map_frame_xy[0] < 0 :
+                        left.append([cone_3d_map_frame_xy[0], cone_3d_map_frame_xy[1]])
+                    elif cone_3d_map_frame_xy[0] > 0 :
+                        right_append([cone_3d_map_frame_xy[0], cone_3d_map_frame_xy[1]]) 
             
             global_clusters = np.array(cones_with_color)
         else:
@@ -330,7 +270,7 @@ class FormulaAutonomousSystem:
         # print(f"closed loop  = {self.track_map.is_loop_closed}")
 
         # Plan path using the map
-        path, tri, tri_points, tri_colors, midpoints = self.path_planner.plan_path(self.track_map.get_cones(), self.midpoint_map, vehicle_state)
+        path, tri, tri_points, tri_colors, midpoints = self.path_planner.plan_path(self.track_map.get_cones(), vehicle_state)
         
         # Visualize Map and Path
         self.publish_map_cones()
@@ -341,8 +281,8 @@ class FormulaAutonomousSystem:
 
         # =====================================================
         # Draw LiDAR points on the images that already have bounding boxes
-        img1 = self.camera_util.visualization(cam1_pts, rendered_img1)
-        img2 = self.camera_util.visualization(cam2_pts, rendered_img2)
+        img1 = self.camera_util.visualization(cam1_pts, image1)
+        img2 = self.camera_util.visualization(cam2_pts, image1)
 
         cv2.imshow("image1", img1)
         cv2.imshow("image2", img2)
@@ -851,135 +791,6 @@ class CameraProcessor:
              cv2.putText(debug_image, dominant_color, (x_min, y_min - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255,255,255), 1)
 
         return dominant_color
-
-    def _process_and_draw_detections(self, image, raw_predictions, conf_threshold=0.25, iou_threshold=0.45):
-        """
-        Processes raw model predictions (Tensor) and draws bounding boxes on the image.
-        Assumes raw_predictions is a tuple and the first element is a tensor of shape [1, 5, num_predictions]
-        where the 5 features are [x, y, w, h, confidence] or [x1, y1, x2, y2, confidence].
-        """
-        img_copy = image.copy()
-        
-        # Assuming raw_predictions is a tuple and the first element is the predictions tensor
-        predictions_tensor = raw_predictions[0] # Shape: [1, 5, 6300]
-
-        # Transpose the tensor to [num_predictions, 5] for easier processing
-        predictions_tensor = predictions_tensor.squeeze(0).transpose(0, 1) # Shape: [num_predictions, 5]
-
-        predictions_np = predictions_tensor.cpu().numpy() # Shape: [6300, 5]
-
-        # Filter out low confidence predictions
-     # Check if predictions_np has enough columns before indexing
-        if predictions_np.shape[1] < 5:
-            rospy.logwarn("Predictions tensor has fewer than 5 columns. Cannot filter by confidence.")
-            return img_copy, np.array([]),  np.array([])
-            #  return img_copy
-     
-        confidence_mask = predictions_np[:, 4] > conf_threshold
-        predictions_np = predictions_np[confidence_mask, :]
-        # Filter out low confidence predictions
-        # Now predictions_np[:, 4] will correctly access the confidence scores for each prediction
-        # predictions_np = predictions_np[predictions_np[:, 4] > conf_threshold]
-
-        if predictions_np.shape[0] == 0:
-            return img_copy, np.array([]),  np.array([])  # No detections, return original image
-            # return img_copy # No detections, return original image
-
-        boxes = predictions_np[:, :4]
-        scores = predictions_np[:, 4]
-        # If class_id is not explicitly in the tensor, assume a single class (e.g., 0)
-        class_ids = np.zeros(predictions_np.shape[0], dtype=int) # Assuming single class, ID 0
-
-        # Apply NMS
-        # Convert boxes from [x1, y1, x2, y2] to [x, y, w, h] for NMSBoxes
-        # Assuming the 4 box coordinates are already in x1, y1, x2, y2 format.
-        # If they are x, y, w, h, then the conversion needs to be different.
-        # Given the content, it looks like x1, y1, x2, y2.
-        boxes_xyxy = []
-        confidence = []
-        box_output = []
-        for cx_norm, cy_norm, w_norm, h_norm in boxes:
-            x1 = int((cx_norm - w_norm / 2) )
-            y1 = int((cy_norm - h_norm / 2) )
-            x2 = int((cx_norm + w_norm / 2) )
-            y2 = int((cy_norm + h_norm / 2) )
-            boxes_xyxy.append([x1, y1, x2, y2])
-            # print(f"Box coordinates: x1={x1}, y1={y1}, x2={x2}, y2={y2}")
-        boxes_xywh = np.array([[x1, y1, x2, y2] for x1, y1, x2, y2 in boxes_xyxy])
-        
-        indices = cv2.dnn.NMSBoxes(boxes_xywh.tolist(), scores.tolist(), conf_threshold, iou_threshold)
-        if len(indices) > 0:
-            for i in indices.flatten():
-                x1, y1, x2, y2 = map(int, boxes_xywh[i])
-                box_output.append([x1, y1, x2, y2])
-                # confidence = scores[i]
-                # class_id = class_ids[i] # Use the assumed class ID
-                confidence.append(scores[i])
-
-                # Draw bounding box
-                color = (0, 255, 0) # Green for bounding box
-                cv2.rectangle(img_copy, (x1, y1), (x2, y2), color, 2)
-
-                # Draw label
-                label = f"Class {class_ids[i]}: {scores[i]:.2f}"
-                cv2.putText(img_copy, label, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
-        
-        return img_copy, np.array(box_output), np.array(confidence)
-
-    def is_point_in_bbox(self, point, bbox):
-        """Checks if a 2D point is inside a bounding box."""
-        if point is None or bbox is None:
-            return False
-        u, v = point
-        x1, y1, x2, y2 = bbox
-        return x1 <= u <= x2 and y1 <= v <= y2
-
-    def detect_color_from_bbox(self, image, bbox, debug_image=None):
-        """Detects the dominant color within a given bounding box."""
-        x1, y1, x2, y2 = map(int, bbox)
-
-        # Clamp coordinates to be within image dimensions
-        x1 = max(0, x1)
-        y1 = max(0, y1)
-        x2 = min(image.shape[1], x2)
-        y2 = min(image.shape[0], y2)
-
-        if x2 <= x1 or y2 <= y1:
-            return "unknown"
-
-        roi = image[y1:y2, x1:x2]
-
-        if roi.size == 0:
-            return "unknown"
-
-        if debug_image is not None:
-            cv2.rectangle(debug_image, (x1, y1), (x2, y2), (255, 0, 255), 1) # Draw magenta box for the ROI
-
-        hsv_roi = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
-
-        # Color detection logic (reused from detectConeColor)
-        color_counts = {
-            "yellow": cv2.countNonZero(cv2.inRange(hsv_roi, self.hsv_yellow_min, self.hsv_yellow_max)),
-            "blue": cv2.countNonZero(cv2.inRange(hsv_roi, self.hsv_blue_min, self.hsv_blue_max)),
-            "orange": cv2.countNonZero(cv2.inRange(hsv_roi, self.hsv_orange_min, self.hsv_orange_max))
-        }
-
-        # Determine dominant color
-        dominant_color = "unknown"
-        max_count = 0
-        for color, count in color_counts.items():
-            if count > max_count:
-                max_count = count
-                dominant_color = color
-
-        # Threshold to avoid detecting noise
-        if max_count < (roi.size * 0.05): # e.g., at least 5% of ROI pixels must be of a color
-            return "unknown"
-
-        if debug_image is not None and dominant_color != "unknown":
-            cv2.putText(debug_image, dominant_color, (x1, y1 - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
-
-        return dominant_color
         
 
 class LiDARProcessor:
@@ -1395,8 +1206,6 @@ class PathPlanner:
         self.w_dist = rospy.get_param("/planning/path_planner/weight_dist", 0.3)
         self.w_angle = rospy.get_param("/planning/path_planner/weight_angle", 0.7)
         self.max_path_distance = rospy.get_param("/planning/path_planner/max_path_distance", 20.0)
-        self.lane_width = rospy.get_param("/planning/path_planner/virtual_lane_width", 3.5) # For virtual cone generation
-
 
     def _normalize_angle(self, angle):
         """Normalize an angle to [-pi, pi]."""
@@ -1568,7 +1377,7 @@ class PathPlanner:
                 corrected_path.append(p2)
         
         return np.array(corrected_path)
-    def plan_path(self, cones, midpoint_map, vehicle_state):
+    def plan_path(self, cones, vehicle_state):
         """
         Generates a driving path based on the detected cones.
         Uses Delaunay triangulation and a robust sorting algorithm.
@@ -1582,12 +1391,12 @@ class PathPlanner:
 
         # --- Condition for Delaunay Path ---
         if len(blue_cones) < 2 or len(yellow_cones) < 2:
-            return self._generate_fallback_path(blue_cones, yellow_cones, vehicle_state)
+            return self._generate_fallback_path(blue_cones, yellow_cones, current_car_pos)
 
         # 1. Prepare points for triangulation
         all_points = np.array([[c['x'], c['y']] for c in blue_cones] + [[c['x'], c['y']] for c in yellow_cones])
         if len(all_points) < 3:
-            return self._generate_fallback_path(blue_cones, yellow_cones, vehicle_state)
+            return self._generate_fallback_path(blue_cones, yellow_cones, current_car_pos)
 
         num_blue = len(blue_cones)
         colors = np.array([1] * num_blue + [2] * len(yellow_cones))
@@ -1612,31 +1421,17 @@ class PathPlanner:
         if not midpoints:
             return None, tri, all_points, colors, None
 
+        # 4. Sort midpoints to form a continuous path
         unique_midpoints = np.unique(np.array(midpoints), axis=0)
-        
-        # 4. Update midpoint map and get the global path
-        midpoint_map.update(unique_midpoints)
-        ordered_midpoints_list = midpoint_map.get_all_midpoints()
+        if len(unique_midpoints) < 2:
+            return None, tri, all_points, colors, unique_midpoints
 
-        path_to_process = None
-        if ordered_midpoints_list and len(ordered_midpoints_list) >= 2:
-            ordered_midpoints = np.array(ordered_midpoints_list)
-            # Check if the global path is reasonably close. If not, use a local path.
-            dist_to_path = np.min(np.linalg.norm(ordered_midpoints - current_car_pos, axis=1))
-            if dist_to_path < self.max_path_distance:
-                 path_to_process = ordered_midpoints
-
-        # If no global path is available or it's too far, generate a local one
-        if path_to_process is None:
-            if len(unique_midpoints) < 2:
-                return None, tri, all_points, colors, unique_midpoints
-            path_to_process = self._sort_midpoints(unique_midpoints, current_car_pos, vehicle_yaw)
-
-        if path_to_process is None or len(path_to_process) < 2:
+        ordered_midpoints = self._sort_midpoints(unique_midpoints, current_car_pos, vehicle_yaw)
+        if ordered_midpoints is None or len(ordered_midpoints) < 2:
             return None, tri, all_points, colors, unique_midpoints
 
         # Correct any detours in the path
-        corrected_path = self._correct_path_detours(path_to_process, vehicle_yaw)
+        corrected_path = self._correct_path_detours(ordered_midpoints, vehicle_yaw)
 
         # Filter path to include only points within max_path_distance from the car
         filtered_path = []
@@ -2099,22 +1894,14 @@ class Control:
 
         # --- Get all parameters for all controllers ---
         # Vehicle
-        # Corrected parameter names to match config.yaml
-        self.wheelbase = rospy.get_param("/control/Vehicle/wheel_base", 1.54) 
-        self.max_steer = rospy.get_param("/control/PurePursuit/max_steer_angle", 1.0) # radians
+        self.wheelbase = rospy.get_param("/vehicle/wheelbase", 1.54)
+        self.max_steer = rospy.get_param("/vehicle/max_steer_angle", 1) # radians
         self.max_accel = rospy.get_param("/vehicle/max_accel", 0.5) # m/s^2
         self.min_accel = rospy.get_param("/vehicle/min_accel", -0.5) # m/s^2 (braking)
 
         # Common
         self.target_speed = rospy.get_param("/control/SpeedControl/target_speed", 5.0) # m/s
-        
-        # PID Speed Controller Gains & State
         self.kp_throttle = rospy.get_param("/control/SpeedControl/pid_kp", 0.5)
-        self.ki_throttle = rospy.get_param("/control/SpeedControl/pid_ki", 0.05)
-        self.kd_throttle = rospy.get_param("/control/SpeedControl/pid_kd", 0.005)
-        self.pid_integral = 0.0
-        self.pid_prev_error = 0.0
-        self.pid_prev_time = None
 
         # Pure Pursuit
         self.lookahead_dist = rospy.get_param("/control/pure_pursuit/lookahead_distance", 2.5)
@@ -2145,52 +1932,6 @@ class Control:
             self.compute_control = self._compute_pure_pursuit
             
         rospy.loginfo(f"Control: Using {self.controller_type} controller.")
-
-    def _compute_pid_throttle(self, current_speed):
-        """
-        Computes throttle command using a PID controller.
-        """
-        # Initialize on first run
-        if self.pid_prev_time is None:
-            self.pid_prev_time = rospy.Time.now()
-            # Return a simple P-control for the first frame
-            throttle = self.kp_throttle * (self.target_speed - current_speed)
-            return np.clip(throttle, 0.0, 1.0)
-
-        # Calculate dt
-        current_time = rospy.Time.now()
-        dt = (current_time - self.pid_prev_time).to_sec()
-
-        # On the very first frame, dt can be 0, handle this
-        if dt <= 0:
-            # Return a simple P-control if dt is not valid
-            throttle = self.kp_throttle * (self.target_speed - current_speed)
-            return np.clip(throttle, 0.0, 1.0)
-
-        # PID calculations
-        error = self.target_speed - current_speed
-        
-        # Integral term
-        self.pid_integral += error * dt
-        
-        # Anti-windup for integral term
-        # Clamp the integral to prevent it from growing too large
-        if self.ki_throttle > 0:
-             self.pid_integral = np.clip(self.pid_integral, -1.0/self.ki_throttle, 1.0/self.ki_throttle)
-
-        # Derivative term
-        derivative = (error - self.pid_prev_error) / dt
-
-        # PID formula
-        output = (self.kp_throttle * error) + \
-                 (self.ki_throttle * self.pid_integral) + \
-                 (self.kd_throttle * derivative)
-
-        # Update state for next iteration
-        self.pid_prev_error = error
-        self.pid_prev_time = current_time
-
-        return output
 
     def normalize_angle(self, angle):
         """Normalize an angle to [-pi, pi]."""
@@ -2233,17 +1974,13 @@ class Control:
         steer = math.atan2(2.0 * self.wheelbase * math.sin(alpha), actual_lookahead_dist)
         steer = -np.clip(steer, -self.max_steer, self.max_steer)
 
-        # 5. Throttle control (using PID)
-        throttle = self._compute_pid_throttle(current_speed)
+        # 5. Throttle control
+        throttle = self.kp_throttle * (self.target_speed - current_speed)
+        throttle = np.clip(throttle, 0.0, 1.0)
         
         brake = 0.0
-        # If PID output is negative, it implies braking is needed
-        if throttle < 0:
-            # Map negative throttle to brake command
-            brake = np.clip(-throttle, 0.0, 1.0) 
-            throttle = 0.0
-        else:
-            throttle = np.clip(throttle, 0.0, 1.0)
+        if self.target_speed < current_speed:
+            brake = 0.1
 
         # Normalize steering angle to [-1, 1]
         normalized_steer = steer / self.max_steer
@@ -2253,73 +1990,56 @@ class Control:
     def _compute_stanley(self, vehicle_state, path):
         """
         Computes control commands using the Stanley method.
-        This implementation uses the front axle as the reference point.
         """
-        # Unpack vehicle state (assumed to be rear axle position)
+        # Unpack vehicle state
         veh_x, veh_y, veh_yaw = vehicle_state[0], vehicle_state[1], vehicle_state[2]
         current_speed = math.sqrt(vehicle_state[3]**2 + vehicle_state[4]**2)
 
-        # 1. Calculate front axle position
-        front_axle_x = veh_x + self.wheelbase * math.cos(veh_yaw)
-        front_axle_y = veh_y + self.wheelbase * math.sin(veh_yaw)
-        
-        # 2. Find the closest path point to the FRONT AXLE
+        # 1. Find the closest path point (target_idx)
         path_points = np.array(path)
-        distances = np.linalg.norm(path_points - np.array([front_axle_x, front_axle_y]), axis=1)
+        distances = np.linalg.norm(path_points - np.array([veh_x, veh_y]), axis=1)
         target_idx = np.argmin(distances)
-        # print("Target idx:", target_idx, "Path length:", len(path_points))
+
         # Ensure target_idx is not the last point of the path to calculate path heading
         if target_idx >= len(path_points) - 1:
             target_idx = len(path_points) - 2
-        
-        # 3. Calculate path heading (yaw) at the closest path segment
-        print(target_idx)
+
+        # 2. Calculate path heading (yaw)
         p1 = path_points[target_idx]
         p2 = path_points[target_idx + 1]
         path_yaw = math.atan2(p2[1] - p1[1], p2[0] - p1[0])
 
-        # 4. Calculate heading error (theta_e)
-        # This is the difference between the path's heading and the vehicle's heading
+        # 3. Calculate heading error (theta_e)
         heading_error = self.normalize_angle(path_yaw - veh_yaw)
-        # 5. Calculate cross-track error (e_fa)
-        # This is the distance from the front axle to the path
-        # Vector from closest path point to the front axle
-        vec_path_to_front_axle = np.array([front_axle_x, front_axle_y]) - p1
-        # print(vec_path_to_front_axle)
+
+        # 4. Calculate cross-track error (e_fa)
+        # Vector from closest path point to vehicle
+        vec_path_to_veh = np.array([veh_x, veh_y]) - p1
         # Path vector
         vec_path = p2 - p1
         vec_path_normalized = vec_path / (np.linalg.norm(vec_path) + 1e-6)
         
-        # The cross product gives the signed distance
-        cross_track_error = np.cross(vec_path_normalized, vec_path_to_front_axle)
+        # Cross product to find the error and its sign
+        cross_track_error = np.cross(vec_path_normalized, vec_path_to_veh)
         
-        # 6. Calculate steering angle (delta)
+        # 5. Calculate steering angle (delta)
         # Cross-track steering component
-        cte_steer = math.atan2(self.k_crosstrack * cross_track_error, max(current_speed, 0.1))
-        print(f"current_speed: {current_speed}, cross_track_error: {cross_track_error}, cte_steer: {cte_steer}")
+        cte_steer = math.atan2(self.k_crosstrack * cross_track_error, max(current_speed, 0.1)) # Add small epsilon to avoid division by zero
 
-        # Total steering angle (Stanley Law)
+        # Total steering angle
         steer = heading_error + cte_steer
-        # print(steer, heading_error, cte_steer)
-        
-        # The control output is often inverted depending on the vehicle's steering convention.
-        # The original code had a negation. We keep it, assuming it's correct for the vehicle.
         steer = -np.clip(steer, -self.max_steer, self.max_steer)
-        # 7. Throttle control (using PID)
-        throttle = self._compute_pid_throttle(current_speed)
+
+        # 6. Throttle control (reusing the same P-controller)
+        throttle = self.kp_throttle * (self.target_speed - current_speed)
+        throttle = np.clip(throttle, 0.0, 1.0)
         
         brake = 0.0
-        # If PID output is negative, it implies braking is needed
-        if throttle < 0:
-            # Map negative throttle to brake command
-            brake = np.clip(-throttle, 0.0, 1.0)
-            throttle = 0.0
-        else:
-            throttle = np.clip(throttle, 0.0, 1.0)
+        if self.target_speed < current_speed:
+            brake = 0.1
 
-        # Normalize steering angle to [-1, 1] for the command
+        # Normalize steering angle to [-1, 1]
         normalized_steer = steer / self.max_steer
-        print(steer, normalized_steer)
 
         return throttle, normalized_steer, brake
 
@@ -2427,10 +2147,10 @@ class Control:
         brake = 0.0
         if optimal_accel > 0:
             # Simple mapping: scale accel to [0,1] throttle
-            throttle = np.clip(optimal_accel / self.max_accel, 0.0, 0.5)
+            throttle = np.clip(optimal_accel / self.max_accel, 0.0, 1.0)
         else:
             # Simple mapping: scale decel to [0,1] brake
-            brake = np.clip(-optimal_accel / abs(self.min_accel), 0.0, 0.1)
+            brake = np.clip(-optimal_accel / abs(self.min_accel), 0.0, 1.0)
 
         # Normalize steering angle to [-1, 1]
         normalized_steer = np.clip(-optimal_steer / self.max_steer, -1.0, 1.0)
