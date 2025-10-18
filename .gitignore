@@ -9,3 +9,5 @@ devel/*
 *.o
 *cmake
 
+*.pt
+*.Identifier
