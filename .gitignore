@@ -15,6 +15,10 @@
 *.cmake
 
 *.pt
+<<<<<<< HEAD
 *.Identifier
 
 *.zip
+=======
+*.Identifier
+>>>>>>> gitignore update
