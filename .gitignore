@@ -7,7 +7,7 @@ devel/*
 *.pyc
 *.xlsx
 *.o
-*cmake
+*.cmake
 
 *.pt
 *.Identifier
