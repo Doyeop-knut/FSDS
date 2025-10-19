@@ -75,15 +75,19 @@ class FormulaAutonomousSystem:
         self.dbscan_points = 0
         self.prev_x, self.prev_y, self.prev_z = 0,0,0
         
-        # ==================== 데이터 로거 추가 ====================
-        self.data_logger = DataLogger(
-        log_directory="~/fsds_ws/src/tutorial/log",
-        session_name=datetime.datetime.now().strftime("%Y%m%d_%H%M%S"),
-        max_lidar_points=50  # 필요시 이 값을 조절
-        )
-        # =========================================================
+        
         self.tf_broadcaster = tf2_ros.TransformBroadcaster()
 
+        self.enable_visualization = rospy.get_param("/system/visualization/enable_visualization", True)
+        self.enable_logging = rospy.get_param("/system/logging/enable_logging", True)
+        if self.enable_logging:
+            # ==================== 데이터 로거 추가 ====================
+            self.data_logger = DataLogger(
+            log_directory="~/fsds_ws/src/tutorial/log",
+            session_name=datetime.datetime.now().strftime("%Y%m%d_%H%M%S"),
+            max_lidar_points=50,  # 필요시 이 값을 조절
+            )
+        # =========================================================
         # Publishers for visualization
         self.path_publisher = rospy.Publisher("/centerline_path", Path, queue_size=1)
         self.map_cone_publisher = rospy.Publisher("/map_cones", MarkerArray, queue_size=1)
@@ -98,12 +102,12 @@ class FormulaAutonomousSystem:
         # System Components
         self.gps_util = GPSIMUProcessor()
         self.state_machine = StateMachine()
-        self.lidar_util = LiDARProcessor()
+        self.lidar_util = LiDARProcessor(self.enable_visualization)
         self.camera_util = CameraProcessor()
         self.track_map = TrackMap()
         self.midpoint_map = MidpointMap()
         self.path_planner = PathPlanner()
-        self.controller = Control(self.path_planner) # Control 클래스에 path_planner 인스턴스 전달
+        self.controller = Control(self.path_planner, self.track_map) # Control 클래스에 path_planner와 track_map 인스턴스 전달
 
         # rospkg를 사용하여 모델 경로 동적으로 찾기
         rospack = rospkg.RosPack()
@@ -383,7 +387,7 @@ class FormulaAutonomousSystem:
         # print(f"closed loop  = {self.track_map.is_loop_closed}")
 
         # Plan path using the map
-        path, tri, tri_points, tri_colors, midpoints = self.path_planner.plan_path(self.track_map.get_cones(), vehicle_state)
+        path, tri, tri_points, tri_colors, midpoints, is_fallback = self.path_planner.plan_path(self.track_map.get_cones(), vehicle_state)
         
         # Visualize Map and Path
         self.publish_map_cones()
@@ -397,9 +401,10 @@ class FormulaAutonomousSystem:
         img1 = self.camera_util.visualization(cam1_pts, rendered_img1)
         img2 = self.camera_util.visualization(cam2_pts, rendered_img2)
 
-        cv2.imshow("image1", img1)
-        cv2.imshow("image2", img2)
-        cv2.waitKey(1)
+        if self.enable_visualization:
+            cv2.imshow("image1", img1)
+            cv2.imshow("image2", img2)
+            cv2.waitKey(1)
         self.lidar_util.publish_point_cloud(cluster)        
 
         ## GO_SIGNAL
@@ -414,7 +419,7 @@ class FormulaAutonomousSystem:
         control_command_msg = ControlCommand()
         if self.state_machine.current_state == AutonomousMode.AS_DRIVING and path is not None and len(path) > 0:
             # Call the selected controller to compute commands
-            throttle, steer, brake = self.controller.compute_control(vehicle_state, path)
+            throttle, steer, brake = self.controller.compute_control(vehicle_state, path, is_fallback)
             control_command_msg.throttle = throttle
             control_command_msg.steering = steer
             control_command_msg.brake = brake
@@ -422,21 +427,23 @@ class FormulaAutonomousSystem:
             # If not driving or no path, apply brakes and zero throttle/steering
             control_command_msg.throttle = 0.0
             control_command_msg.steering = 0.0
-            control_command_msg.brake = 1.0
+            control_command_msg.brake = 0.5
         # print(go_signal_msg)
 
-        # ==================== Data Logger (Test) ====================
-        self.data_logger.log_entry(
-            autonomous_mode=autonomous_mode.data,
-            control_command=control_command_msg,
-            imu_acc=acc,
-            imu_gyro=gyro,
-            state= vehicle_state,
-            camera1_image=img1,
-            camera2_image=img2,
-            lidar_points=global_clusters,
-            map_cones=self.track_map.get_cones()
-        )
+
+        if self.enable_logging:
+            # ==================== Data Logger (Test) ====================
+            self.data_logger.log_entry(
+                autonomous_mode=autonomous_mode.data,
+                control_command=control_command_msg,
+                imu_acc=acc,
+                imu_gyro=gyro,
+                state= vehicle_state,
+                camera1_image=img1,
+                camera2_image=img2,
+                lidar_points=global_clusters,
+                map_cones=self.track_map.get_cones()
+            )
         # # =========================================================
         
         # plt.axis([-50,50,-20,200])
@@ -453,6 +460,8 @@ class FormulaAutonomousSystem:
         return True, control_command_msg, autonomous_mode
 
     def publish_map_cones(self):
+        if not self.enable_visualization:
+            return
         if self.visualization_frame_counter % self.visualization_publish_interval != 0:
             return
 
@@ -498,6 +507,8 @@ class FormulaAutonomousSystem:
         self.map_cone_publisher.publish(marker_array)
 
     def publish_path(self, path):
+        if not self.enable_visualization:
+            return
         if self.visualization_frame_counter % self.visualization_publish_interval != 0:
             return
 
@@ -592,6 +603,8 @@ class FormulaAutonomousSystem:
             self.path_index_publisher.publish(marker_array)
 
     def publish_midpoints(self, midpoints):
+        if not self.enable_visualization:
+            return
         if self.visualization_frame_counter % self.visualization_publish_interval != 0:
             return
 
@@ -634,6 +647,17 @@ class FormulaAutonomousSystem:
         self.midpoints_publisher.publish(marker_array)
 
     def publish_triangulation(self, tri, points, colors):
+        if not self.enable_visualization:
+            # Always clear markers if visualization is disabled
+            marker = Marker()
+            marker.header.stamp = rospy.Time.now()
+            marker.header.frame_id = "map"
+            marker.ns = "delaunay_mesh"
+            marker.id = 0
+            marker.action = Marker.DELETEALL
+            self.triangulation_publisher.publish(marker)
+            return
+
         if self.visualization_frame_counter % self.visualization_publish_interval != 0:
             # Clear previous markers if triangulation is not available or not publishing this frame
             marker = Marker()
@@ -889,6 +913,8 @@ class CameraProcessor:
 
         masks = {"yellow": mask_yellow, "blue": mask_blue, "orange": mask_orange}
 
+        cv2.imshow("MASKS",mask_yellow)
+
         for color, mask in masks.items():
             pixel_count = cv2.countNonZero(mask)
             if pixel_count > 0:
@@ -901,7 +927,7 @@ class CameraProcessor:
                 # 신뢰도 점수 = 픽셀 수 * (평균 채도 + 평균 명도)
                 # 이렇게 하면 흐릿한 색상의 넓은 영역보다 뚜렷한 색상의 작은 영역이 더 높은 점수를 받을 수 있음
                 color_scores[color] = pixel_count * (avg_saturation + avg_value)
-                print(f"from LiDAR - All score = {color_scores}")
+                # print(f"from LiDAR - All score = {color_scores}")
 
         # 가장 높은 점수를 받은 색상을 선택
         max_score = 0
@@ -912,15 +938,16 @@ class CameraProcessor:
                 dominant_color = color
         
         # 최소 픽셀 수 임계값 (노이즈 제거)
-        # 점수 계산에 사용된 픽셀 수가 전체 ROI의 1% 미만이면 노이즈로 간주
-        print(f"LiDAR - count from mask = {cv2.countNonZero(masks[dominant_color])}, limit = {roi.size * 0.05}")
-        if dominant_color != "unknown" and cv2.countNonZero(masks[dominant_color]) < (roi.size * 0.05):
-             dominant_color = "unknown"
+        if dominant_color != "unknown":
+            # 점수 계산에 사용된 픽셀 수가 전체 ROI의 5% 미만이면 노이즈로 간주
+            # print(f"LiDAR - count from mask = {cv2.countNonZero(masks[dominant_color])}, limit = {roi.size * 0.05}")
+            if cv2.countNonZero(masks[dominant_color]) < (roi.size * 0.04):
+                 dominant_color = "unknown"
 
         if debug_image is not None and dominant_color != "unknown":
              # Put text for the detected color
              cv2.putText(debug_image, dominant_color, (x_min, y_min - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255,255,255), 1)
-             print(f"from LiDAR - {color_scores}, color = {dominant_color} \n")
+            #  print(f"from LiDAR - {color_scores}, color = {dominant_color} \n")
 
         return dominant_color
     def _process_and_draw_detections(self, image, raw_predictions, conf_threshold=0.5, iou_threshold=0.45):
@@ -1028,7 +1055,7 @@ class CameraProcessor:
                 avg_saturation = mean_sv[1] / 255.0
                 avg_value = mean_sv[2] / 255.0
                 color_scores[color] = pixel_count * (avg_saturation + avg_value)
-                print(f"from bbox - All score = {color_scores}")
+                # print(f"from bbox - All score = {color_scores}")
 
         # 가장 높은 점수를 받은 색상을 선택
         max_score = 0
@@ -1039,20 +1066,22 @@ class CameraProcessor:
                 dominant_color = color
 
         # 최소 픽셀 수 임계값 (노이즈 제거)
-        print(f"bbox - count from mask = {cv2.countNonZero(masks[dominant_color])}, limit = {roi.size * 0.05}")
-        if dominant_color != "unknown" and cv2.countNonZero(masks[dominant_color]) < (roi.size * 0.05):
-             dominant_color = "unknown"
+        if dominant_color != "unknown":
+            # print(f"bbox - count from mask = {cv2.countNonZero(masks[dominant_color])}, limit = {roi.size * 0.05}")
+            if cv2.countNonZero(masks[dominant_color]) < (roi.size * 0.05):
+                 dominant_color = "unknown"
 
         if debug_image is not None and dominant_color != "unknown":
             cv2.putText(debug_image, dominant_color, (x1, y1 - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
-            print(f"from bbox - {color_scores}, color = {dominant_color} \n")
+            # print(f"from bbox - {color_scores}, color = {dominant_color} \n")
 
     
         return dominant_color
         
 
 class LiDARProcessor:
-    def __init__(self):
+    def __init__(self, enable_visualization=True):
+        self.enable_visualization = enable_visualization
         self.lidar_publisher = rospy.Publisher("/processed_lidar", PointCloud2, queue_size=1)
         self.marker_publisher = rospy.Publisher("/cluster_indices", MarkerArray, queue_size=1)
         self.last_marker_count = 0
@@ -1155,6 +1184,8 @@ class LiDARProcessor:
     ### For Debugging: Publish Processed Point Cloud ###
     def publish_point_cloud(self, points: np.ndarray):
         """Publish processed point cloud and their indices as markers"""
+        if not self.enable_visualization:
+            return
 
         clusters = points
 
@@ -1286,14 +1317,24 @@ class TrackMap:
             if not unmatched_obs_indices: break
 
             distances_to_unmatched = distance_matrix[map_idx, unmatched_obs_indices]
+            if distances_to_unmatched.size == 0:
+                continue
             best_match_local_idx = np.argmin(distances_to_unmatched)
             min_dist = distances_to_unmatched[best_match_local_idx]
 
             if min_dist < self.association_threshold:
                 obs_idx = unmatched_obs_indices[best_match_local_idx]
                 if obs_idx not in matched_obs_indices:
-                    rospy.logdebug(f"Correcting color of cone {map_cone['id']} from {map_cone['color_id']} to {int(processed_observations[obs_idx][3])}")
-                    self._update_cone(map_idx, processed_observations[obs_idx], update_color=True)
+                    new_color_id = int(processed_observations[obs_idx][3])
+                    # 알려진 색상(0이 아님)을 알 수 없는 색상(0)으로 덮어쓰지 않도록 합니다.
+                    # 기존 색상이 '알 수 없음'이거나 새로운 색상이 '알 수 없음'이 아닌 경우에만 색상을 업데이트합니다.
+                    if new_color_id != 0 or map_cone['color_id'] == 0:
+                        rospy.logdebug(f"Correcting color of cone {map_cone['id']} from {map_cone['color_id']} to {new_color_id}")
+                        self._update_cone(map_idx, processed_observations[obs_idx], update_color=True)
+                    else:
+                        # 그렇지 않으면 기존 색상을 유지하고 위치만 업데이트합니다.
+                        self._update_cone(map_idx, processed_observations[obs_idx], update_color=False)
+                    
                     matched_obs_indices.add(obs_idx)
                     matched_map_indices.add(map_idx)
 
@@ -1486,11 +1527,15 @@ class PathPlanner:
         self.spline_smoothing_factor = rospy.get_param("/planning/path_planner/spline_smoothing_factor", 0.5)
         self.w_dist = rospy.get_param("/planning/path_planner/weight_dist", 0.3)
         self.w_angle = rospy.get_param("/planning/path_planner/weight_angle", 0.7)
-        self.max_path_distance = rospy.get_param("/planning/path_planner/max_path_distance", 20.0)
+        self.max_path_distance = rospy.get_param("/planning/path_planner/max_path_distance", 200.0)
+        self.spline_smoothing_factor = rospy.get_param("/planning/path_planner/spline_smoothing_factor", 0.5)
+        self.path_obstacle_threshold = rospy.get_param("/planning/path_planner/path_obstacle_threshold", 1.5)
+        self.lane_offset = rospy.get_param("/local_planning/trajectory/lane_offset", 2.0)
         
         # --- 경로 계획기 관심 영역(ROI) 필터링 파라미터 ---
         self.planner_roi_distance = rospy.get_param("/local_planning/trajectory/planner_roi_distance", 30.0)
         self.planner_roi_angle_rad = math.radians(rospy.get_param("/local_planning/trajectory/planner_roi_angle", 90.0))
+        self.planner_clustering_eps = rospy.get_param("/local_planning/trajectory/planner_clustering_eps", 8.0)
         
         # --- 경로 안정화를 위한 이동 평균 필터 추가 ---
         self.path_direction_history = deque(maxlen=3) # 최근 3개의 경로 방향 벡터를 저장
@@ -1511,26 +1556,80 @@ class PathPlanner:
         v2_u = v2 / (np.linalg.norm(v2) + 1e-6)
         return np.arccos(np.clip(np.dot(v1_u, v2_u), -1.0, 1.0))
 
-    def _generate_fallback_path(self, blue_cones, yellow_cones, car_pos):
-        """Generates a simple straight path if Delaunay is not possible."""
-        if not blue_cones or not yellow_cones:
+    def _generate_fallback_path(self, blue_cones, yellow_cones, car_pos, car_yaw):
+        """Generates a simple straight path if Delaunay is not possible, handling single cone scenarios."""
+        
+        effective_blue_cones = blue_cones
+        effective_yellow_cones = yellow_cones
+
+        if not blue_cones and effective_yellow_cones:
+            # Only yellow cones, create virtual blue cones
+            effective_blue_cones = []
+            for y_cone in effective_yellow_cones:
+                # Offset perpendicular to the car's current direction
+                # Assuming y_cone is [x, y] in vehicle frame or map frame
+                # If in map frame, offset needs to be relative to car_yaw
+                # For simplicity, let's assume a fixed offset perpendicular to the track
+                effective_blue_cones.append({'x': y_cone['x'] - self.lane_offset * math.sin(car_yaw),
+                                             'y': y_cone['y'] + self.lane_offset * math.cos(car_yaw)})
+            rospy.logwarn_throttle(1.0, "PathPlanner: Only yellow cones, generating virtual blue cones.")
+        elif effective_blue_cones and not effective_yellow_cones:
+            # Only blue cones, create virtual yellow cones
+            effective_yellow_cones = []
+            for b_cone in effective_blue_cones:
+                effective_yellow_cones.append({'x': b_cone['x'] + self.lane_offset * math.sin(car_yaw),
+                                               'y': b_cone['y'] - self.lane_offset * math.cos(car_yaw)})
+            rospy.logwarn_throttle(1.0, "PathPlanner: Only blue cones, generating virtual yellow cones.")
+        elif not effective_blue_cones and not effective_yellow_cones:
+            rospy.logwarn_throttle(1.0, "PathPlanner: No cones for fallback path.")
+            return None, None, None, None, None
+
+        # Now, both effective_blue_cones and effective_yellow_cones should have cones (real or virtual)
+        if not effective_blue_cones or not effective_yellow_cones:
             return None, None, None, None, None
 
         rospy.logwarn_throttle(1.0, "PathPlanner: Not enough cones for triangulation, generating fallback path.")
         
-        avg_blue = np.mean(np.array([[c['x'], c['y']] for c in blue_cones]), axis=0)
-        avg_yellow = np.mean(np.array([[c['x'], c['y']] for c in yellow_cones]), axis=0)
+        avg_blue = np.mean(np.array([[c['x'], c['y']] for c in effective_blue_cones]), axis=0)
+        avg_yellow = np.mean(np.array([[c['x'], c['y']] for c in effective_yellow_cones]), axis=0)
         
         midpoint = (avg_blue + avg_yellow) / 2.0
-        direction_vec = midpoint - car_pos
         
-        if np.linalg.norm(direction_vec) < 0.1:
-            return None, None, None, None, None
-
-        direction_vec_normalized = direction_vec / np.linalg.norm(direction_vec)
+        # Generate a direction vector from car_pos towards the midpoint, aligned with car_yaw
+        # This ensures the fallback path is somewhat aligned with the car's current heading
+        direction_to_midpoint = midpoint - car_pos
         
-        path = [car_pos + direction_vec_normalized * i for i in range(1, 6)]
-        return np.array(path), None, None, None, None
+        # Project direction_to_midpoint onto the car's current heading to get a forward-biased direction
+        car_heading_vec = np.array([math.cos(car_yaw), math.sin(car_yaw)])
+        
+        # Use a weighted average or just the car's heading if the midpoint is too far off
+        # For a simple straight path, let's just extend from car_pos in car_yaw direction
+        
+        # Let's make the fallback path point towards the midpoint, but ensure it's not going backward
+        
+        # Calculate a target direction that blends the car's current heading and the direction to the midpoint
+        # This helps in smoothly transitioning to the fallback path
+        
+        # Option 1: Simple straight path along car's current yaw
+        # direction_vec_normalized = car_heading_vec
+        
+        # Option 2: Path towards the midpoint
+        if np.linalg.norm(direction_to_midpoint) < 0.1:
+            direction_vec_normalized = car_heading_vec # If midpoint is too close, just go straight
+        else:
+            direction_vec_normalized = direction_to_midpoint / np.linalg.norm(direction_to_midpoint)
+            # Ensure it's generally forward
+            if np.dot(direction_vec_normalized, car_heading_vec) < 0: # If pointing backward
+                direction_vec_normalized = car_heading_vec # Revert to car's heading
+        
+        # Generate path points
+        path = [car_pos + direction_vec_normalized * i * 1.0 for i in range(1, 6)] # 5 points, 1m spacing
+        
+        # Add the midpoint as the first point if it's not too far
+        if np.linalg.norm(midpoint - car_pos) < 10.0: # Only if midpoint is reasonably close
+            path.insert(0, midpoint)
+            
+        return np.array(path), None, None, None, None, True # Add a flag to indicate it's a fallback path
 
     def _sort_midpoints(self, midpoints, car_pos, car_yaw):
         """Sorts midpoints into a logical path, starting near the car and following the track's flow."""
@@ -1647,11 +1746,11 @@ class PathPlanner:
     def _is_valid_cone_pair(self, p1_idx, p2_idx, all_points, colors):
         """
         두 콘(p1, p2)이 유효한 중간점 생성 쌍인지 확인합니다.
-        규칙: p1과 p2를 잇는 직선 위에 p1과 같은 색의 다른 콘이 있으면 안 됩니다.
+        규칙: p1과 p2를 잇는 직선 위에 다른 콘이 너무 가까이 있으면 안 됩니다.
         """
         p1 = all_points[p1_idx]
         p2 = all_points[p2_idx]
-        color1 = colors[p1_idx]
+        # color1 = colors[p1_idx] # No longer needed
 
         # p1에서 p2로 향하는 벡터
         line_vec = p2 - p1
@@ -1661,7 +1760,7 @@ class PathPlanner:
             return False
 
         for i in range(len(all_points)):
-            if i == p1_idx or i == p2_idx or colors[i] != color1:
+            if i == p1_idx or i == p2_idx: # Check all other cones, regardless of color
                 continue
             
             p3 = all_points[i]
@@ -1670,7 +1769,7 @@ class PathPlanner:
             if 0 < dot_product < line_len_sq: # p3가 p1과 p2 사이에 투영되는 경우
                 # 선분과의 거리 계산
                 dist_to_line = np.linalg.norm(np.cross(line_vec, p1 - p3)) / np.linalg.norm(line_vec)
-                if dist_to_line < 1.5:  # 임계값 (1.5m)보다 가까우면 방해물로 간주
+                if dist_to_line < self.path_obstacle_threshold:  # 임계값보다 가까우면 방해물로 간주
                     return False # 유효하지 않은 쌍
         return True
 
@@ -1710,18 +1809,54 @@ class PathPlanner:
 
         # --- 경로 계획에 사용할 콘 필터링 ---
         local_cones = self._filter_cones_for_planning(cones, vehicle_state)
+
+        # --- 클러스터링 단계 추가 ---
+        if len(local_cones) > 5: # 최소 5개 이상의 콘이 있을 때만 클러스터링 수행
+            cone_points = np.array([[c['x'], c['y']] for c in local_cones])
+            
+            # DBSCAN을 사용하여 콘 그룹 찾기
+            db = DBSCAN(eps=self.planner_clustering_eps, min_samples=3).fit(cone_points)
+            labels = db.labels_
+            
+            unique_labels = set(labels)
+            if -1 in unique_labels: # 노이즈 레이블 제거
+                unique_labels.remove(-1)
+
+            # 두 개 이상의 클러스터가 감지된 경우
+            if len(unique_labels) > 1:
+                closest_cluster_idx = -1
+                min_dist_to_cluster = float('inf')
+                
+                # 차량에서 가장 가까운 클러스터 찾기
+                for label in unique_labels:
+                    cluster_mask = (labels == label)
+                    cluster_points = cone_points[cluster_mask]
+                    cluster_center = np.mean(cluster_points, axis=0)
+                    dist_to_car = np.linalg.norm(cluster_center - current_car_pos)
+                    
+                    if dist_to_car < min_dist_to_cluster:
+                        min_dist_to_cluster = dist_to_car
+                        closest_cluster_idx = label
+                
+                # 가장 가까운 클러스터에 속한 콘만 사용하도록 필터링
+                if closest_cluster_idx != -1:
+                    closest_cluster_mask = (labels == closest_cluster_idx)
+                    local_cones = [cone for i, cone in enumerate(local_cones) if closest_cluster_mask[i]]
+                    rospy.loginfo_throttle(1.0, f"PathPlanner: Multiple cone clusters found. Using closest cluster with {len(local_cones)} cones.")
         
         blue_cones = [c for c in local_cones if c['color_id'] == 1]
         yellow_cones = [c for c in local_cones if c['color_id'] == 2]
 
         # --- Condition for Delaunay Path ---
         if len(blue_cones) < 2 or len(yellow_cones) < 2:
-            return self._generate_fallback_path(blue_cones, yellow_cones, current_car_pos)
+            path, tri, all_points, colors, unique_midpoints, is_fallback = self._generate_fallback_path(blue_cones, yellow_cones, current_car_pos, vehicle_yaw)
+            return path, tri, all_points, colors, unique_midpoints, is_fallback
 
         # 1. Prepare points for triangulation
         all_points = np.array([[c['x'], c['y']] for c in blue_cones] + [[c['x'], c['y']] for c in yellow_cones])
         if len(all_points) < 3:
-            return self._generate_fallback_path(blue_cones, yellow_cones, current_car_pos)
+            path, tri, all_points, colors, unique_midpoints, is_fallback = self._generate_fallback_path(blue_cones, yellow_cones, current_car_pos, vehicle_yaw)
+            return path, tri, all_points, colors, unique_midpoints, is_fallback
 
         num_blue = len(blue_cones)
         colors = np.array([1] * num_blue + [2] * len(yellow_cones))
@@ -1731,7 +1866,7 @@ class PathPlanner:
             tri = Delaunay(all_points)
         except Exception as e:
             rospy.logwarn(f"Delaunay triangulation failed: {e}")
-            return None, None, None, None, None
+            return None, None, None, None, None, True # Indicate fallback
 
         # 3. Find centerline midpoints
         midpoints = []
@@ -1749,16 +1884,16 @@ class PathPlanner:
                             midpoints.append((all_points[p1_idx] + all_points[p2_idx]) / 2.0)
         
         if not midpoints:
-            return None, tri, all_points, colors, None
+            return None, tri, all_points, colors, None, True # Indicate fallback
 
         # 4. Sort midpoints to form a continuous path
         unique_midpoints = np.unique(np.array(midpoints), axis=0)
         if len(unique_midpoints) < 2:
-            return None, tri, all_points, colors, unique_midpoints
+            return None, tri, all_points, colors, unique_midpoints, True # Indicate fallback
 
         ordered_midpoints = self._sort_midpoints(unique_midpoints, current_car_pos, vehicle_yaw)
         if ordered_midpoints is None or len(ordered_midpoints) < 2:
-            return None, tri, all_points, colors, unique_midpoints
+            return None, tri, all_points, colors, unique_midpoints, True # Indicate fallback
 
         self.path_direction_history.clear() # 새로운 계획 시작 시 방향 기록 초기화
         # Correct any detours in the path
@@ -1772,12 +1907,12 @@ class PathPlanner:
         
         # Handle cases with very few points
         if len(filtered_path) == 0:
-            return None, tri, all_points, colors, unique_midpoints
+            return None, tri, all_points, colors, unique_midpoints, True # Indicate fallback
         elif len(filtered_path) == 1:
             # If only one point, create a path from current car position to that point
             path = np.array([current_car_pos, filtered_path[0]])
             rospy.logwarn_throttle(1.0, "PathPlanner: Only 1 point for path, generating straight line to it.")
-            return path, tri, all_points, colors, unique_midpoints
+            return path, tri, all_points, colors, unique_midpoints, True # Indicate fallback
 
         # 5. Smooth the path with a spline
         if len(filtered_path) < 3:
@@ -1785,8 +1920,8 @@ class PathPlanner:
                 path = np.array(filtered_path)
                 rospy.logwarn_throttle(1.0, "PathPlanner: Only 2 points for spline, generating straight path.")
             else: # This case should ideally not be reached if previous checks are correct
-                fallback_path = self._generate_straight_path(current_car_pos, vehicle_yaw)
-                return fallback_path, tri, all_points, colors, unique_midpoints
+                fallback_path, _, _, _, _, is_fallback = self._generate_fallback_path(blue_cones, yellow_cones, current_car_pos, vehicle_yaw)
+                return fallback_path, tri, all_points, colors, unique_midpoints, is_fallback
 
         try:
             if len(filtered_path) >= 3: # Only attempt spline if 3 or more points
@@ -1803,9 +1938,10 @@ class PathPlanner:
                 path = np.array(filtered_path) 
             else:
                 # This case should ideally not be reached if previous checks are correct
-                return None, tri, all_points, colors, unique_midpoints
+                return None, tri, all_points, colors, unique_midpoints, True # Indicate fallback
+            return path, tri, all_points, colors, unique_midpoints, True # Indicate fallback
 
-        return path, tri, all_points, colors, unique_midpoints
+        return path, tri, all_points, colors, unique_midpoints, False # Not a fallback path
 
     def _calculate_path_curvature(self, path, lookahead=5):
         """경로의 각 지점에서 곡률을 계산합니다."""
@@ -1980,7 +2116,28 @@ class DataLogger:
     - LiDAR: `lidar.csv`에 고정된 최대 너비로 포인트 좌표 기록
     - 카메라: `cameraX.avi` 동영상 파일로 저장
     """
-    def __init__(self, log_directory: str, session_name: str, video_fps: float = 10.0, max_lidar_points: int = 500):
+    def __init__(self, log_directory: str, session_name: str, video_fps: float = 10.0, max_lidar_points: int = 500, enable_logging: bool = True):
+        self.enable_logging = enable_logging
+        self.session_path = None
+        self.metadata_csv_file = None
+        self.metadata_csv_writer = None
+        self.video_paths = {'cam1': None, 'cam2': None}
+        self.video_writers = {'cam1': None, 'cam2': None}
+        self.video_fps = video_fps
+        self.fourcc = None
+        self.max_lidar_points = max_lidar_points
+        self.lidar_csv_path = None
+        self.lidar_csv_file = None
+        self.lidar_csv_writer = None
+        self.map_cones_csv_path = None
+        self.map_cones_csv_file = None
+        self.map_cones_csv_writer = None
+        self.frame_count = 0
+
+        if not self.enable_logging:
+            rospy.loginfo("DataLogger: Logging is disabled.")
+            return
+
         self.session_path = os.path.join(log_directory, session_name)
         os.makedirs(self.session_path, exist_ok=True)
 
@@ -2022,13 +2179,15 @@ class DataLogger:
         self.map_cones_csv_writer = csv.writer(self.map_cones_csv_file)
         self.map_cones_csv_writer.writerow(['frame_id', 'cone_id', 'color_id', 'x', 'y', 'z'])
 
-        self.frame_count = 0
         rospy.loginfo(f"DataLogger initialized. Saving logs to: {self.session_path}")
 
     def log_entry(self, autonomous_mode: str, control_command: ControlCommand,
                   imu_acc: list, imu_gyro: list, state: list,
                   camera1_image: np.ndarray, camera2_image: np.ndarray, lidar_points: np.ndarray,
                   map_cones: list):
+        if not self.enable_logging:
+            return
+
         timestamp = rospy.Time.now().to_sec()
 
         # 각 프레임의 실제 LiDAR 포인트 개수 계산
@@ -2084,19 +2243,25 @@ class DataLogger:
 
     def close(self):
         """프로그램 종료 시 호출되어 모든 파일 핸들을 안전하게 닫습니다."""
-        self.metadata_csv_file.close()
-        rospy.loginfo(f"Successfully saved metadata to {self.csv_path}")
+        if not self.enable_logging:
+            return
+        
+        if self.metadata_csv_file: # Check if file was opened
+            self.metadata_csv_file.close()
+            rospy.loginfo(f"Successfully saved metadata to {self.csv_path}")
 
         for cam_id, writer in self.video_writers.items():
             if writer is not None:
                 writer.release()
                 rospy.loginfo(f"Successfully saved video to {self.video_paths[cam_id]}")
 
-        self.lidar_csv_file.close()
-        rospy.loginfo(f"Successfully saved LiDAR data to {self.lidar_csv_path}")
+        if self.lidar_csv_file: # Check if file was opened
+            self.lidar_csv_file.close()
+            rospy.loginfo(f"Successfully saved LiDAR data to {self.lidar_csv_path}")
 
-        self.map_cones_csv_file.close()
-        rospy.loginfo(f"Successfully saved map cone data to {self.map_cones_csv_path}")
+        if self.map_cones_csv_file: # Check if file was opened
+            self.map_cones_csv_file.close()
+            rospy.loginfo(f"Successfully saved map cone data to {self.map_cones_csv_path}")
 
 StateTransitionResult = namedtuple(
     'StateTransitionResult', 
@@ -2256,10 +2421,11 @@ class Control:
     """
     Main control class that manages and selects the active path tracking controller.
     """
-    def __init__(self, path_planner):
+    def __init__(self, path_planner, track_map):
         # --- Controller Selection ---
         try:
             self.path_planner = path_planner # PathPlanner 인스턴스를 멤버 변수로 저장
+            self.track_map = track_map # TrackMap 인스턴스를 멤버 변수로 저장
             self.controller_type = rospy.get_param("/control/ControllerSelection/lateral_controller_type", "PurePursuit")
         except (rospy.ROSException, KeyError):
             self.controller_type = "PurePursuit"
@@ -2269,8 +2435,8 @@ class Control:
         # Vehicle
         self.wheelbase = rospy.get_param("/vehicle/wheelbase", 1.54)
         self.max_steer = rospy.get_param("/vehicle/max_steer_angle", 1) # radians
-        self.max_accel = rospy.get_param("/vehicle/max_accel", 0.5) # m/s^2
-        self.min_accel = rospy.get_param("/vehicle/min_accel", -0.5) # m/s^2 (braking)
+        self.max_accel = rospy.get_param("/vehicle/max_accel", 0.7) # m/s^2
+        self.min_accel = rospy.get_param("/vehicle/min_accel", -0.7) # m/s^2 (braking)
 
         # Common
         self.target_speed = rospy.get_param("/control/SpeedControl/target_speed", 5.0) # m/s
@@ -2278,25 +2444,35 @@ class Control:
         
         # --- 곡률 기반 속도 제어 파라미터 ---
         self.max_speed = rospy.get_param("/control/SpeedControl/target_speed", 5.0)
+        self.loop_closed_target_speed = rospy.get_param("/control/SpeedControl/loop_closed_target_speed", 10.0)
         self.min_speed = rospy.get_param("/control/SpeedControl/min_speed", 2.0) # 코너 최소 속도
         self.curvature_speed_factor = rospy.get_param("/control/SpeedControl/curvature_factor", 2.5) # 곡률에 따른 감속 강도
+        self.curvature_lookahead = rospy.get_param("/control/SpeedControl/curvature_lookahead", 5) # 곡률 계산 시 참고할 포인트 거리
+        self.lc_target_speed_duration = rospy.get_param("/control/lc_target_speed_duration", 5.0) # 루프 클로저 시 속도 감소 유지 시간
+        self.lc_speed_reduction_start_time = 0.0
+        self.is_lc_active = False
+        self.pre_lc_target_speed = rospy.get_param("/control/SpeedControl/pre_loop_closure/target_speed", self.target_speed) # 루프 클로저 전 목표 속도 저장
+        self.post_lc_target_speed = rospy.get_param("/control/SpeedControl/post_loop_closure/target_speed", self.loop_closed_target_speed) # 루프 클로저 후 목표 속도 저장
+        self.pre_lc_min_speed = rospy.get_param("/control/SpeedControl/pre_loop_closure/min_speed", self.min_speed) # 루프 클로저 전 최소 속도
+        self.post_lc_min_speed = rospy.get_param("/control/SpeedControl/post_loop_closure/min_speed", self.min_speed) # 루프 클로저 후 최소 속도
+        self.pre_lc_curvature_speed_factor = rospy.get_param("/control/SpeedControl/pre_loop_closure/curvature_speed_factor", self.curvature_speed_factor) # 루프 클로저 전 곡률 감속 계수
+        self.post_lc_curvature_speed_factor = rospy.get_param("/control/SpeedControl/post_loop_closure/curvature_speed_factor", self.curvature_speed_factor) # 루프 클로저 후 곡률 감속 계수
+        self.pre_lc_curvature_lookahead = rospy.get_param("/control/SpeedControl/pre_loop_closure/curvature_lookahead", self.curvature_lookahead) # 루프 클로저 전 곡률 계산 시 참고할 포인트 거리
+        self.post_lc_curvature_lookahead = rospy.get_param("/control/SpeedControl/post_loop_closure/curvature_lookahead", self.curvature_lookahead) # 루프 클로저 후 곡률 계산 시 참고할 포인트 거리
+
 
         # Pure Pursuit
         self.lookahead_dist = rospy.get_param("/control/pure_pursuit/lookahead_distance", 2.5)
         
         # Stanley
         self.k_crosstrack = rospy.get_param("/control/stanley/k_gain", 0.7)
-
         # MPC
         self.mpc_horizon = rospy.get_param("/control/MPC/horizon", 3)
-        self.mpc_dt = rospy.get_param("/control/MPC/dt", 0.3)
-        self.w_cte = rospy.get_param("/control/MPC/w_cte", 10.0)
-        self.w_etheta = rospy.get_param("/control/MPC/w_etheta", 5.0)
-        self.w_accel = rospy.get_param("/control/MPC/w_accel", 1.0)
-        self.w_steer = rospy.get_param("/control/MPC/w_steer", 1.0)
-        self.w_accel_rate = rospy.get_param("/control/MPC/w_accel_rate", 1.0)
-        self.w_steer_rate = rospy.get_param("/control/MPC/w_steer_rate", 1.0)
-        self.w_v = rospy.get_param("/control/MPC/w_vel", 0.1) # Weight for speed tracking
+        self.mpc_dt = rospy.get_param("/control/MPC/dt", 0.1)
+        self.mpc_weights_pre_lc = rospy.get_param("/control/MPC/pre_loop_closure")
+        self.mpc_weights_post_lc = rospy.get_param("/control/MPC/post_loop_closure")
+        self.mpc_speed_scaling_factor = rospy.get_param("/control/MPC/mpc_speed_scaling_factor", 1.0) # New parameter
+        self.max_speed_for_scaling = rospy.get_param("/control/SpeedControl/max_speed_for_scaling", 10.0) # Use max target speed for normalization
 
         # --- Assign the compute function based on selected type ---
         if self.controller_type == "PurePursuit":
@@ -2319,18 +2495,27 @@ class Control:
             angle += 2.0 * math.pi
         return angle
 
-    def _compute_pure_pursuit(self, vehicle_state, path):
+    def _compute_pure_pursuit(self, vehicle_state, path, is_fallback=False):
         # Unpack vehicle state
         veh_x, veh_y, veh_yaw = vehicle_state[0], vehicle_state[1], vehicle_state[2]
         current_speed = math.sqrt(vehicle_state[3]**2 + vehicle_state[4]**2)
 
         # --- 곡률 기반 목표 속도 계산 ---
-        path_curvatures = self.path_planner._calculate_path_curvature(path)
-        # 전방 경로의 평균 곡률 계산 (예: 앞 10개 포인트)
-        lookahead_curvatures = path_curvatures[:10]
-        avg_curvature = np.mean(lookahead_curvatures) if lookahead_curvatures else 0.0
-        target_speed = self.max_speed / (1.0 + self.curvature_speed_factor * abs(avg_curvature))
-        target_speed = np.clip(target_speed, self.min_speed, self.max_speed)
+        if is_fallback:
+            target_speed = 5.0 # Set speed to 5.0 for fallback paths
+        else:
+            path_curvatures = self.path_planner._calculate_path_curvature(path, self.curvature_lookahead)
+            # 전방 경로의 평균 곡률 계산 (예: 앞 10개 포인트)
+            lookahead_curvatures = path_curvatures
+            avg_curvature = np.mean(lookahead_curvatures) if lookahead_curvatures else 0.0
+            
+            if self.track_map.is_loop_closed:
+                base_target_speed = self.loop_closed_target_speed
+            else:
+                base_target_speed = self.max_speed
+
+            target_speed = base_target_speed / (1.0 + self.curvature_speed_factor * abs(avg_curvature))
+            target_speed = np.clip(target_speed, self.min_speed, base_target_speed)
 
         # 1. Find the closest point on the path to the vehicle
         path_points = np.array(path)
@@ -2366,14 +2551,14 @@ class Control:
         
         brake = 0.0
         if target_speed < current_speed:
-            brake = 0.1
+            brake = 0.3
 
         # Normalize steering angle to [-1, 1]
         normalized_steer = steer / self.max_steer
 
         return throttle, normalized_steer, brake
 
-    def _compute_stanley(self, vehicle_state, path):
+    def _compute_stanley(self, vehicle_state, path, is_fallback=False):
         """
         Computes control commands using the Stanley method.
         """
@@ -2382,13 +2567,32 @@ class Control:
         current_speed = math.sqrt(vehicle_state[3]**2 + vehicle_state[4]**2)
 
         # --- 곡률 기반 목표 속도 계산 ---
-        path_curvatures = self.path_planner._calculate_path_curvature(path)
-        # 전방 경로의 평균 곡률 계산 (예: 앞 10개 포인트)
-        lookahead_curvatures = path_curvatures[:10]
-        avg_curvature = np.mean(lookahead_curvatures) if lookahead_curvatures else 0.0
-        target_speed = self.max_speed / (1.0 + self.curvature_speed_factor * abs(avg_curvature))
-        target_speed = np.clip(target_speed, self.min_speed, self.max_speed)
+        if is_fallback:
+            target_speed = 5.0 # Set speed to 5.0 for fallback paths
+        else:
+            if self.track_map.is_loop_closed:
+                target_speed_params = {
+                    'target_speed': self.post_lc_target_speed,
+                    'min_speed': self.post_lc_min_speed,
+                    'curvature_speed_factor': self.post_lc_curvature_speed_factor,
+                    'curvature_lookahead': self.post_lc_curvature_lookahead
+                }
+            else:
+                target_speed_params = {
+                    'target_speed': self.pre_lc_target_speed,
+                    'min_speed': self.pre_lc_min_speed,
+                    'curvature_speed_factor': self.pre_lc_curvature_speed_factor,
+                    'curvature_lookahead': self.pre_lc_curvature_lookahead
+                }
 
+            path_curvatures = self.path_planner._calculate_path_curvature(path, target_speed_params['curvature_lookahead'])
+            lookahead_curvatures = path_curvatures[:10]
+            avg_curvature = np.mean(lookahead_curvatures) if lookahead_curvatures else 0.0
+            
+            base_target_speed = target_speed_params['target_speed']
+
+            target_speed = base_target_speed / (1.0 + target_speed_params['curvature_speed_factor'] * abs(avg_curvature))
+            target_speed = np.clip(target_speed, target_speed_params['min_speed'], base_target_speed)
         # 1. Find the closest path point (target_idx)
         path_points = np.array(path)
         distances = np.linalg.norm(path_points - np.array([veh_x, veh_y]), axis=1)
@@ -2438,7 +2642,7 @@ class Control:
         return throttle, normalized_steer, brake
 
     def _cost_function(self, u, *args):
-        initial_state, ref_path = args
+        initial_state, ref_path, target_speed, weights = args
         
         # Unpack control inputs
         accels = u[0::2]
@@ -2482,33 +2686,73 @@ class Control:
             ref_yaw = math.atan2(ref_p2[1] - ref_p1[1], ref_p2[0] - ref_p1[0])
             etheta = self.normalize_angle(pred_yaw - ref_yaw)
 
-            cost += self.w_cte * cte**2
-            cost += self.w_etheta * etheta**2
-            cost += self.w_v * (self.max_speed - pred_v)**2 # MPC는 최고 속도를 목표로 추종
+            cost += weights['w_cte'] * cte**2
+            cost += weights['w_etheta'] * etheta**2
+            cost += weights['w_vel'] * (target_speed - pred_v)**2
 
         # Control input cost
-        cost += self.w_accel * np.sum(accels**2)
-        cost += self.w_steer * np.sum(steers**2)
+        cost += weights['w_accel'] * np.sum(accels**2)
+        cost += weights['w_steer'] * np.sum(steers**2)
 
         # Control rate cost (smoothness)
-        cost += self.w_accel_rate * np.sum((accels[1:] - accels[:-1])**2)
-        cost += self.w_steer_rate * np.sum((steers[1:] - steers[:-1])**2)
+        cost += weights['w_accel_rate'] * np.sum((accels[1:] - accels[:-1])**2)
+        cost += weights['w_steer_rate'] * np.sum((steers[1:] - steers[:-1])**2)
         
         return cost
 
-    def _compute_mpc(self, vehicle_state, path):
+    def _compute_mpc(self, vehicle_state, path, is_fallback=False):
         # Unpack vehicle state
         veh_x, veh_y, veh_yaw = vehicle_state[0], vehicle_state[1], vehicle_state[2]
         current_speed = math.sqrt(vehicle_state[3]**2 + vehicle_state[4]**2)
         initial_state = [veh_x, veh_y, veh_yaw, current_speed]
 
-        # --- 곡률 기반 목표 속도 계산 (MPC에서는 비용 함수에 반영) ---
-        path_curvatures = self.path_planner._calculate_path_curvature(path)
-        lookahead_curvatures = path_curvatures[:10]
-        avg_curvature = np.mean(lookahead_curvatures) if lookahead_curvatures else 0.0
-        # MPC에서는 최고 속도를 목표로 하되, 비용 함수에서 속도와 조향각의 균형을 맞춤
-        # 여기서는 self.max_speed를 비용 함수에서 사용하도록 놔둡니다.
-        # 대신, 급격한 조향에 대한 페널티(w_steer_rate)가 감속 효과를 유도합니다.
+        # --- 곡률 기반 목표 속도 계산 ---
+        if is_fallback:
+            mpc_target_speed = 5.0 # Set speed to 5.0 for fallback paths
+            weights = self.mpc_weights_pre_lc.copy() # Use pre-LC weights for fallback
+        else:
+            if self.track_map.is_loop_closed:
+                target_speed_params = {
+                    'target_speed': self.post_lc_target_speed,
+                    'min_speed': self.post_lc_min_speed,
+                    'curvature_speed_factor': self.post_lc_curvature_speed_factor,
+                    'curvature_lookahead': self.post_lc_curvature_lookahead
+                }
+                weights = self.mpc_weights_post_lc.copy() # Use a copy to avoid modifying original params
+            else:
+                target_speed_params = {
+                    'target_speed': self.pre_lc_target_speed,
+                    'min_speed': self.pre_lc_min_speed,
+                    'curvature_speed_factor': self.pre_lc_curvature_speed_factor,
+                    'curvature_lookahead': self.pre_lc_curvature_lookahead
+                }
+                weights = self.mpc_weights_pre_lc.copy() # Use a copy to avoid modifying original params
+
+            path_curvatures = self.path_planner._calculate_path_curvature(path, target_speed_params['curvature_lookahead'])
+            lookahead_curvatures = path_curvatures[:10]
+            avg_curvature = np.mean(lookahead_curvatures) if lookahead_curvatures else 0.0
+            
+            mpc_target_speed = target_speed_params['target_speed'] / (1.0 + target_speed_params['curvature_speed_factor'] * abs(avg_curvature))
+            mpc_target_speed = np.clip(mpc_target_speed, target_speed_params['min_speed'], target_speed_params['target_speed'])
+
+        # Apply speed-proportional scaling to MPC weights
+        # Normalize current speed by a maximum expected speed for scaling factor
+        normalized_speed = current_speed / self.max_speed_for_scaling
+        # Use a power function to make scaling more aggressive or less aggressive
+        speed_scaling_factor = (normalized_speed ** self.mpc_speed_scaling_factor) if self.mpc_speed_scaling_factor != 0 else 1.0
+        speed_scaling_factor = np.clip(speed_scaling_factor, 0.1, 2.0) # Clip to reasonable range
+
+        # Example: Increase path following weights with speed, decrease control input weights
+        weights['w_cte'] *= speed_scaling_factor
+        weights['w_etheta'] *= speed_scaling_factor
+        weights['w_vel'] *= speed_scaling_factor # Penalize velocity error more at higher speeds
+
+        # At higher speeds, generally want tighter path following and smoother control inputs.
+        # So, increase penalties for path deviation and control input changes.
+        weights['w_accel'] *= speed_scaling_factor
+        # weights['w_steer'] *= speed_scaling_factor
+        weights['w_accel_rate'] *= speed_scaling_factor
+        weights['w_steer_rate'] *= speed_scaling_factor
 
         # Get reference path for the horizon
         path_points = np.array(path)
@@ -2534,7 +2778,7 @@ class Control:
         solution = minimize(
             self._cost_function,
             u0,
-            args=(initial_state, ref_path),
+            args=(initial_state, ref_path, mpc_target_speed, weights),
             method='SLSQP',
             bounds=bounds
         )
