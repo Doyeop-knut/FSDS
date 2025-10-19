@@ -30,6 +30,7 @@ from visualization_msgs.msg import Marker, MarkerArray
 from nav_msgs.msg import Path
 from sensor_msgs.msg import PointCloud2, Image, Imu, NavSatFix, PointField
 import sensor_msgs.point_cloud2 as pc2
+import rospkg # rospkg import 추가
 from cv_bridge import CvBridge
 
 # 3D LiDAR
@@ -76,7 +77,7 @@ class FormulaAutonomousSystem:
         
         # ==================== 데이터 로거 추가 ====================
         self.data_logger = DataLogger(
-        log_directory="/home/user/fsds_ws/src/tutorial/log",
+        log_directory="~/fsds_ws/src/tutorial/log",
         session_name=datetime.datetime.now().strftime("%Y%m%d_%H%M%S"),
         max_lidar_points=50  # 필요시 이 값을 조절
         )
@@ -102,9 +103,15 @@ class FormulaAutonomousSystem:
         self.track_map = TrackMap()
         self.midpoint_map = MidpointMap()
         self.path_planner = PathPlanner()
-        self.controller = Control()
+        self.controller = Control(self.path_planner) # Control 클래스에 path_planner 인스턴스 전달
 
-        self.model = torch.load('/home/user/fsds_ws/retina-cone.pt', weights_only=False)  # Adjust path as needed
+        # rospkg를 사용하여 모델 경로 동적으로 찾기
+        rospack = rospkg.RosPack()
+        package_path = rospack.get_path('formula_autonomous_system')
+        self.model_path = os.path.join(package_path,'python', 'retina-cone.pt')
+        rospy.loginfo(f"Loading model from: {self.model_path}")
+
+        self.model = torch.load(self.model_path, map_location=torch.device('cpu'))
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.model.to(self.device)
         if self.device.type == 'cuda':
@@ -872,44 +879,50 @@ class CameraProcessor:
         # Convert ROI to HSV
         hsv_roi = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
 
-        # Detect colors
-        color_counts = {
-            "yellow": 0,
-            "blue": 0,
-            "orange": 0
-        }
-
-        # Yellow
+        # --- 신뢰도 기반 색상 탐지 로직으로 개선 ---
+        color_scores = {"yellow": 0.0, "blue": 0.0, "orange": 0.0}
+        
+        # 각 색상 마스크 생성
         mask_yellow = cv2.inRange(hsv_roi, self.hsv_yellow_min, self.hsv_yellow_max)
-        color_counts["yellow"] = cv2.countNonZero(mask_yellow)
-
-        # Blue
         mask_blue = cv2.inRange(hsv_roi, self.hsv_blue_min, self.hsv_blue_max)
-        color_counts["blue"] = cv2.countNonZero(mask_blue)
-
-        # Orange
         mask_orange = cv2.inRange(hsv_roi, self.hsv_orange_min, self.hsv_orange_max)
-        color_counts["orange"] = cv2.countNonZero(mask_orange)
 
-        # Determine dominant color
-        max_count = 0
+        masks = {"yellow": mask_yellow, "blue": mask_blue, "orange": mask_orange}
+
+        for color, mask in masks.items():
+            pixel_count = cv2.countNonZero(mask)
+            if pixel_count > 0:
+                # 마스크에 해당하는 픽셀들의 평균 채도(S)와 명도(V)를 계산
+                # 채도와 명도가 높을수록 색상이 뚜렷하므로 가중치를 줌
+                mean_sv = cv2.mean(hsv_roi, mask=mask)
+                avg_saturation = mean_sv[1] / 255.0 # 0~1 정규화
+                avg_value = mean_sv[2] / 255.0      # 0~1 정규화
+                
+                # 신뢰도 점수 = 픽셀 수 * (평균 채도 + 평균 명도)
+                # 이렇게 하면 흐릿한 색상의 넓은 영역보다 뚜렷한 색상의 작은 영역이 더 높은 점수를 받을 수 있음
+                color_scores[color] = pixel_count * (avg_saturation + avg_value)
+                print(f"from LiDAR - All score = {color_scores}")
+
+        # 가장 높은 점수를 받은 색상을 선택
+        max_score = 0
         dominant_color = "unknown"
-        for color, count in color_counts.items():
-            if count > max_count:
-                max_count = count
+        for color, score in color_scores.items():
+            if score > max_score:
+                max_score = score
                 dominant_color = color
         
-        # A threshold can be added here to avoid detecting noise as a color
-        # For example, if max_count is too low, return "unknown"
-        if max_count < (roi.size * 0.1): # e.g., at least 10% of ROI pixels must be of a color
-            dominant_color = "unknown"
+        # 최소 픽셀 수 임계값 (노이즈 제거)
+        # 점수 계산에 사용된 픽셀 수가 전체 ROI의 1% 미만이면 노이즈로 간주
+        print(f"LiDAR - count from mask = {cv2.countNonZero(masks[dominant_color])}, limit = {roi.size * 0.05}")
+        if dominant_color != "unknown" and cv2.countNonZero(masks[dominant_color]) < (roi.size * 0.05):
+             dominant_color = "unknown"
 
         if debug_image is not None and dominant_color != "unknown":
              # Put text for the detected color
              cv2.putText(debug_image, dominant_color, (x_min, y_min - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255,255,255), 1)
+             print(f"from LiDAR - {color_scores}, color = {dominant_color} \n")
 
         return dominant_color
-
     def _process_and_draw_detections(self, image, raw_predictions, conf_threshold=0.5, iou_threshold=0.45):
         """
         torchvision RetinaNet 출력 처리 및 바운딩 박스 그리기
@@ -996,33 +1009,45 @@ class CameraProcessor:
         if roi.size == 0:
             return "unknown"
 
-        if debug_image is not None:
-            cv2.rectangle(debug_image, (x1, y1), (x2, y2), (255, 0, 255), 1) # Draw magenta box for the ROI
-
         hsv_roi = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
 
-        # Color detection logic (reused from detectConeColor)
-        color_counts = {
-            "yellow": cv2.countNonZero(cv2.inRange(hsv_roi, self.hsv_yellow_min, self.hsv_yellow_max)),
-            "blue": cv2.countNonZero(cv2.inRange(hsv_roi, self.hsv_blue_min, self.hsv_blue_max)),
-            "orange": cv2.countNonZero(cv2.inRange(hsv_roi, self.hsv_orange_min, self.hsv_orange_max))
-        }
+        # --- 신뢰도 기반 색상 탐지 로직으로 개선 ---
+        color_scores = {"yellow": 0.0, "blue": 0.0, "orange": 0.0}
+        
+        # 각 색상 마스크 생성
+        mask_yellow = cv2.inRange(hsv_roi, self.hsv_yellow_min, self.hsv_yellow_max)
+        mask_blue = cv2.inRange(hsv_roi, self.hsv_blue_min, self.hsv_blue_max)
+        mask_orange = cv2.inRange(hsv_roi, self.hsv_orange_min, self.hsv_orange_max)
 
-        # Determine dominant color
+        masks = {"yellow": mask_yellow, "blue": mask_blue, "orange": mask_orange}
+        
+        for color, mask in masks.items():
+            pixel_count = cv2.countNonZero(mask)
+            if pixel_count > 0:
+                mean_sv = cv2.mean(hsv_roi, mask=mask)
+                avg_saturation = mean_sv[1] / 255.0
+                avg_value = mean_sv[2] / 255.0
+                color_scores[color] = pixel_count * (avg_saturation + avg_value)
+                print(f"from bbox - All score = {color_scores}")
+
+        # 가장 높은 점수를 받은 색상을 선택
+        max_score = 0
         dominant_color = "unknown"
-        max_count = 0
-        for color, count in color_counts.items():
-            if count > max_count:
-                max_count = count
+        for color, score in color_scores.items():
+            if score > max_score:
+                max_score = score
                 dominant_color = color
 
-        # Threshold to avoid detecting noise
-        if max_count < (roi.size * 0.05): # e.g., at least 5% of ROI pixels must be of a color
-            return "unknown"
+        # 최소 픽셀 수 임계값 (노이즈 제거)
+        print(f"bbox - count from mask = {cv2.countNonZero(masks[dominant_color])}, limit = {roi.size * 0.05}")
+        if dominant_color != "unknown" and cv2.countNonZero(masks[dominant_color]) < (roi.size * 0.05):
+             dominant_color = "unknown"
 
         if debug_image is not None and dominant_color != "unknown":
             cv2.putText(debug_image, dominant_color, (x1, y1 - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+            print(f"from bbox - {color_scores}, color = {dominant_color} \n")
 
+    
         return dominant_color
         
 
@@ -1231,28 +1256,44 @@ class TrackMap:
         matched_obs_indices = set()
         matched_map_indices = set()
 
+        # 1단계: 위치와 색상이 모두 일치하는 경우 먼저 매칭 (가장 신뢰도 높은 매칭)
         for map_idx, map_cone in enumerate(self.cones):
             if map_idx in matched_map_indices:
                 continue
 
             possible_matches_mask = (processed_observations[:, 3] == map_cone['color_id'])
-            if not np.any(possible_matches_mask):
-                continue
+            if np.any(possible_matches_mask):
+                distances_to_map_cone = distance_matrix[map_idx, possible_matches_mask]
+                obs_indices_for_color = np.where(possible_matches_mask)[0]
+                
+                if distances_to_map_cone.size > 0:
+                    best_match_local_idx = np.argmin(distances_to_map_cone)
+                    min_dist = distances_to_map_cone[best_match_local_idx]
 
-            distances_to_map_cone = distance_matrix[map_idx, possible_matches_mask]
-            obs_indices_for_color = np.where(possible_matches_mask)[0]
-            
-            if not distances_to_map_cone.size:
-                continue
+                    if min_dist < self.association_threshold:
+                        obs_idx = obs_indices_for_color[best_match_local_idx]
+                        if obs_idx not in matched_obs_indices:
+                            self._update_cone(map_idx, processed_observations[obs_idx])
+                            matched_obs_indices.add(obs_idx)
+                            matched_map_indices.add(map_idx)
 
-            best_match_local_idx = np.argmin(distances_to_map_cone)
-            min_dist = distances_to_map_cone[best_match_local_idx]
+        # 2단계: 색상이 다르더라도 위치가 매우 가까운 경우, 색상 정보를 업데이트 (오탐지 교정)
+        for map_idx, map_cone in enumerate(self.cones):
+            if map_idx in matched_map_indices: continue
+
+            # 아직 매칭되지 않은 관측값들 중에서 가장 가까운 것을 찾음
+            unmatched_obs_indices = [i for i in range(len(processed_observations)) if i not in matched_obs_indices]
+            if not unmatched_obs_indices: break
+
+            distances_to_unmatched = distance_matrix[map_idx, unmatched_obs_indices]
+            best_match_local_idx = np.argmin(distances_to_unmatched)
+            min_dist = distances_to_unmatched[best_match_local_idx]
 
             if min_dist < self.association_threshold:
-                obs_idx = obs_indices_for_color[best_match_local_idx]
-                
+                obs_idx = unmatched_obs_indices[best_match_local_idx]
                 if obs_idx not in matched_obs_indices:
-                    self._update_cone(map_idx, processed_observations[obs_idx])
+                    rospy.logdebug(f"Correcting color of cone {map_cone['id']} from {map_cone['color_id']} to {int(processed_observations[obs_idx][3])}")
+                    self._update_cone(map_idx, processed_observations[obs_idx], update_color=True)
                     matched_obs_indices.add(obs_idx)
                     matched_map_indices.add(map_idx)
 
@@ -1364,15 +1405,22 @@ class TrackMap:
             'y': cone_obs[1],
             'z': cone_obs[2],
             'color_id': int(cone_obs[3]),
+            'observations': 1, # 관측 횟수 추가
             'covariance': np.eye(2) * 0.5
         }
         self.cones.append(new_cone)
         self.next_cone_id += 1
 
-    def _update_cone(self, map_idx, cone_obs):
-        alpha = 0.5 
-        self.cones[map_idx]['x'] = alpha * self.cones[map_idx]['x'] + (1 - alpha) * cone_obs[0]
-        self.cones[map_idx]['y'] = alpha * self.cones[map_idx]['y'] + (1 - alpha) * cone_obs[1]
+    def _update_cone(self, map_idx, cone_obs, update_color=False):
+        # --- 관측 횟수에 기반한 가중 평균으로 업데이트 로직 개선 ---
+        # 관측 횟수가 많을수록 기존 맵의 신뢰도를 높게, 새로운 관측의 영향은 적게
+        self.cones[map_idx]['observations'] += 1
+        n = self.cones[map_idx]['observations']
+        alpha = 1.0 / n  # 새로운 관측에 대한 가중치
+        self.cones[map_idx]['x'] = (1 - alpha) * self.cones[map_idx]['x'] + alpha * cone_obs[0]
+        self.cones[map_idx]['y'] = (1 - alpha) * self.cones[map_idx]['y'] + alpha * cone_obs[1]
+        if update_color:
+            self.cones[map_idx]['color_id'] = int(cone_obs[3])
 
     def get_cones(self):
         return self.cones
@@ -1439,6 +1487,14 @@ class PathPlanner:
         self.w_dist = rospy.get_param("/planning/path_planner/weight_dist", 0.3)
         self.w_angle = rospy.get_param("/planning/path_planner/weight_angle", 0.7)
         self.max_path_distance = rospy.get_param("/planning/path_planner/max_path_distance", 20.0)
+        
+        # --- 경로 계획기 관심 영역(ROI) 필터링 파라미터 ---
+        self.planner_roi_distance = rospy.get_param("/local_planning/trajectory/planner_roi_distance", 30.0)
+        self.planner_roi_angle_rad = math.radians(rospy.get_param("/local_planning/trajectory/planner_roi_angle", 90.0))
+        
+        # --- 경로 안정화를 위한 이동 평균 필터 추가 ---
+        self.path_direction_history = deque(maxlen=3) # 최근 3개의 경로 방향 벡터를 저장
+        self.path_direction_smoothing_factor = 0.6 # 새로운 방향 벡터에 대한 가중치
 
 
     def _normalize_angle(self, angle):
@@ -1524,9 +1580,16 @@ class PathPlanner:
         # Sort the rest based on a cost function of distance and angle
         while midpoints_list and len(ordered_path) >= 2:
             last_point = np.array(ordered_path[-1])
-            second_last_point = np.array(ordered_path[-2])
-            path_vec = last_point - second_last_point
-
+            
+            # --- 경로 방향성 계산 로직 개선 ---
+            # 직전 두 점이 아닌, 최근 경로의 전반적인 방향을 사용
+            current_path_vec = last_point - np.array(ordered_path[-2])
+            self.path_direction_history.append(current_path_vec / (np.linalg.norm(current_path_vec) + 1e-6))
+            
+            # 이동 평균을 사용하여 부드러운 경로 방향 벡터 계산
+            smooth_path_vec = np.mean(self.path_direction_history, axis=0)
+            smooth_path_vec /= (np.linalg.norm(smooth_path_vec) + 1e-6)
+            
             best_candidate_idx = -1
             min_cost = float('inf')
 
@@ -1540,13 +1603,10 @@ class PathPlanner:
                 candidate_vec = candidate_point - last_point
                 
                 # Angle relative to the current path segment
-                angle_path_segment = self._angle_between_vectors(path_vec, candidate_vec)
-                
-                # Angle relative to the car's overall direction (car_yaw) is not used here
-                # It was used in the previous version, but removed for simplicity.
+                angle_path_segment = self._angle_between_vectors(smooth_path_vec, candidate_vec)
 
                 # Combine these angles into the cost function
-                norm_dist = dist / (self.max_edge_length * 2.0)
+                norm_dist = dist / self.max_edge_length
                 norm_angle_path = angle_path_segment / math.pi
 
                 cost = self.w_dist * norm_dist + self.w_angle * norm_angle_path
@@ -1576,34 +1636,6 @@ class PathPlanner:
             # Check if the segment is going backward relative to the car's yaw
             angle_to_car_yaw = self._normalize_angle(math.atan2(segment_vec[1], segment_vec[0]) - car_yaw)
             
-            if abs(angle_to_car_yaw) > (math.pi / 1.5): # If segment is pointing more than 120 degrees away from car_yaw
-                # This segment is going backward or sharply sideways. Ignore this point.
-                continue
-            else:
-                corrected_path.append(p2)
-        
-        return np.array(corrected_path)
-
-    def _generate_straight_path(self, car_pos, car_yaw, length=5.0, num_points=5):
-        rospy.logwarn_throttle(1.0, "PathPlanner: Generating straight fallback path.")
-        direction_vec = np.array([math.cos(car_yaw), math.sin(car_yaw)])
-        path = [car_pos + direction_vec * i for i in np.linspace(0.5, length, num_points)]
-        return np.array(path)
-
-    def _correct_path_detours(self, path, car_yaw):
-        if len(path) < 2:
-            return path
-
-        corrected_path = [path[0]]
-        for i in range(len(path) - 1):
-            p1 = corrected_path[-1]
-            p2 = path[i+1]
-
-            segment_vec = p2 - p1
-            
-            # Check if the segment is going backward relative to the car's yaw
-            angle_to_car_yaw = self._normalize_angle(math.atan2(segment_vec[1], segment_vec[0]) - car_yaw)
-            
             if abs(angle_to_car_yaw) > (math.pi / 2.0): # If segment is pointing more than 90 degrees away from car_yaw
                 # This segment is going backward or sharply sideways. Ignore this point.
                 continue
@@ -1611,6 +1643,62 @@ class PathPlanner:
                 corrected_path.append(p2)
         
         return np.array(corrected_path)
+
+    def _is_valid_cone_pair(self, p1_idx, p2_idx, all_points, colors):
+        """
+        두 콘(p1, p2)이 유효한 중간점 생성 쌍인지 확인합니다.
+        규칙: p1과 p2를 잇는 직선 위에 p1과 같은 색의 다른 콘이 있으면 안 됩니다.
+        """
+        p1 = all_points[p1_idx]
+        p2 = all_points[p2_idx]
+        color1 = colors[p1_idx]
+
+        # p1에서 p2로 향하는 벡터
+        line_vec = p2 - p1
+        line_len_sq = np.dot(line_vec, line_vec)
+
+        if line_len_sq == 0:
+            return False
+
+        for i in range(len(all_points)):
+            if i == p1_idx or i == p2_idx or colors[i] != color1:
+                continue
+            
+            p3 = all_points[i]
+            # p3가 p1-p2 선분 위에 있는지 확인 (투영(projection) 사용)
+            dot_product = np.dot(p3 - p1, line_vec)
+            if 0 < dot_product < line_len_sq: # p3가 p1과 p2 사이에 투영되는 경우
+                # 선분과의 거리 계산
+                dist_to_line = np.linalg.norm(np.cross(line_vec, p1 - p3)) / np.linalg.norm(line_vec)
+                if dist_to_line < 1.5:  # 임계값 (1.5m)보다 가까우면 방해물로 간주
+                    return False # 유효하지 않은 쌍
+        return True
+
+    def _filter_cones_for_planning(self, cones, vehicle_state):
+        """
+        경로 계획에 사용할 콘을 차량 주변의 관심 영역(ROI)으로 필터링합니다.
+        """
+        car_pos = vehicle_state[:2]
+        car_yaw = vehicle_state[2]
+        
+        filtered_cones = []
+        for cone in cones:
+            cone_pos = np.array([cone['x'], cone['y']])
+            
+            # 1. 거리 필터
+            dist = np.linalg.norm(cone_pos - car_pos)
+            if dist > self.planner_roi_distance:
+                continue
+                
+            # 2. 각도 필터
+            angle_to_cone = math.atan2(cone_pos[1] - car_pos[1], cone_pos[0] - car_pos[0])
+            angle_diff = self._normalize_angle(angle_to_cone - car_yaw)
+            if abs(angle_diff) > self.planner_roi_angle_rad:
+                continue
+            
+            filtered_cones.append(cone)
+        return filtered_cones
+
     def plan_path(self, cones, vehicle_state):
         """
         Generates a driving path based on the detected cones.
@@ -1619,9 +1707,12 @@ class PathPlanner:
         """
         current_car_pos = vehicle_state[:2]
         vehicle_yaw = vehicle_state[2]
+
+        # --- 경로 계획에 사용할 콘 필터링 ---
+        local_cones = self._filter_cones_for_planning(cones, vehicle_state)
         
-        blue_cones = [c for c in cones if c['color_id'] == 1]
-        yellow_cones = [c for c in cones if c['color_id'] == 2]
+        blue_cones = [c for c in local_cones if c['color_id'] == 1]
+        yellow_cones = [c for c in local_cones if c['color_id'] == 2]
 
         # --- Condition for Delaunay Path ---
         if len(blue_cones) < 2 or len(yellow_cones) < 2:
@@ -1645,12 +1736,17 @@ class PathPlanner:
         # 3. Find centerline midpoints
         midpoints = []
         for simplex in tri.simplices:
+            indices = sorted(simplex) # 순서를 고정하여 중복 방지
             for i in range(3):
-                p1_idx, p2_idx = simplex[i], simplex[(i + 1) % 3]
+                p1_idx = indices[i]
+                p2_idx = indices[(i + 1) % 3]
+
+                # 색이 다른 두 콘을 연결하되, 유효한 쌍인지 검사
                 if colors[p1_idx] != colors[p2_idx]:
-                    p1, p2 = all_points[p1_idx], all_points[p2_idx]
-                    if np.linalg.norm(p1 - p2) < self.max_edge_length:
-                        midpoints.append((p1 + p2) / 2.0)
+                    if self._is_valid_cone_pair(p1_idx, p2_idx, all_points, colors) and \
+                       self._is_valid_cone_pair(p2_idx, p1_idx, all_points, colors):
+                        if np.linalg.norm(all_points[p1_idx] - all_points[p2_idx]) < self.max_edge_length:
+                            midpoints.append((all_points[p1_idx] + all_points[p2_idx]) / 2.0)
         
         if not midpoints:
             return None, tri, all_points, colors, None
@@ -1664,6 +1760,7 @@ class PathPlanner:
         if ordered_midpoints is None or len(ordered_midpoints) < 2:
             return None, tri, all_points, colors, unique_midpoints
 
+        self.path_direction_history.clear() # 새로운 계획 시작 시 방향 기록 초기화
         # Correct any detours in the path
         corrected_path = self._correct_path_detours(ordered_midpoints, vehicle_yaw)
 
@@ -1710,6 +1807,23 @@ class PathPlanner:
 
         return path, tri, all_points, colors, unique_midpoints
 
+    def _calculate_path_curvature(self, path, lookahead=5):
+        """경로의 각 지점에서 곡률을 계산합니다."""
+        curvatures = [0.0] * len(path)
+        if len(path) < 3:
+            return curvatures
+
+        for i in range(len(path)):
+            p_prev_idx = max(0, i - lookahead)
+            p_next_idx = min(len(path) - 1, i + lookahead)
+            
+            if p_prev_idx == i or p_next_idx == i: continue
+
+            p_prev, p_curr, p_next = path[p_prev_idx], path[i], path[p_next_idx]
+            # Menger Curvature: 세 점으로 곡률 근사
+            area = 0.5 * abs((p_prev[0]*(p_curr[1]-p_next[1]) + p_curr[0]*(p_next[1]-p_prev[1]) + p_next[0]*(p_prev[1]-p_curr[1])))
+            curvatures[i] = (4 * area) / (np.linalg.norm(p_prev-p_curr) * np.linalg.norm(p_curr-p_next) * np.linalg.norm(p_next-p_prev) + 1e-6)
+        return curvatures
 # ==================== Utility Classes ====================
 
 class GPSIMUProcessor:
@@ -2142,9 +2256,10 @@ class Control:
     """
     Main control class that manages and selects the active path tracking controller.
     """
-    def __init__(self):
+    def __init__(self, path_planner):
         # --- Controller Selection ---
         try:
+            self.path_planner = path_planner # PathPlanner 인스턴스를 멤버 변수로 저장
             self.controller_type = rospy.get_param("/control/ControllerSelection/lateral_controller_type", "PurePursuit")
         except (rospy.ROSException, KeyError):
             self.controller_type = "PurePursuit"
@@ -2160,6 +2275,11 @@ class Control:
         # Common
         self.target_speed = rospy.get_param("/control/SpeedControl/target_speed", 5.0) # m/s
         self.kp_throttle = rospy.get_param("/control/SpeedControl/pid_kp", 0.5)
+        
+        # --- 곡률 기반 속도 제어 파라미터 ---
+        self.max_speed = rospy.get_param("/control/SpeedControl/target_speed", 5.0)
+        self.min_speed = rospy.get_param("/control/SpeedControl/min_speed", 2.0) # 코너 최소 속도
+        self.curvature_speed_factor = rospy.get_param("/control/SpeedControl/curvature_factor", 2.5) # 곡률에 따른 감속 강도
 
         # Pure Pursuit
         self.lookahead_dist = rospy.get_param("/control/pure_pursuit/lookahead_distance", 2.5)
@@ -2204,6 +2324,14 @@ class Control:
         veh_x, veh_y, veh_yaw = vehicle_state[0], vehicle_state[1], vehicle_state[2]
         current_speed = math.sqrt(vehicle_state[3]**2 + vehicle_state[4]**2)
 
+        # --- 곡률 기반 목표 속도 계산 ---
+        path_curvatures = self.path_planner._calculate_path_curvature(path)
+        # 전방 경로의 평균 곡률 계산 (예: 앞 10개 포인트)
+        lookahead_curvatures = path_curvatures[:10]
+        avg_curvature = np.mean(lookahead_curvatures) if lookahead_curvatures else 0.0
+        target_speed = self.max_speed / (1.0 + self.curvature_speed_factor * abs(avg_curvature))
+        target_speed = np.clip(target_speed, self.min_speed, self.max_speed)
+
         # 1. Find the closest point on the path to the vehicle
         path_points = np.array(path)
         distances = np.linalg.norm(path_points - np.array([veh_x, veh_y]), axis=1)
@@ -2233,11 +2361,11 @@ class Control:
         steer = -np.clip(steer, -self.max_steer, self.max_steer)
 
         # 5. Throttle control
-        throttle = self.kp_throttle * (self.target_speed - current_speed)
+        throttle = self.kp_throttle * (target_speed - current_speed)
         throttle = np.clip(throttle, 0.0, 1.0)
         
         brake = 0.0
-        if self.target_speed < current_speed:
+        if target_speed < current_speed:
             brake = 0.1
 
         # Normalize steering angle to [-1, 1]
@@ -2252,6 +2380,14 @@ class Control:
         # Unpack vehicle state
         veh_x, veh_y, veh_yaw = vehicle_state[0], vehicle_state[1], vehicle_state[2]
         current_speed = math.sqrt(vehicle_state[3]**2 + vehicle_state[4]**2)
+
+        # --- 곡률 기반 목표 속도 계산 ---
+        path_curvatures = self.path_planner._calculate_path_curvature(path)
+        # 전방 경로의 평균 곡률 계산 (예: 앞 10개 포인트)
+        lookahead_curvatures = path_curvatures[:10]
+        avg_curvature = np.mean(lookahead_curvatures) if lookahead_curvatures else 0.0
+        target_speed = self.max_speed / (1.0 + self.curvature_speed_factor * abs(avg_curvature))
+        target_speed = np.clip(target_speed, self.min_speed, self.max_speed)
 
         # 1. Find the closest path point (target_idx)
         path_points = np.array(path)
@@ -2289,11 +2425,11 @@ class Control:
         steer = -np.clip(steer, -self.max_steer, self.max_steer)
 
         # 6. Throttle control (reusing the same P-controller)
-        throttle = self.kp_throttle * (self.target_speed - current_speed)
+        throttle = self.kp_throttle * (target_speed - current_speed)
         throttle = np.clip(throttle, 0.0, 1.0)
         
         brake = 0.0
-        if self.target_speed < current_speed:
+        if target_speed < current_speed:
             brake = 0.1
 
         # Normalize steering angle to [-1, 1]
@@ -2348,7 +2484,7 @@ class Control:
 
             cost += self.w_cte * cte**2
             cost += self.w_etheta * etheta**2
-            cost += self.w_v * (self.target_speed - pred_v)**2
+            cost += self.w_v * (self.max_speed - pred_v)**2 # MPC는 최고 속도를 목표로 추종
 
         # Control input cost
         cost += self.w_accel * np.sum(accels**2)
@@ -2365,6 +2501,14 @@ class Control:
         veh_x, veh_y, veh_yaw = vehicle_state[0], vehicle_state[1], vehicle_state[2]
         current_speed = math.sqrt(vehicle_state[3]**2 + vehicle_state[4]**2)
         initial_state = [veh_x, veh_y, veh_yaw, current_speed]
+
+        # --- 곡률 기반 목표 속도 계산 (MPC에서는 비용 함수에 반영) ---
+        path_curvatures = self.path_planner._calculate_path_curvature(path)
+        lookahead_curvatures = path_curvatures[:10]
+        avg_curvature = np.mean(lookahead_curvatures) if lookahead_curvatures else 0.0
+        # MPC에서는 최고 속도를 목표로 하되, 비용 함수에서 속도와 조향각의 균형을 맞춤
+        # 여기서는 self.max_speed를 비용 함수에서 사용하도록 놔둡니다.
+        # 대신, 급격한 조향에 대한 페널티(w_steer_rate)가 감속 효과를 유도합니다.
 
         # Get reference path for the horizon
         path_points = np.array(path)
