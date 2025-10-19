@@ -1,6 +1,7 @@
 <<<<<<< HEAD
 <<<<<<< HEAD
 <<<<<<< HEAD
+<<<<<<< HEAD
 **/build/
 **/devel/
 =======
@@ -15,6 +16,10 @@
 build/
 devel/
 >>>>>>> f
+=======
+**/build/
+**/devel/
+>>>>>>> g
 
 *.avi
 *.csv
