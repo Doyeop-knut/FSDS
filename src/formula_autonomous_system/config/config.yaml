@@ -13,10 +13,14 @@ system:
 =======
   main_loop_rate: 1000.0 # [Hz]
   visualization:
-    enable_visualization: true # Enable or disable all ROS and OpenCV visualizations
+    enable_visualization: false # Enable or disable all ROS and OpenCV visualizations
   logging:
+<<<<<<< HEAD
     enable_logging: false # Enable or disable data logging
 >>>>>>> [control] 251020 @Doyeop-knut | MPC 제어기 파라미터 수정 -> 증속 후 파라미터 수정 필요
+=======
+    enable_logging: true # Enable or disable data logging
+>>>>>>> [dataLogger] 251020 @Doyeop-knut | Log 수정, [cone hit = 54], total time = 255.149sec
 
 perception:
   # ===========================================
