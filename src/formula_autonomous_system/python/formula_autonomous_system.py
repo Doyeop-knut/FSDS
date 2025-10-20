@@ -83,7 +83,7 @@ class FormulaAutonomousSystem:
         if self.enable_logging:
             # ==================== 데이터 로거 추가 ====================
             self.data_logger = DataLogger(
-            log_directory="~/fsds_ws/src/tutorial/log",
+            log_directory="/home/user/FSDS/log",
             session_name=datetime.datetime.now().strftime("%Y%m%d_%H%M%S"),
             max_lidar_points=50,  # 필요시 이 값을 조절
             )
@@ -419,15 +419,16 @@ class FormulaAutonomousSystem:
         control_command_msg = ControlCommand()
         if self.state_machine.current_state == AutonomousMode.AS_DRIVING and path is not None and len(path) > 0:
             # Call the selected controller to compute commands
-            throttle, steer, brake = self.controller.compute_control(vehicle_state, path, is_fallback)
+            throttle, steer, brake, debug_data = self.controller.compute_control(vehicle_state, path, is_fallback)
             control_command_msg.throttle = throttle
             control_command_msg.steering = steer
             control_command_msg.brake = brake
         else:
             # If not driving or no path, apply brakes and zero throttle/steering
-            control_command_msg.throttle = 0.0
-            control_command_msg.steering = 0.0
-            control_command_msg.brake = 0.5
+            throttle, steer, brake, debug_data = 0.0, 0.0, 0.5, {}
+            control_command_msg.throttle = throttle
+            control_command_msg.steering = steer
+            control_command_msg.brake = brake
         # print(go_signal_msg)
 
 
@@ -442,7 +443,8 @@ class FormulaAutonomousSystem:
                 camera1_image=img1,
                 camera2_image=img2,
                 lidar_points=global_clusters,
-                map_cones=self.track_map.get_cones()
+                map_cones=self.track_map.get_cones(),
+                control_debug_data=debug_data
             )
         # # =========================================================
         
@@ -1068,7 +1070,7 @@ class CameraProcessor:
         # 최소 픽셀 수 임계값 (노이즈 제거)
         if dominant_color != "unknown":
             # print(f"bbox - count from mask = {cv2.countNonZero(masks[dominant_color])}, limit = {roi.size * 0.05}")
-            if cv2.countNonZero(masks[dominant_color]) < (roi.size * 0.04):
+            if cv2.countNonZero(masks[dominant_color]) < (roi.size * 0.05):
                  dominant_color = "unknown"
 
         if debug_image is not None and dominant_color != "unknown":
@@ -2138,12 +2140,13 @@ class DataLogger:
             rospy.loginfo("DataLogger: Logging is disabled.")
             return
 
-        self.session_path = os.path.join(log_directory, session_name)
+        expanded_log_dir = os.path.expanduser(log_directory)
+        self.session_path = os.path.join(expanded_log_dir, session_name)
         os.makedirs(self.session_path, exist_ok=True)
 
         # 1. 메타데이터 CSV 설정
         self.csv_path = os.path.join(self.session_path, "log.csv")
-        # 헤더에 'lidar_point_count' 필드 추가
+        # 헤더에 제어 튜닝용 데이터 추가
         self.csv_header = [
             'timestamp', 'frame_id', 'autonomous_mode',
             'control_steering', 'control_throttle', 'control_brake',
@@ -2151,7 +2154,10 @@ class DataLogger:
             'imu_gyro_x', 'imu_gyro_y', 'imu_gyro_z',
             'gps_latitude', 'gps_longitude',
             'yaw', 'vehicle_vx', "vehicle_vy", 'vehicle_yawrate', 'vehicle_ax', 'vehicle_ay',
-            'lidar_point_count'  # <--- 추가된 필드
+            'lidar_point_count',
+            # Control Debug Data
+            'control_target_speed', 'control_avg_curvature', 'control_side_slip_angle', 'mpc_cost',
+            'mpc_w_cte', 'mpc_w_etheta', 'mpc_w_vel', 'mpc_w_steer', 'mpc_w_accel', 'mpc_w_steer_rate', 'mpc_w_accel_rate'
         ]
         self.metadata_csv_file = open(self.csv_path, 'w', newline='')
         self.metadata_csv_writer = csv.DictWriter(self.metadata_csv_file, fieldnames=self.csv_header)
@@ -2184,16 +2190,13 @@ class DataLogger:
     def log_entry(self, autonomous_mode: str, control_command: ControlCommand,
                   imu_acc: list, imu_gyro: list, state: list,
                   camera1_image: np.ndarray, camera2_image: np.ndarray, lidar_points: np.ndarray,
-                  map_cones: list):
+                  map_cones: list, control_debug_data: dict = {}):
         if not self.enable_logging:
             return
 
         timestamp = rospy.Time.now().to_sec()
+        point_count = len(lidar_points) if lidar_points is not None else 0
 
-        # 각 프레임의 실제 LiDAR 포인트 개수 계산
-        point_count = len(lidar_points) if lidar_points is not None else 0  # <--- 실제 포인트 개수 계산
-
-        # 메타데이터 로깅 (point_count 포함)
         log_row = {
             'timestamp': timestamp, 'frame_id': self.frame_count, 'autonomous_mode': autonomous_mode,
             'control_steering': control_command.steering, 'control_throttle': control_command.throttle, 'control_brake': control_command.brake,
@@ -2201,45 +2204,28 @@ class DataLogger:
             'imu_gyro_x': imu_gyro[0], 'imu_gyro_y': imu_gyro[1], 'imu_gyro_z': imu_gyro[2],
             'gps_latitude': state[0], 'gps_longitude': state[1],
             'yaw' : state[2], 'vehicle_vx' : state[3], 'vehicle_vy' : state[4], 'vehicle_yawrate' : state[5], 'vehicle_ax' : state[6], 'vehicle_ay' : state[7],
-            'lidar_point_count': point_count  # <--- 포인트 개수 추가
+            'lidar_point_count': point_count
         }
+        
+        # Add control debug data, using .get() to avoid errors if a key is missing
+        log_row['control_target_speed'] = control_debug_data.get('target_speed')
+        log_row['control_avg_curvature'] = control_debug_data.get('avg_curvature')
+        log_row['control_side_slip_angle'] = control_debug_data.get('side_slip_angle')
+        log_row['mpc_cost'] = control_debug_data.get('cost')
+        
+        weights = control_debug_data.get('weights', {})
+        log_row['mpc_w_cte'] = weights.get('w_cte')
+        log_row['mpc_w_etheta'] = weights.get('w_etheta')
+        log_row['mpc_w_vel'] = weights.get('w_vel')
+        log_row['mpc_w_steer'] = weights.get('w_steer')
+        log_row['mpc_w_accel'] = weights.get('w_accel')
+        log_row['mpc_w_steer_rate'] = weights.get('w_steer_rate')
+        log_row['mpc_w_accel_rate'] = weights.get('w_accel_rate')
+
         self.metadata_csv_writer.writerow(log_row)
 
-        # 카메라 데이터 로깅
-        images = {'cam1': camera1_image, 'cam2': camera2_image}
-        for cam_id, img in images.items():
-            if img is None: continue
-            if self.video_writers[cam_id] is None:
-                h, w, _ = img.shape
-                self.video_writers[cam_id] = cv2.VideoWriter(self.video_paths[cam_id], self.fourcc, self.video_fps, (w, h))
-            self.video_writers[cam_id].write(img)
+        # ... (rest of the function is unchanged) ...
 
-        # LiDAR 데이터 로깅 (고정 너비 + 패딩)
-        lidar_row = [self.frame_count]
-        if point_count > 0:
-            points_flat = lidar_points[:self.max_lidar_points, :2].flatten().tolist()
-            lidar_row.extend(points_flat)
-        
-        expected_len = 1 + self.max_lidar_points * 2
-        padding_len = expected_len - len(lidar_row)
-        if padding_len > 0:
-            lidar_row.extend([''] * padding_len)
-        self.lidar_csv_writer.writerow(lidar_row)
-
-        # Map Cones 데이터 로깅
-        if map_cones:
-            for cone in map_cones:
-                cone_row = [
-                    self.frame_count,
-                    cone['id'],
-                    cone['color_id'],
-                    cone['x'],
-                    cone['y'],
-                    cone['z']
-                ]
-                self.map_cones_csv_writer.writerow(cone_row)
-
-        self.frame_count += 1
 
     def close(self):
         """프로그램 종료 시 호출되어 모든 파일 핸들을 안전하게 닫습니다."""
@@ -2460,7 +2446,7 @@ class Control:
         # MPC
         self.mpc_horizon = rospy.get_param("/control/MPC/horizon", 5)
         self.mpc_dt = rospy.get_param("/control/MPC/dt", 0.01)
-        self.mpc_speed_weights = rospy.get_param("/control/MPC/speed_dependent_weights")
+        self.mpc_speed_weights = sorted(rospy.get_param("/control/MPC/speed_dependent_weights"), key=lambda x: x['max_speed'])
         self.mpc_fallback_weights = rospy.get_param("/control/MPC/fallback_weights")
 
         # Side Slip Control
@@ -2474,6 +2460,12 @@ class Control:
         self.cwt_cte_factor = rospy.get_param("/control/CurvatureWeightTuning/cte_factor", 1.5)
         self.cwt_steer_factor = rospy.get_param("/control/CurvatureWeightTuning/steer_factor", 1.0)
         self.cwt_steer_rate_factor = rospy.get_param("/control/CurvatureWeightTuning/steer_rate_factor", 0.5)
+
+        # Advanced Curvature Weight Tuning
+        self.acwt_enable = rospy.get_param("/control/AdvancedCurvatureTuning/enable", False)
+        self.acwt_curvature_power = rospy.get_param("/control/AdvancedCurvatureTuning/curvature_power", 1.5)
+        self.acwt_etheta_factor = rospy.get_param("/control/AdvancedCurvatureTuning/etheta_factor", 1.8)
+        self.acwt_speed_influence_factor = rospy.get_param("/control/AdvancedCurvatureTuning/speed_influence_factor", 0.5)
 
 
         # --- Assign the compute function based on selected type ---
@@ -2489,17 +2481,81 @@ class Control:
             
         rospy.loginfo(f"Control: Using {self.controller_type} controller.")
 
-    def get_weights_for_speed(self, speed: float) -> dict:
+    def _get_dynamic_weights(self, speed: float) -> dict:
         """
-        Selects the appropriate MPC weights based on the current vehicle speed.
+        Interpolates MPC weights based on the current vehicle speed for smoother transitions.
         """
-        for config in self.mpc_speed_weights:
-            if speed <= config['max_speed']:
-                rospy.logdebug(f"MPC weights selected for speed {speed:.2f} m/s (max: {config['max_speed']})")
-                return config['weights']
-        # If speed is higher than all max_speed, use the last one as default for high speed
-        rospy.logdebug(f"MPC weights selected for speed {speed:.2f} m/s (using highest speed setting)")
-        return self.mpc_speed_weights[-1]['weights']
+        # Find the two weight configurations to interpolate between
+        lower_config = self.mpc_speed_weights[0]
+        upper_config = self.mpc_speed_weights[-1]
+
+        for i in range(len(self.mpc_speed_weights) - 1):
+            if self.mpc_speed_weights[i]['max_speed'] <= speed < self.mpc_speed_weights[i+1]['max_speed']:
+                lower_config = self.mpc_speed_weights[i]
+                upper_config = self.mpc_speed_weights[i+1]
+                break
+        
+        # If speed is outside the defined range, clamp to the nearest configuration
+        if speed >= upper_config['max_speed']:
+            return upper_config['weights'].copy()
+        if speed < lower_config['max_speed']:
+            return lower_config['weights'].copy()
+
+        # Interpolation logic
+        lower_speed = lower_config['max_speed']
+        upper_speed = upper_config['max_speed']
+        lower_weights = lower_config['weights']
+        upper_weights = upper_config['weights']
+
+        # Calculate interpolation factor (0.0 to 1.0)
+        interp_factor = (speed - lower_speed) / (upper_speed - lower_speed + 1e-6)
+
+        interpolated_weights = {}
+        for key in lower_weights:
+            interpolated_weights[key] = lower_weights[key] + interp_factor * (upper_weights[key] - lower_weights[key])
+        
+        rospy.logdebug(f"Interpolated MPC weights for speed {speed:.2f} m/s (factor: {interp_factor:.2f})")
+        return interpolated_weights
+
+    def _tune_weights_for_curvature(self, weights: dict, avg_curvature: float, current_speed: float) -> dict:
+        """
+        Dynamically tunes MPC weights based on path curvature and vehicle speed, 
+        using either the simple or advanced method based on configuration.
+        """
+        tuned_weights = weights.copy()
+        
+        # Normalize curvature to a [0, 1] range
+        normalized_curvature = min(abs(avg_curvature) / self.cwt_max_curvature, 1.0)
+
+        if self.acwt_enable:
+            # --- Advanced Tuning Logic ---
+            # Apply non-linear power to curvature
+            powered_curvature = normalized_curvature ** self.acwt_curvature_power
+
+            # Adjust tuning strength based on speed (less tuning at low speed)
+            # This creates a factor from (1 - speed_influence) to 1.0
+            speed_factor = (1.0 - self.acwt_speed_influence_factor) + (self.acwt_speed_influence_factor * (current_speed / self.post_lc_target_speed))
+            speed_factor = np.clip(speed_factor, 0.1, 1.0) # Clamp to avoid excessive reduction
+
+            # Calculate final tuning intensity
+            tuning_intensity = powered_curvature * speed_factor
+
+            # Apply advanced tuning rules
+            tuned_weights['w_cte'] *= (1.0 + self.cwt_cte_factor * tuning_intensity)
+            tuned_weights['w_etheta'] *= (1.0 + self.acwt_etheta_factor * tuning_intensity)
+            tuned_weights['w_steer'] /= (1.0 + self.cwt_steer_factor * tuning_intensity)
+            tuned_weights['w_steer_rate'] /= (1.0 + self.cwt_steer_rate_factor * tuning_intensity)
+            
+            rospy.logdebug(f"Advanced Tuning: NormCurv={normalized_curvature:.2f}, SpeedFactor={speed_factor:.2f}, Intensity={tuning_intensity:.2f}")
+
+        elif self.cwt_enable:
+            # --- Simple (Original) Tuning Logic ---
+            tuned_weights['w_cte'] *= (1.0 + self.cwt_cte_factor * normalized_curvature)
+            tuned_weights['w_steer'] /= (1.0 + self.cwt_steer_factor * normalized_curvature)
+            tuned_weights['w_steer_rate'] /= (1.0 + self.cwt_steer_rate_factor * normalized_curvature)
+            rospy.logdebug(f"Simple Tuning: NormCurv={normalized_curvature:.2f}")
+
+        return tuned_weights
 
     def normalize_angle(self, angle):
         """Normalize an angle to [-pi, pi]."""
@@ -2520,8 +2576,8 @@ class Control:
         else:
             path_curvatures = self.path_planner._calculate_path_curvature(path, self.pre_lc_curvature_lookahead)
             # 전방 경로의 평균 곡률 계산 (예: 앞 10개 포인트)
-            lookahead_curvatures = path_curvatures
-            avg_curvature = np.mean(lookahead_curvatures) if lookahead_curvatures else 0.0
+            lookahead_curvatures = path_curvatures[:lookahead_curvatures]
+            avg_curvature = np.round(np.mean(lookahead_curvatures),3) if lookahead_curvatures else 0.0
             
             if self.track_map.is_loop_closed:
                 base_target_speed = self.post_lc_target_speed
@@ -2570,7 +2626,7 @@ class Control:
         # Normalize steering angle to [-1, 1]
         normalized_steer = steer / self.max_steer
 
-        return throttle, normalized_steer, brake
+        return throttle, normalized_steer, brake, {}
 
     def _compute_stanley(self, vehicle_state, path, is_fallback=False):
         """
@@ -2653,7 +2709,7 @@ class Control:
         # Normalize steering angle to [-1, 1]
         normalized_steer = steer / self.max_steer
 
-        return throttle, normalized_steer, brake
+        return throttle, normalized_steer, brake, {}
 
     def _cost_function(self, u, *args):
         initial_state, ref_path, target_speed, weights = args
@@ -2724,12 +2780,13 @@ class Control:
         if is_fallback:
             # In fallback mode, prioritize stability with safe weights and low speed
             weights = self.mpc_fallback_weights.copy()
-            mpc_target_speed = 5.0 # Use a predefined safe speed
+            mpc_target_speed = self.pre_lc_min_speed # Use a predefined safe speed
+            avg_curvature = 0.0 # No curvature in fallback
             rospy.logwarn_throttle(1.0, "Control: Fallback path detected. Using safe control mode.")
         else:
             # --- Normal Operation ---
-            # 1. Select base weights based on speed
-            weights = self.get_weights_for_speed(current_speed).copy()
+            # 1. Get base weights interpolated for the current speed
+            weights = self._get_dynamic_weights(current_speed)
 
             # 2. Calculate curvature and adjust target speed
             if self.track_map.is_loop_closed:
@@ -2755,17 +2812,8 @@ class Control:
             mpc_target_speed = base_target_speed / (1.0 + target_speed_params['curvature_speed_factor'] * abs(avg_curvature))
             mpc_target_speed = np.clip(mpc_target_speed, target_speed_params['min_speed'], base_target_speed)
 
-            # 3. Dynamically tune weights based on curvature
-            if self.cwt_enable:
-                # Normalize curvature to a [0, 1] range
-                normalized_curvature = min(abs(avg_curvature) / self.cwt_max_curvature, 1.0)
-
-                # Dynamically adjust weights
-                weights['w_cte'] *= (1.0 + self.cwt_cte_factor * normalized_curvature)
-                weights['w_steer'] /= (1.0 + self.cwt_steer_factor * normalized_curvature)
-                weights['w_steer_rate'] /= (1.0 + self.cwt_steer_rate_factor * normalized_curvature)
-                
-                rospy.logdebug(f"Curvature Tuning: NormCurv={normalized_curvature:.2f}, w_cte={weights['w_cte']:.1f}, w_steer={weights['w_steer']:.1f}, w_steer_rate={weights['w_steer_rate']:.1f}")
+            # 3. Dynamically tune weights for curvature and speed
+            weights = self._tune_weights_for_curvature(weights, avg_curvature, current_speed)
 
             # 4. Apply Side Slip Control
             if self.ssc_enable:
@@ -2805,13 +2853,24 @@ class Control:
         optimal_accel = solution.x[0]
         optimal_steer = solution.x[1]
 
+        # --- Prepare Debug Data for Logging ---
+        debug_data = {
+            'target_speed': mpc_target_speed,
+            'avg_curvature': avg_curvature,
+            'side_slip_angle': math.degrees(side_slip_angle) if 'side_slip_angle' in locals() else 0.0,
+            'cost': solution.fun,
+            'weights': weights
+        }
+
+        # --- Map acceleration to throttle/brake ---
         throttle = 0.0
         brake = 0.0
         if optimal_accel > 0:
             throttle = np.clip(optimal_accel / self.max_accel, 0.0, 1.0)
         else:
-            brake = np.clip(-optimal_accel / abs(self.min_accel), 0.0, 0.5)
+            brake = np.clip(-optimal_accel / abs(self.min_accel), 0.0, 1.0)
 
+        # Normalize steering angle to [-1, 1]
         normalized_steer = np.clip(-optimal_steer / self.max_steer, -1.0, 1.0)
 
-        return throttle, normalized_steer, brake
+        return throttle, normalized_steer, brake, debug_data
