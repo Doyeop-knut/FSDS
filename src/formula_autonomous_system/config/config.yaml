@@ -13,7 +13,7 @@ system:
 =======
   main_loop_rate: 1000.0 # [Hz]
   visualization:
-    enable_visualization: false # Enable or disable all ROS and OpenCV visualizations
+    enable_visualization: true # Enable or disable all ROS and OpenCV visualizations
   logging:
 <<<<<<< HEAD
     enable_logging: false # Enable or disable data logging
@@ -38,8 +38,8 @@ perception:
 =======
     x_min: 0.0
     x_max: 150.0
-    y_min: -30.0
-    y_max: 30.0
+    y_min: -50.0
+    y_max: 50.0
     z_min: -10.0
 >>>>>>> [control] 251016 @Doyeop-knut | 자잘한 수정
     z_max: 10.0
@@ -275,16 +275,21 @@ perception:
 =======
     hue_min: 15
     hue_max: 45
+<<<<<<< HEAD
     saturation_min: 36
     value_min: 100
 >>>>>>> [control] 251020 @Doyeop-knut | MPC 제어기 수정 (cone hit = 53, total time = 254.064sec (@Test3 Map)
+=======
+    saturation_min: 20
+    value_min: 30
+>>>>>>> [cone Detection] 251020 @Doyeop-knut | 범위 수정
 
   camera_hsv_blue:
     # HSV thresholds for blue cone detection
     hue_min: 90
     hue_max: 110
-    saturation_min: 75
-    value_min: 100
+    saturation_min: 70
+    value_min: 50
 
   camera_hsv_orange:
     # HSV thresholds for orange cone detection
@@ -384,7 +389,7 @@ planning:
     spline_smoothing_factor: 0.5
     
     # Cone-based path planning (meters)
-    max_cone_distance: 10.0
+    max_cone_distance: 100.0
     lane_offset: 2.5
     
     # Safety parameters (meters)
@@ -408,9 +413,9 @@ mapping:
 planning:
   path_planner:
     max_edge_length: 5.0 # Max distance between connected midpoints in path planning
-    path_obstacle_threshold: 1.5 # Minimum clearance distance for a path segment to be valid
-    weight_dist: 0.8
-    weight_angle: 0.2
+    path_obstacle_threshold: 2.0 # Minimum clearance distance for a path segment to be valid
+    weight_dist: 0.3
+    weight_angle: 0.7
     max_path_distance: 100.0 # Max distance for the planned path
     spline_smoothing_factor: 1.0 # Smoothing factor for path spline
 
@@ -485,41 +490,23 @@ control:
     horizon: 5
     dt: 0.01
     speed_dependent_weights:
-      - max_speed: 5.0 # Smoother Optimization
+      - max_speed: 27.0 # Super-Smooth-Cornering weights
         weights:
-          w_cte: 25.0
-          w_etheta: 40.0
+          w_cte: 1500.0
+          w_etheta: 300.0
           w_vel: 20.0
-          w_steer: 5.0
-          w_accel: 30.0
-          w_steer_rate: 200.0
-          w_accel_rate: 100.0
-      - max_speed: 10.0 # Smoother Optimization
-        weights:
-          w_cte: 100.0
-          w_etheta: 80.0
-          w_vel: 15.0
-          w_steer: 7.0
-          w_accel: 20.0
-          w_steer_rate: 145.0
-          w_accel_rate: 100.0
-      - max_speed: 99.0 # Smoother Optimization
-        weights:
-          w_cte: 200.0
-          w_etheta: 200.0
-          w_vel: 10.0
           w_steer: 40.0
-          w_accel: 10.0
-          w_steer_rate: 2000.0
+          w_accel: 30.0
+          w_steer_rate: 150.0
           w_accel_rate: 500.0
     fallback_weights:
-      w_cte: 100.0
-      w_etheta: 50.0
-      w_vel: 25.0
-      w_steer: 10.0
-      w_accel: 30.0
-      w_steer_rate: 200.0
-      w_accel_rate: 100.0
+      w_cte: 600.0
+      w_etheta: 120.0
+      w_vel: 40.0
+      w_steer: 40.0
+      w_accel: 20.0
+      w_steer_rate: 100.0
+      w_accel_rate: 50.0
 
   SpeedControl:
 <<<<<<< HEAD
@@ -556,11 +543,12 @@ control:
     pid_kd: 0.005
     max_throttle: 1.0
     pre_loop_closure:
-      target_speed: 8.0
-      min_speed: 6.0 # 코너 최소 속도
-      curvature_speed_factor: 30.0 # 곡률에 따른 감속 강도
+      target_speed: 7.0
+      min_speed: 4.0 # 코너 최소 속도
+      curvature_speed_factor: 40.0 # 곡률에 따른 감속 강도
       curvature_lookahead: 3 # 곡률 계산 시 참고할 포인트 거리
     post_loop_closure:
+<<<<<<< HEAD
 <<<<<<< HEAD
       target_speed: 10.0 # Target speed after loop closure
       min_speed: 2.0 # 코너 최소 속도 (더 공격적인 코너링을 위해 낮춤)
@@ -571,6 +559,11 @@ control:
       target_speed: 15.0 # Target speed after loop closure
       min_speed: 7.0 # 코너 최소 속도 (더 공격적인 코너링을 위해 낮춤)
       curvature_speed_factor: 55.0 # 곡률에 따른 감속 강도 (더 공격적인 코너링을 위해 낮춤)
+=======
+      target_speed: 9.0 # Target speed after loop closure
+      min_speed: 5.0 # 코너 최소 속도 (더 공격적인 코너링을 위해 낮춤)
+      curvature_speed_factor: 35.0 # 곡률에 따른 감속 강도 (더 공격적인 코너링을 위해 낮춤)
+>>>>>>> [cone Detection] 251020 @Doyeop-knut | 범위 수정
       curvature_lookahead: 3 # 곡률 계산 시 참고할 포인트 거리
 >>>>>>> [control] 251020 @Doyeop-knut | MPC 제어기 수정 (cone hit = 53, total time = 254.064sec (@Test3 Map)
 
@@ -580,6 +573,7 @@ control:
     min_accel : -0.5
 
   SideSlipControl:
+<<<<<<< HEAD
 <<<<<<< HEAD
     enable: false
     slip_angle_threshold: 0.2 # radians (approx 5.7 degrees)
@@ -637,15 +631,36 @@ system:
     enable: true
     slip_angle_threshold: 0.3 # radians (approx 5.7 degrees)
     speed_reduction_factor: 0.3 # Reduce target speed to 80%
+=======
+    enable: false
+    slip_angle_threshold: 0.2 # radians (approx 5.7 degrees)
+    speed_reduction_factor: 0.5 # Reduce target speed to 80%
+>>>>>>> [cone Detection] 251020 @Doyeop-knut | 범위 수정
 
   CurvatureWeightTuning:
-    enable: true
+    enable: false
     # 튜닝 효과를 최대로 받을 곡률 값 (이 값을 넘는 곡률에서는 최대치로 적용)
-    max_curvature_for_tuning: 0.9
+    max_curvature_for_tuning: 1.3
     # 곡률이 커질수록 w_cte 가중치를 얼마나 더 증가시킬지 결정하는 계수
-    cte_factor: 1.5
+    cte_factor: 2.2
     # 곡률이 커질수록 w_steer 가중치를 얼마나 더 감소시킬지 결정하는 계수
+<<<<<<< HEAD
     steer_factor: 1.3
     # 곡률이 커질수록 w_steer_rate 가중치를 얼마나 더 감소시킬지 결정하는 계수
     steer_rate_factor: 1.3
 >>>>>>> [control] 251020 @Doyeop-knut | MPC 제어기 수정 (cone hit = 53, total time = 254.064sec (@Test3 Map)
+=======
+    steer_factor: 1.2
+        # 곡률이 커질수록 w_steer_rate 가중치를 얼마나 더 감소시킬지 결정하는 계수
+    steer_rate_factor: 1.2
+    
+  AdvancedCurvatureTuning:
+    enable: false
+    # 비선형적 곡률 반응을 위한 지수 (1.0 = 선형, >1.0 = 곡률이 클수록 더 강하게 반응)
+    curvature_power: 1.5
+    # 곡률에 따른 헤딩 오차(etheta) 가중치 증가 계수
+    etheta_factor: 1.8
+    # 저속에서 곡률 튜닝의 영향을 줄이는 속도 계수 (0~1, 1에 가까울수록 속도 영향 큼)
+    speed_influence_factor: 0.5
+    
+>>>>>>> [cone Detection] 251020 @Doyeop-knut | 범위 수정
