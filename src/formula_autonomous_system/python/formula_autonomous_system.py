@@ -785,6 +785,7 @@ class FormulaAutonomousSystem:
 <<<<<<< HEAD
 <<<<<<< HEAD
 <<<<<<< HEAD
+<<<<<<< HEAD
         # rospy.loginfo_throttle(0.001,f"v = {round(math.sqrt(vehicle_state[3]**2 + vehicle_state[4]**2),4)} m/s")
 =======
 >>>>>>> [ConeDetection] 251008 @Doyeop-knut | map TF
@@ -798,6 +799,9 @@ class FormulaAutonomousSystem:
 =======
         rospy.loginfo_throttle(1.0,f"v = {round(math.sqrt(vehicle_state[3]**2 + vehicle_state[4]**2),4)} m/s")
 >>>>>>> [yolo]
+=======
+        # rospy.loginfo_throttle(0.001,f"v = {round(math.sqrt(vehicle_state[3]**2 + vehicle_state[4]**2),4)} m/s")
+>>>>>>> [control] 251020 @Doyeop-knut | MPC 제어기 수정 (cone hit = 53, total time = 254.064sec (@Test3 Map)
         ## LiDAR Processed
         points=self.get_lidar_point_cloud(lidar_msg)
         filtered = self.lidar_util.filtering_points(points, (self.x_min, self.x_max), (self.y_min, self.y_max), (self.z_min, self.z_max))
@@ -9129,7 +9133,7 @@ class PathPlanner:
         if dominant_color != "unknown":
             # 점수 계산에 사용된 픽셀 수가 전체 ROI의 5% 미만이면 노이즈로 간주
             # print(f"LiDAR - count from mask = {cv2.countNonZero(masks[dominant_color])}, limit = {roi.size * 0.05}")
-            if cv2.countNonZero(masks[dominant_color]) < (roi.size * 0.04):
+            if cv2.countNonZero(masks[dominant_color]) < (roi.size * 0.05):
                  dominant_color = "unknown"
 
         if debug_image is not None and dominant_color != "unknown":
@@ -9315,7 +9319,7 @@ class PathPlanner:
         # 최소 픽셀 수 임계값 (노이즈 제거)
         if dominant_color != "unknown":
             # print(f"bbox - count from mask = {cv2.countNonZero(masks[dominant_color])}, limit = {roi.size * 0.05}")
-            if cv2.countNonZero(masks[dominant_color]) < (roi.size * 0.05):
+            if cv2.countNonZero(masks[dominant_color]) < (roi.size * 0.04):
                  dominant_color = "unknown"
 
         if debug_image is not None and dominant_color != "unknown":
@@ -10143,12 +10147,16 @@ class PathPlanner:
             rospy.logwarn_throttle(1.0, "PathPlanner: Only blue cones, generating virtual yellow cones.")
         elif not effective_blue_cones and not effective_yellow_cones:
             rospy.logwarn_throttle(1.0, "PathPlanner: No cones for fallback path.")
-            return None, None, None, None, None
+            return None, None, None, None, None, True
 
         # Now, both effective_blue_cones and effective_yellow_cones should have cones (real or virtual)
         if not effective_blue_cones or not effective_yellow_cones:
+<<<<<<< HEAD
             return None, None, None, None, None
 >>>>>>> [control] 251020 @Doyeop-knut | MPC 제어기 파라미터 수정 -> 증속 후 파라미터 수정 필요
+=======
+            return None, None, None, None, None, True
+>>>>>>> [control] 251020 @Doyeop-knut | MPC 제어기 수정 (cone hit = 53, total time = 254.064sec (@Test3 Map)
 
         # Convert inputs to PyTorch tensors
         initial_state_tensor = torch.tensor(initial_state, dtype=torch.float32, device=self.device)
@@ -11516,46 +11524,48 @@ class Control:
 
         # --- Get all parameters for all controllers ---
         # Vehicle
-        self.wheelbase = rospy.get_param("/vehicle/wheelbase", 1.54)
-        self.max_steer = rospy.get_param("/vehicle/max_steer_angle", 1) # radians
-        self.max_accel = rospy.get_param("/vehicle/max_accel", 0.7) # m/s^2
-        self.min_accel = rospy.get_param("/vehicle/min_accel", -0.7) # m/s^2 (braking)
+        self.wheelbase = rospy.get_param("/control/Vehicle/wheel_base", 1.55)
+        self.max_steer = rospy.get_param("~max_steer_angle", 1.0) # radians
+        self.max_accel = rospy.get_param("/control/Vehicle/max_accel", 0.5) # m/s^2
+        self.min_accel = rospy.get_param("/control/Vehicle/min_accel", -0.5) # m/s^2 (braking)
 
         # Common
-        self.target_speed = rospy.get_param("/control/SpeedControl/target_speed", 5.0) # m/s
         self.kp_throttle = rospy.get_param("/control/SpeedControl/pid_kp", 0.5)
         
-        # --- 곡률 기반 속도 제어 파라미터 ---
-        self.max_speed = rospy.get_param("/control/SpeedControl/target_speed", 5.0)
-        self.loop_closed_target_speed = rospy.get_param("/control/SpeedControl/loop_closed_target_speed", 10.0)
-        self.min_speed = rospy.get_param("/control/SpeedControl/min_speed", 2.0) # 코너 최소 속도
-        self.curvature_speed_factor = rospy.get_param("/control/SpeedControl/curvature_factor", 2.5) # 곡률에 따른 감속 강도
-        self.curvature_lookahead = rospy.get_param("/control/SpeedControl/curvature_lookahead", 5) # 곡률 계산 시 참고할 포인트 거리
-        self.lc_target_speed_duration = rospy.get_param("/control/lc_target_speed_duration", 5.0) # 루프 클로저 시 속도 감소 유지 시간
-        self.lc_speed_reduction_start_time = 0.0
-        self.is_lc_active = False
-        self.pre_lc_target_speed = rospy.get_param("/control/SpeedControl/pre_loop_closure/target_speed", self.target_speed) # 루프 클로저 전 목표 속도 저장
-        self.post_lc_target_speed = rospy.get_param("/control/SpeedControl/post_loop_closure/target_speed", self.loop_closed_target_speed) # 루프 클로저 후 목표 속도 저장
-        self.pre_lc_min_speed = rospy.get_param("/control/SpeedControl/pre_loop_closure/min_speed", self.min_speed) # 루프 클로저 전 최소 속도
-        self.post_lc_min_speed = rospy.get_param("/control/SpeedControl/post_loop_closure/min_speed", self.min_speed) # 루프 클로저 후 최소 속도
-        self.pre_lc_curvature_speed_factor = rospy.get_param("/control/SpeedControl/pre_loop_closure/curvature_speed_factor", self.curvature_speed_factor) # 루프 클로저 전 곡률 감속 계수
-        self.post_lc_curvature_speed_factor = rospy.get_param("/control/SpeedControl/post_loop_closure/curvature_speed_factor", self.curvature_speed_factor) # 루프 클로저 후 곡률 감속 계수
-        self.pre_lc_curvature_lookahead = rospy.get_param("/control/SpeedControl/pre_loop_closure/curvature_lookahead", self.curvature_lookahead) # 루프 클로저 전 곡률 계산 시 참고할 포인트 거리
-        self.post_lc_curvature_lookahead = rospy.get_param("/control/SpeedControl/post_loop_closure/curvature_lookahead", self.curvature_lookahead) # 루프 클로저 후 곡률 계산 시 참고할 포인트 거리
-
+        # --- Curvature-based speed control parameters ---
+        self.pre_lc_target_speed = rospy.get_param("/control/SpeedControl/pre_loop_closure/target_speed", 8.0)
+        self.post_lc_target_speed = rospy.get_param("/control/SpeedControl/post_loop_closure/target_speed", 15.0)
+        self.pre_lc_min_speed = rospy.get_param("/control/SpeedControl/pre_loop_closure/min_speed", 6.0)
+        self.post_lc_min_speed = rospy.get_param("/control/SpeedControl/post_loop_closure/min_speed", 6.0)
+        self.pre_lc_curvature_speed_factor = rospy.get_param("/control/SpeedControl/pre_loop_closure/curvature_speed_factor", 25.0)
+        self.post_lc_curvature_speed_factor = rospy.get_param("/control/SpeedControl/post_loop_closure/curvature_speed_factor", 10.0)
+        self.pre_lc_curvature_lookahead = rospy.get_param("/control/SpeedControl/pre_loop_closure/curvature_lookahead", 2)
+        self.post_lc_curvature_lookahead = rospy.get_param("/control/SpeedControl/post_loop_closure/curvature_lookahead", 2)
 
         # Pure Pursuit
-        self.lookahead_dist = rospy.get_param("/control/pure_pursuit/lookahead_distance", 2.5)
+        self.lookahead_dist = rospy.get_param("/control/PurePursuit/lookahead_distance", 2.5)
         
         # Stanley
-        self.k_crosstrack = rospy.get_param("/control/stanley/k_gain", 0.7)
+        self.k_crosstrack = rospy.get_param("/control/Stanley/k_gain", 0.7)
+
         # MPC
-        self.mpc_horizon = rospy.get_param("/control/MPC/horizon", 3)
-        self.mpc_dt = rospy.get_param("/control/MPC/dt", 0.1)
-        self.mpc_weights_pre_lc = rospy.get_param("/control/MPC/pre_loop_closure")
-        self.mpc_weights_post_lc = rospy.get_param("/control/MPC/post_loop_closure")
-        self.mpc_speed_scaling_factor = rospy.get_param("/control/MPC/mpc_speed_scaling_factor", 1.0) # New parameter
-        self.max_speed_for_scaling = rospy.get_param("/control/SpeedControl/max_speed_for_scaling", 10.0) # Use max target speed for normalization
+        self.mpc_horizon = rospy.get_param("/control/MPC/horizon", 5)
+        self.mpc_dt = rospy.get_param("/control/MPC/dt", 0.01)
+        self.mpc_speed_weights = rospy.get_param("/control/MPC/speed_dependent_weights")
+        self.mpc_fallback_weights = rospy.get_param("/control/MPC/fallback_weights")
+
+        # Side Slip Control
+        self.ssc_enable = rospy.get_param("/control/SideSlipControl/enable", False)
+        self.ssc_slip_angle_threshold = rospy.get_param("/control/SideSlipControl/slip_angle_threshold", 0.1)
+        self.ssc_speed_reduction_factor = rospy.get_param("/control/SideSlipControl/speed_reduction_factor", 0.8)
+
+        # Curvature Weight Tuning
+        self.cwt_enable = rospy.get_param("/control/CurvatureWeightTuning/enable", False)
+        self.cwt_max_curvature = rospy.get_param("/control/CurvatureWeightTuning/max_curvature_for_tuning", 0.4)
+        self.cwt_cte_factor = rospy.get_param("/control/CurvatureWeightTuning/cte_factor", 1.5)
+        self.cwt_steer_factor = rospy.get_param("/control/CurvatureWeightTuning/steer_factor", 1.0)
+        self.cwt_steer_rate_factor = rospy.get_param("/control/CurvatureWeightTuning/steer_rate_factor", 0.5)
+
 
         # --- Assign the compute function based on selected type ---
         if self.controller_type == "PurePursuit":
@@ -11569,6 +11579,18 @@ class Control:
             self.compute_control = self._compute_pure_pursuit
             
         rospy.loginfo(f"Control: Using {self.controller_type} controller.")
+
+    def get_weights_for_speed(self, speed: float) -> dict:
+        """
+        Selects the appropriate MPC weights based on the current vehicle speed.
+        """
+        for config in self.mpc_speed_weights:
+            if speed <= config['max_speed']:
+                rospy.logdebug(f"MPC weights selected for speed {speed:.2f} m/s (max: {config['max_speed']})")
+                return config['weights']
+        # If speed is higher than all max_speed, use the last one as default for high speed
+        rospy.logdebug(f"MPC weights selected for speed {speed:.2f} m/s (using highest speed setting)")
+        return self.mpc_speed_weights[-1]['weights']
 
     def normalize_angle(self, angle):
         """Normalize an angle to [-pi, pi]."""
@@ -11585,20 +11607,20 @@ class Control:
 
         # --- 곡률 기반 목표 속도 계산 ---
         if is_fallback:
-            target_speed = 5.0 # Set speed to 5.0 for fallback paths
+            target_speed = 6.0 # Set speed to 5.0 for fallback paths
         else:
-            path_curvatures = self.path_planner._calculate_path_curvature(path, self.curvature_lookahead)
+            path_curvatures = self.path_planner._calculate_path_curvature(path, self.pre_lc_curvature_lookahead)
             # 전방 경로의 평균 곡률 계산 (예: 앞 10개 포인트)
             lookahead_curvatures = path_curvatures
             avg_curvature = np.mean(lookahead_curvatures) if lookahead_curvatures else 0.0
             
             if self.track_map.is_loop_closed:
-                base_target_speed = self.loop_closed_target_speed
+                base_target_speed = self.post_lc_target_speed
             else:
-                base_target_speed = self.max_speed
+                base_target_speed = self.pre_lc_target_speed
 
-            target_speed = base_target_speed / (1.0 + self.curvature_speed_factor * abs(avg_curvature))
-            target_speed = np.clip(target_speed, self.min_speed, base_target_speed)
+            target_speed = base_target_speed / (1.0 + self.pre_lc_curvature_speed_factor * abs(avg_curvature))
+            target_speed = np.clip(target_speed, self.pre_lc_min_speed, base_target_speed)
 
         # 1. Find the closest point on the path to the vehicle
         path_points = np.array(path)
@@ -11651,7 +11673,7 @@ class Control:
 
         # --- 곡률 기반 목표 속도 계산 ---
         if is_fallback:
-            target_speed = 5.0 # Set speed to 5.0 for fallback paths
+            target_speed = 4.0 # Set speed to 5.0 for fallback paths
         else:
             if self.track_map.is_loop_closed:
                 target_speed_params = {
@@ -11789,11 +11811,18 @@ class Control:
         current_speed = math.sqrt(vehicle_state[3]**2 + vehicle_state[4]**2)
         initial_state = [veh_x, veh_y, veh_yaw, current_speed]
 
-        # --- 곡률 기반 목표 속도 계산 ---
+        # --- Fallback Mode vs Normal Mode ---
         if is_fallback:
-            mpc_target_speed = 5.0 # Set speed to 5.0 for fallback paths
-            weights = self.mpc_weights_pre_lc.copy() # Use pre-LC weights for fallback
+            # In fallback mode, prioritize stability with safe weights and low speed
+            weights = self.mpc_fallback_weights.copy()
+            mpc_target_speed = 5.0 # Use a predefined safe speed
+            rospy.logwarn_throttle(1.0, "Control: Fallback path detected. Using safe control mode.")
         else:
+            # --- Normal Operation ---
+            # 1. Select base weights based on speed
+            weights = self.get_weights_for_speed(current_speed).copy()
+
+            # 2. Calculate curvature and adjust target speed
             if self.track_map.is_loop_closed:
                 target_speed_params = {
                     'target_speed': self.post_lc_target_speed,
@@ -11801,7 +11830,6 @@ class Control:
                     'curvature_speed_factor': self.post_lc_curvature_speed_factor,
                     'curvature_lookahead': self.post_lc_curvature_lookahead
                 }
-                weights = self.mpc_weights_post_lc.copy() # Use a copy to avoid modifying original params
             else:
                 target_speed_params = {
                     'target_speed': self.pre_lc_target_speed,
@@ -11809,55 +11837,54 @@ class Control:
                     'curvature_speed_factor': self.pre_lc_curvature_speed_factor,
                     'curvature_lookahead': self.pre_lc_curvature_lookahead
                 }
-                weights = self.mpc_weights_pre_lc.copy() # Use a copy to avoid modifying original params
 
             path_curvatures = self.path_planner._calculate_path_curvature(path, target_speed_params['curvature_lookahead'])
-            lookahead_curvatures = path_curvatures[:10]
+            lookahead_curvatures = path_curvatures[:self.mpc_horizon * 2]
             avg_curvature = np.mean(lookahead_curvatures) if lookahead_curvatures else 0.0
             
-            mpc_target_speed = target_speed_params['target_speed'] / (1.0 + target_speed_params['curvature_speed_factor'] * abs(avg_curvature))
-            mpc_target_speed = np.clip(mpc_target_speed, target_speed_params['min_speed'], target_speed_params['target_speed'])
+            base_target_speed = target_speed_params['target_speed']
+            mpc_target_speed = base_target_speed / (1.0 + target_speed_params['curvature_speed_factor'] * abs(avg_curvature))
+            mpc_target_speed = np.clip(mpc_target_speed, target_speed_params['min_speed'], base_target_speed)
 
-        # Apply speed-proportional scaling to MPC weights
-        # Normalize current speed by a maximum expected speed for scaling factor
-        normalized_speed = current_speed / self.max_speed_for_scaling
-        # Use a power function to make scaling more aggressive or less aggressive
-        speed_scaling_factor = (normalized_speed ** self.mpc_speed_scaling_factor) if self.mpc_speed_scaling_factor != 0 else 1.0
-        speed_scaling_factor = np.clip(speed_scaling_factor, 0.1, 2.0) # Clip to reasonable range
+            # 3. Dynamically tune weights based on curvature
+            if self.cwt_enable:
+                # Normalize curvature to a [0, 1] range
+                normalized_curvature = min(abs(avg_curvature) / self.cwt_max_curvature, 1.0)
 
-        # Example: Increase path following weights with speed, decrease control input weights
-        weights['w_cte'] *= speed_scaling_factor
-        weights['w_etheta'] *= speed_scaling_factor
-        weights['w_vel'] *= speed_scaling_factor # Penalize velocity error more at higher speeds
+                # Dynamically adjust weights
+                weights['w_cte'] *= (1.0 + self.cwt_cte_factor * normalized_curvature)
+                weights['w_steer'] /= (1.0 + self.cwt_steer_factor * normalized_curvature)
+                weights['w_steer_rate'] /= (1.0 + self.cwt_steer_rate_factor * normalized_curvature)
+                
+                rospy.logdebug(f"Curvature Tuning: NormCurv={normalized_curvature:.2f}, w_cte={weights['w_cte']:.1f}, w_steer={weights['w_steer']:.1f}, w_steer_rate={weights['w_steer_rate']:.1f}")
 
-        # At higher speeds, generally want tighter path following and smoother control inputs.
-        # So, increase penalties for path deviation and control input changes.
-        weights['w_accel'] *= speed_scaling_factor
-        # weights['w_steer'] *= speed_scaling_factor
-        weights['w_accel_rate'] *= speed_scaling_factor
-        weights['w_steer_rate'] *= speed_scaling_factor
+            # 4. Apply Side Slip Control
+            if self.ssc_enable:
+                vx = vehicle_state[3]
+                vy = vehicle_state[4]
+                # Avoid division by zero and calculate only when moving
+                if abs(vx) > 0.5:
+                    side_slip_angle = math.atan2(vy, vx)
+                    if abs(side_slip_angle) > self.ssc_slip_angle_threshold:
+                        rospy.logwarn_throttle(0.5, f"Side slip detected! Angle: {math.degrees(side_slip_angle):.2f} deg. Reducing target speed.")
+                        mpc_target_speed *= self.ssc_speed_reduction_factor
 
-        # Get reference path for the horizon
+        # --- MPC Solver (common for all modes) ---
         path_points = np.array(path)
         distances = np.linalg.norm(path_points - np.array([veh_x, veh_y]), axis=1)
         start_idx = np.argmin(distances)
-        ref_path = path_points[start_idx:start_idx + self.mpc_horizon + 2] # Need one extra point for heading calculation
+        ref_path = path_points[start_idx:start_idx + self.mpc_horizon + 2]
         if len(ref_path) < self.mpc_horizon + 2:
-            # Pad the reference path if it's too short
             last_point = ref_path[-1]
             padding = np.array([last_point] * (self.mpc_horizon + 2 - len(ref_path)))
             ref_path = np.vstack([ref_path, padding])
 
-        # Initial guess for control inputs (zeros)
         u0 = np.zeros(2 * self.mpc_horizon)
-
-        # Bounds for control inputs
         bounds = []
         for _ in range(self.mpc_horizon):
             bounds.append((self.min_accel, self.max_accel))
             bounds.append((-self.max_steer, self.max_steer))
 
-        # --- Solve the optimization problem ---
         solution = minimize(
             self._cost_function,
             u0,
@@ -11866,22 +11893,16 @@ class Control:
             bounds=bounds
         )
 
-        # Get the first optimal control input
         optimal_accel = solution.x[0]
         optimal_steer = solution.x[1]
-        # print("MPC Optimization Success:", solution.success, "Cost:", solution.fun)
-        # print("Optimal Accel:", optimal_accel, "Optimal Steer:", optimal_steer)
-        # --- Map acceleration to throttle/brake ---
+
         throttle = 0.0
         brake = 0.0
         if optimal_accel > 0:
-            # Simple mapping: scale accel to [0,1] throttle
             throttle = np.clip(optimal_accel / self.max_accel, 0.0, 1.0)
         else:
-            # Simple mapping: scale decel to [0,1] brake
-            brake = np.clip(-optimal_accel / abs(self.min_accel), 0.0, 1.0)
+            brake = np.clip(-optimal_accel / abs(self.min_accel), 0.0, 0.5)
 
-        # Normalize steering angle to [-1, 1]
         normalized_steer = np.clip(-optimal_steer / self.max_steer, -1.0, 1.0)
 
 <<<<<<< HEAD
