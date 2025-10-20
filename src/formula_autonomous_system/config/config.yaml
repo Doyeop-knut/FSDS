@@ -6,9 +6,9 @@
 system:
   main_loop_rate: 1000.0 # [Hz]
   visualization:
-    enable_visualization: true # Enable or disable all ROS and OpenCV visualizations
+    enable_visualization: false # Enable or disable all ROS and OpenCV visualizations
   logging:
-    enable_logging: false # Enable or disable data logging
+    enable_logging: true # Enable or disable data logging
 
 perception:
   # ===========================================
