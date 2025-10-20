@@ -90,8 +90,8 @@ perception:
 
   camera_hsv_yellow:
     # HSV thresholds for yellow cone detection
-    hue_min: 18
-    hue_max: 40
+    hue_min: 15
+    hue_max: 45
     saturation_min: 36
     value_min: 100
 
@@ -113,8 +113,8 @@ perception:
     model_path: "/home/user/fsds_ws/retina-cone.pt" # Path to the cone detection model
     target_image_width: 320 # Target width for image resizing before inference
     target_image_height: 240 # Target height for image resizing before inference
-    min_bbox_area: 100 # Minimum bounding box area (pixels) to consider for detection
-    visualize_lidar_on_camera: True # Whether to visualize projected LiDAR points on camera images
+    min_bbox_area: 80 # Minimum bounding box area (pixels) to consider for detection
+    visualize_lidar_on_camera: false # Whether to visualize projected LiDAR points on camera images
 
 localization:
   # ===========================================
@@ -131,7 +131,7 @@ localization:
     ref_wgs84_altitude: 0.0
     
     # Velocity Estimation
-    alpha_velocity: 0.1
+    alpha_velocity: 0.1 # Reduced to 0 to eliminate lag
     yaw_filter_alpha : 0.5 # Reduced to make fused yaw smoother
 
 behavior_planning:
@@ -153,10 +153,10 @@ local_planning:
     
     # Cone-based path planning (meters)
     max_cone_distance: 10.0
-    lane_offset: 2.0
+    lane_offset: 2.5
     
     # Safety parameters (meters)
-    safety_margin: 0.5
+    safety_margin: 0.3
 
 mapping:
   association_threshold: 1.5 # Distance threshold for associating cones
@@ -192,25 +192,42 @@ control:
   MPC:
     horizon: 5
     dt: 0.01
-    mpc_speed_scaling_factor: 1.0 # Adjust this value to control the aggressiveness of speed-based weight scaling
-    max_speed_for_scaling: 10.0 # Max speed for normalizing current speed (e.g., loop_closed_target_speed)
-    pre_loop_closure:
-      w_cte: 25.0
-      w_etheta: 22.0
-      w_accel: 0.5
-      w_steer: 1.5
-      w_steer_rate: 5.0
-      w_accel_rate: 1.0
-      w_vel : 0.55
-    post_loop_closure:
-      # Aggressive tuning for high-speed tracking. Less aggressive than before to reduce oscillation.
-      w_cte: 60.0
-      w_etheta: 60.0
-      w_accel: 2.5
-      w_steer: 5.0
-      w_steer_rate: 20.0
-      w_accel_rate: 50.0
-      w_vel : 0.55
+    speed_dependent_weights:
+      - max_speed: 5.0 # Smoother Optimization
+        weights:
+          w_cte: 25.0
+          w_etheta: 40.0
+          w_vel: 20.0
+          w_steer: 5.0
+          w_accel: 30.0
+          w_steer_rate: 200.0
+          w_accel_rate: 100.0
+      - max_speed: 10.0 # Smoother Optimization
+        weights:
+          w_cte: 100.0
+          w_etheta: 80.0
+          w_vel: 15.0
+          w_steer: 7.0
+          w_accel: 20.0
+          w_steer_rate: 145.0
+          w_accel_rate: 100.0
+      - max_speed: 99.0 # Smoother Optimization
+        weights:
+          w_cte: 200.0
+          w_etheta: 200.0
+          w_vel: 10.0
+          w_steer: 40.0
+          w_accel: 10.0
+          w_steer_rate: 2000.0
+          w_accel_rate: 500.0
+    fallback_weights:
+      w_cte: 100.0
+      w_etheta: 50.0
+      w_vel: 25.0
+      w_steer: 10.0
+      w_accel: 30.0
+      w_steer_rate: 200.0
+      w_accel_rate: 100.0
 
   SpeedControl:
     pid_kp: 0.5
@@ -218,15 +235,33 @@ control:
     pid_kd: 0.005
     max_throttle: 1.0
     pre_loop_closure:
-      target_speed: 7.0
-      min_speed: 3.0 # 코너 최소 속도
-      curvature_speed_factor: 20.0 # 곡률에 따른 감속 강도
-      curvature_lookahead: 5 # 곡률 계산 시 참고할 포인트 거리
+      target_speed: 8.0
+      min_speed: 6.0 # 코너 최소 속도
+      curvature_speed_factor: 30.0 # 곡률에 따른 감속 강도
+      curvature_lookahead: 3 # 곡률 계산 시 참고할 포인트 거리
     post_loop_closure:
-      target_speed: 10.0 # Target speed after loop closure
-      min_speed: 2.0 # 코너 최소 속도 (더 공격적인 코너링을 위해 낮춤)
-      curvature_speed_factor: 10.0 # 곡률에 따른 감속 강도 (더 공격적인 코너링을 위해 낮춤)
-      curvature_lookahead: 5 # 곡률 계산 시 참고할 포인트 거리
+      target_speed: 15.0 # Target speed after loop closure
+      min_speed: 7.0 # 코너 최소 속도 (더 공격적인 코너링을 위해 낮춤)
+      curvature_speed_factor: 55.0 # 곡률에 따른 감속 강도 (더 공격적인 코너링을 위해 낮춤)
+      curvature_lookahead: 3 # 곡률 계산 시 참고할 포인트 거리
 
   Vehicle:
     wheel_base: 1.55
+    max_accel : 0.5
+    min_accel : -0.5
+
+  SideSlipControl:
+    enable: true
+    slip_angle_threshold: 0.3 # radians (approx 5.7 degrees)
+    speed_reduction_factor: 0.3 # Reduce target speed to 80%
+
+  CurvatureWeightTuning:
+    enable: true
+    # 튜닝 효과를 최대로 받을 곡률 값 (이 값을 넘는 곡률에서는 최대치로 적용)
+    max_curvature_for_tuning: 0.9
+    # 곡률이 커질수록 w_cte 가중치를 얼마나 더 증가시킬지 결정하는 계수
+    cte_factor: 1.5
+    # 곡률이 커질수록 w_steer 가중치를 얼마나 더 감소시킬지 결정하는 계수
+    steer_factor: 1.3
+    # 곡률이 커질수록 w_steer_rate 가중치를 얼마나 더 감소시킬지 결정하는 계수
+    steer_rate_factor: 1.3
