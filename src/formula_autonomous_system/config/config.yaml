@@ -4,11 +4,10 @@
 # Date: 2025-07-25
 
 system:
-  main_loop_rate: 1000.0 # [Hz]
   visualization:
     enable_visualization: true # Enable or disable all ROS and OpenCV visualizations
   logging:
-    enable_logging: false # Enable or disable data logging
+    enable_logging: true # Enable or disable data logging
 
 perception:
   # ===========================================
@@ -17,11 +16,11 @@ perception:
   
   lidar_roi_extraction:
     # LiDAR ROI extraction parameters
-    x_min: 0.0
-    x_max: 150.0
-    y_min: -30.0
-    y_max: 30.0
-    z_min: -10.0
+    x_min: 1.0
+    x_max: 15.0
+    y_min: -10.0
+    y_max: 10.0
+    z_min: -5.0
     z_max: 10.0
 
   lidar_ground_removal:
@@ -31,14 +30,8 @@ perception:
 
   lidar_clustering:
     # DBSCAN clustering parameters
-    dbscan_eps: 0.5
+    dbscan_eps: 0.7
     dbscan_min_points: 2
-
-  lidar_cone_detection:
-    # Cone geometric constraints
-    cone_min_radius: 0.00
-    cone_max_radius: 0.7
-    cone_min_points: 1
 
   lidar_extrinsics:
     # LiDAR position relative to vehicle base (meters, degrees)
@@ -57,7 +50,7 @@ perception:
     # Camera intrinsic parameters (pixels)
     # 640x480, horizontal FOV: 90 deg: focal length = 320.0
     focal_length_x: 320.0
-    focal_length_y: 320.0
+    focal_length_y: 240.0
     principal_point_x: 320.0
     principal_point_y: 240.0
 
@@ -84,22 +77,24 @@ perception:
     enable_preprocessing: true
     gaussian_blur_sigma: 1.0
     bilateral_filter_diameter: 9
+    color_score_separation_threshold: 1.5 # The best color score must be X times higher than the second best
 
   camera_hsv_window_size:
-    window_size: 25
+    base_size: 20 # Base window size in pixels at 0 distance
+    distance_factor: 0.3 # Pixels to add to half-size per meter of distance
 
   camera_hsv_yellow:
     # HSV thresholds for yellow cone detection
     hue_min: 18
     hue_max: 40
-    saturation_min: 36
-    value_min: 100
+    saturation_min: 20
+    value_min: 80
 
   camera_hsv_blue:
     # HSV thresholds for blue cone detection
-    hue_min: 95
+    hue_min: 90
     hue_max: 110
-    saturation_min: 75
+    saturation_min: 90
     value_min: 100
 
   camera_hsv_orange:
@@ -110,11 +105,9 @@ perception:
     value_min: 100
 
   camera_cone_detection:
-    model_path: "/home/user/fsds_ws/retina-cone.pt" # Path to the cone detection model
-    target_image_width: 320 # Target width for image resizing before inference
-    target_image_height: 240 # Target height for image resizing before inference
-    min_bbox_area: 100 # Minimum bounding box area (pixels) to consider for detection
-    visualize_lidar_on_camera: True # Whether to visualize projected LiDAR points on camera images
+    min_bbox_area: 300 # Minimum bounding box area (pixels) to consider for detection
+    visualize_lidar_on_camera: true # Whether to visualize projected LiDAR points on camera images
+    lidar_cam_iou_threshold: 0.5 # Minimum IoU between LiDAR window and camera bbox for a match
 
 localization:
   # ===========================================
@@ -131,35 +124,19 @@ localization:
     ref_wgs84_altitude: 0.0
     
     # Velocity Estimation
-    alpha_velocity: 0.1
-    yaw_filter_alpha : 0.5 # Reduced to make fused yaw smoother
-
-behavior_planning:
-  default: {}
+    alpha_velocity: 0.1 # Reduced to 0 to eliminate lag
+    yaw_filter_alpha : 0.4 # Reduced to make fused yaw smoother
 
 local_planning:
   trajectory:
-    # Basic trajectory generation
-    lookahead_distance: 5.0
-    waypoint_spacing: 2.0
-    default_speed: 5.0
-    poly_degree: 3
-    num_waypoints: 20
-    max_accumulated_midpoints: 500
-    max_x_diff_for_pairing: 10.0
-    cone_filter_max_distance: 200.0 # Max distance from vehicle to consider cones for planning
-    cone_filter_max_angle: 90.0 # Max angle (degrees) from vehicle's forward axis to consider cones
-    spline_smoothing_factor: 0.5
-    
-    # Cone-based path planning (meters)
-    max_cone_distance: 10.0
-    lane_offset: 2.0
-    
-    # Safety parameters (meters)
-    safety_margin: 0.5
+    lane_offset: 3.0
+    planner_roi_distance : 10.0
+    planner_roi_angle : 80.0
+    planner_clustering_eps : 4.0
 
 mapping:
   association_threshold: 1.5 # Distance threshold for associating cones
+  smoothing_alpha: 0.2 # Weight for new cone observations
   lc:
     min_cones: 20 # Minimum number of cones in map to attempt loop closure
     trigger_distance: 8.0 # Distance to start line to trigger LC check
@@ -170,63 +147,104 @@ mapping:
 
 planning:
   path_planner:
-    max_edge_length: 5.0 # Max distance between connected midpoints in path planning
-    path_obstacle_threshold: 1.5 # Minimum clearance distance for a path segment to be valid
-    weight_dist: 0.8
-    weight_angle: 0.2
+    max_edge_length: 7.0 # Max distance between connected midpoints in path planning
+    path_obstacle_threshold: 0.5 # Minimum clearance distance for a path segment to be valid
+    weight_dist: 0.3
+    weight_angle: 0.7
     max_path_distance: 100.0 # Max distance for the planned path
     spline_smoothing_factor: 1.0 # Smoothing factor for path spline
+    fallback_path_length: 15.0 # Length of the fallback path in meters
+    fallback_path_points: 10 # Number of points in the fallback path
 
 control:
   ControllerSelection:
-    # lateral_controller_type: "PurePursuit", "Stanley", "MPC"
-    lateral_controller_type: "MPC" 
+    # lateral_controller_type: "PurePursuit", "Stanley", "MPC", "MPC_SciPy"
+    lateral_controller_type: "MPC_SciPy" 
 
   PurePursuit:
     lookahead_distance: 1.0
-    max_steer_angle: 1.0
 
   Stanley:
     k_gain: 1.1
 
   MPC:
     horizon: 5
-    dt: 0.01
-    mpc_speed_scaling_factor: 1.0 # Adjust this value to control the aggressiveness of speed-based weight scaling
-    max_speed_for_scaling: 10.0 # Max speed for normalizing current speed (e.g., loop_closed_target_speed)
-    pre_loop_closure:
-      w_cte: 25.0
-      w_etheta: 22.0
-      w_accel: 0.5
-      w_steer: 1.5
-      w_steer_rate: 5.0
-      w_accel_rate: 1.0
-      w_vel : 0.55
-    post_loop_closure:
-      # Aggressive tuning for high-speed tracking. Less aggressive than before to reduce oscillation.
-      w_cte: 60.0
-      w_etheta: 60.0
-      w_accel: 2.5
-      w_steer: 5.0
-      w_steer_rate: 20.0
+    dt: 0.1
+    speed_dependent_weights:
+      - max_speed: 8.0 # Low speed, sharp corners
+        weights:
+          w_cte: 500.0
+          w_etheta: 200.0
+          w_vel: 30.0
+          w_steer: 10.0
+          w_accel: 50.0
+          w_steer_rate: 100.0
+          w_accel_rate: 50.0
+      - max_speed: 15.0 # Medium speed
+        weights:
+          w_cte: 300.0
+          w_etheta: 200.0
+          w_vel: 50.0
+          w_steer: 30.0
+          w_accel: 10.0
+          w_steer_rate: 100.0
+          w_accel_rate: 15.0
+      - max_speed: 27.0 # High speed
+        weights:
+          w_etheta: 120.0
+          w_vel: 100.0
+          w_steer: 15.0
+          w_accel: 15.0
+          w_steer_rate: 100.0
+          w_accel_rate: 30.0
+    mpc_fallback_weights:
+      w_cte: 500.0
+      w_etheta: 300.0
+      w_vel: 30.0
+      w_steer: 6.0
+      w_accel: 50.0
+      w_steer_rate: 150.0
       w_accel_rate: 50.0
-      w_vel : 0.55
 
   SpeedControl:
     pid_kp: 0.5
-    pid_ki: 0.05
-    pid_kd: 0.005
-    max_throttle: 1.0
     pre_loop_closure:
-      target_speed: 7.0
-      min_speed: 3.0 # 코너 최소 속도
-      curvature_speed_factor: 20.0 # 곡률에 따른 감속 강도
-      curvature_lookahead: 5 # 곡률 계산 시 참고할 포인트 거리
+      target_speed: 10.0
+      min_speed: 6.0 # 코너 최소 속도
+      curvature_speed_factor: 15.0 # 곡률에 따른 감속 강도
+      curvature_lookahead: 3 # 곡률 계산 시 참고할 포인트 거리
     post_loop_closure:
-      target_speed: 10.0 # Target speed after loop closure
-      min_speed: 2.0 # 코너 최소 속도 (더 공격적인 코너링을 위해 낮춤)
-      curvature_speed_factor: 10.0 # 곡률에 따른 감속 강도 (더 공격적인 코너링을 위해 낮춤)
-      curvature_lookahead: 5 # 곡률 계산 시 참고할 포인트 거리
+      target_speed: 15.0 # Target speed after loop closure
+      min_speed: 8.0 # 코너 최소 속도 (더 공격적인 코너링을 위해 낮춤)
+      curvature_speed_factor: 15.0 # 곡률에 따른 감속 강도 (더 공격적인 코너링을 위해 낮춤)
+      curvature_lookahead: 3 # 곡률 계산 시 참고할 포인트 거리
 
   Vehicle:
     wheel_base: 1.55
+    max_accel : 0.5
+    min_accel : -0.5
+
+  SideSlipControl:
+    enable: false
+    slip_angle_threshold: 0.2 # radians (approx 5.7 degrees)
+    speed_reduction_factor: 0.5 # Reduce target speed to 80%
+
+  CurvatureWeightTuning:
+    enable: false
+    # 튜닝 효과를 최대로 받을 곡률 값 (이 값을 넘는 곡률에서는 최대치로 적용)
+    max_curvature_for_tuning: 0.5
+    # 곡률이 커질수록 w_cte 가중치를 얼마나 더 증가시킬지 결정하는 계수
+    cte_factor: 1.5
+    # 곡률이 커질수록 w_steer 가중치를 얼마나 더 감소시킬지 결정하는 계수
+    steer_factor: 1.1
+        # 곡률이 커질수록 w_steer_rate 가중치를 얼마나 더 감소시킬지 결정하는 계수
+    steer_rate_factor: 1.2
+    
+  AdvancedCurvatureTuning:
+    enable: false
+    # 비선형적 곡률 반응을 위한 지수 (1.0 = 선형, >1.0 = 곡률이 클수록 더 강하게 반응)
+    curvature_power: 0.8
+    # 곡률에 따른 헤딩 오차(etheta) 가중치 증가 계수
+    etheta_factor: 0.9
+    # 저속에서 곡률 튜닝의 영향을 줄이는 속도 계수 (0~1, 1에 가까울수록 속도 영향 큼)
+    speed_influence_factor: 0.3
