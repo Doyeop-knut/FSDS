@@ -16,11 +16,15 @@ system:
     enable_visualization: true # Enable or disable all ROS and OpenCV visualizations
   logging:
 <<<<<<< HEAD
+<<<<<<< HEAD
     enable_logging: false # Enable or disable data logging
 >>>>>>> [control] 251020 @Doyeop-knut | MPC 제어기 파라미터 수정 -> 증속 후 파라미터 수정 필요
 =======
     enable_logging: true # Enable or disable data logging
 >>>>>>> [dataLogger] 251020 @Doyeop-knut | Log 수정, [cone hit = 54], total time = 255.149sec
+=======
+    enable_logging: false # Enable or disable data logging
+>>>>>>> [coneDetection] 251021 @Doyeop-knut | 롤백 및 iou 적용,  색상 확률값 연동
 
 perception:
   # ===========================================
@@ -38,8 +42,8 @@ perception:
 =======
     x_min: 0.0
     x_max: 150.0
-    y_min: -50.0
-    y_max: 50.0
+    y_min: -30.0
+    y_max: 30.0
     z_min: -10.0
 >>>>>>> [control] 251016 @Doyeop-knut | 자잘한 수정
     z_max: 10.0
@@ -51,7 +55,7 @@ perception:
 
   lidar_clustering:
     # DBSCAN clustering parameters
-    dbscan_eps: 0.7
+    dbscan_eps: 0.5
     dbscan_min_points: 2
 
   lidar_extrinsics:
@@ -268,6 +272,7 @@ perception:
   camera_hsv_yellow:
     # HSV thresholds for yellow cone detection
 <<<<<<< HEAD
+<<<<<<< HEAD
     hue_min: 18
     hue_max: 40
     saturation_min: 20
@@ -283,13 +288,19 @@ perception:
     saturation_min: 20
     value_min: 30
 >>>>>>> [cone Detection] 251020 @Doyeop-knut | 범위 수정
+=======
+    hue_min: 18
+    hue_max: 40
+    saturation_min: 36
+    value_min: 100
+>>>>>>> [coneDetection] 251021 @Doyeop-knut | 롤백 및 iou 적용,  색상 확률값 연동
 
   camera_hsv_blue:
     # HSV thresholds for blue cone detection
-    hue_min: 90
+    hue_min: 95
     hue_max: 110
-    saturation_min: 70
-    value_min: 50
+    saturation_min: 75
+    value_min: 100
 
   camera_hsv_orange:
     # HSV thresholds for orange cone detection
@@ -308,6 +319,7 @@ perception:
     target_image_width: 320 # Target width for image resizing before inference
     target_image_height: 240 # Target height for image resizing before inference
 <<<<<<< HEAD
+<<<<<<< HEAD
     min_bbox_area: 100 # Minimum bounding box area (pixels) to consider for detection
     visualize_lidar_on_camera: True # Whether to visualize projected LiDAR points on camera images
 >>>>>>> [Cone Detection] 251018 @Doyeop-knut @marigold0916 | RetinaNet 기반 코드
@@ -315,6 +327,10 @@ perception:
     min_bbox_area: 80 # Minimum bounding box area (pixels) to consider for detection
     visualize_lidar_on_camera: false # Whether to visualize projected LiDAR points on camera images
 >>>>>>> [control] 251020 @Doyeop-knut | MPC 제어기 수정 (cone hit = 53, total time = 254.064sec (@Test3 Map)
+=======
+    min_bbox_area: 100 # Minimum bounding box area (pixels) to consider for detection
+    visualize_lidar_on_camera: True # Whether to visualize projected LiDAR points on camera images
+>>>>>>> [coneDetection] 251021 @Doyeop-knut | 롤백 및 iou 적용,  색상 확률값 연동
 
 localization:
   # ===========================================
@@ -333,6 +349,7 @@ localization:
     # Velocity Estimation
 <<<<<<< HEAD
 <<<<<<< HEAD
+<<<<<<< HEAD
     alpha_velocity: 0.1 # Reduced to 0 to eliminate lag
     yaw_filter_alpha : 0.4 # Reduced to make fused yaw smoother
 =======
@@ -340,6 +357,9 @@ localization:
 =======
     alpha_velocity: 0.1 # Reduced to 0 to eliminate lag
 >>>>>>> [control] 251020 @Doyeop-knut | MPC 제어기 수정 (cone hit = 53, total time = 254.064sec (@Test3 Map)
+=======
+    alpha_velocity: 0.1
+>>>>>>> [coneDetection] 251021 @Doyeop-knut | 롤백 및 iou 적용,  색상 확률값 연동
     yaw_filter_alpha : 0.5 # Reduced to make fused yaw smoother
 
 behavior_planning:
@@ -389,16 +409,20 @@ planning:
     spline_smoothing_factor: 0.5
     
     # Cone-based path planning (meters)
-    max_cone_distance: 100.0
-    lane_offset: 2.5
+    max_cone_distance: 10.0
+    lane_offset: 2.0
     
     # Safety parameters (meters)
+<<<<<<< HEAD
 <<<<<<< HEAD
     safety_margin: 0.5
 >>>>>>> [control] 251008 @Doyeop-knut | Trajectory + Stanley controller
 =======
     safety_margin: 0.3
 >>>>>>> [control] 251020 @Doyeop-knut | MPC 제어기 수정 (cone hit = 53, total time = 254.064sec (@Test3 Map)
+=======
+    safety_margin: 0.5
+>>>>>>> [coneDetection] 251021 @Doyeop-knut | 롤백 및 iou 적용,  색상 확률값 연동
 
 mapping:
   association_threshold: 1.5 # Distance threshold for associating cones
@@ -413,9 +437,9 @@ mapping:
 planning:
   path_planner:
     max_edge_length: 5.0 # Max distance between connected midpoints in path planning
-    path_obstacle_threshold: 2.0 # Minimum clearance distance for a path segment to be valid
-    weight_dist: 0.3
-    weight_angle: 0.7
+    path_obstacle_threshold: 1.5 # Minimum clearance distance for a path segment to be valid
+    weight_dist: 0.8
+    weight_angle: 0.2
     max_path_distance: 100.0 # Max distance for the planned path
     spline_smoothing_factor: 1.0 # Smoothing factor for path spline
 
@@ -489,24 +513,25 @@ control:
   MPC:
     horizon: 5
     dt: 0.01
-    speed_dependent_weights:
-      - max_speed: 27.0 # Super-Smooth-Cornering weights
-        weights:
-          w_cte: 1500.0
-          w_etheta: 300.0
-          w_vel: 20.0
-          w_steer: 40.0
-          w_accel: 30.0
-          w_steer_rate: 150.0
-          w_accel_rate: 500.0
-    fallback_weights:
-      w_cte: 600.0
-      w_etheta: 120.0
-      w_vel: 40.0
-      w_steer: 40.0
-      w_accel: 20.0
-      w_steer_rate: 100.0
+    mpc_speed_scaling_factor: 1.0 # Adjust this value to control the aggressiveness of speed-based weight scaling
+    max_speed_for_scaling: 10.0 # Max speed for normalizing current speed (e.g., loop_closed_target_speed)
+    pre_loop_closure:
+      w_cte: 25.0
+      w_etheta: 22.0
+      w_accel: 0.5
+      w_steer: 1.5
+      w_steer_rate: 5.0
+      w_accel_rate: 1.0
+      w_vel : 0.55
+    post_loop_closure:
+      # Aggressive tuning for high-speed tracking. Less aggressive than before to reduce oscillation.
+      w_cte: 60.0
+      w_etheta: 60.0
+      w_accel: 2.5
+      w_steer: 5.0
+      w_steer_rate: 20.0
       w_accel_rate: 50.0
+      w_vel : 0.55
 
   SpeedControl:
 <<<<<<< HEAD
@@ -544,16 +569,20 @@ control:
     max_throttle: 1.0
     pre_loop_closure:
       target_speed: 7.0
-      min_speed: 4.0 # 코너 최소 속도
-      curvature_speed_factor: 40.0 # 곡률에 따른 감속 강도
-      curvature_lookahead: 3 # 곡률 계산 시 참고할 포인트 거리
+      min_speed: 3.0 # 코너 최소 속도
+      curvature_speed_factor: 20.0 # 곡률에 따른 감속 강도
+      curvature_lookahead: 5 # 곡률 계산 시 참고할 포인트 거리
     post_loop_closure:
 <<<<<<< HEAD
 <<<<<<< HEAD
+<<<<<<< HEAD
+=======
+>>>>>>> [coneDetection] 251021 @Doyeop-knut | 롤백 및 iou 적용,  색상 확률값 연동
       target_speed: 10.0 # Target speed after loop closure
       min_speed: 2.0 # 코너 최소 속도 (더 공격적인 코너링을 위해 낮춤)
       curvature_speed_factor: 10.0 # 곡률에 따른 감속 강도 (더 공격적인 코너링을 위해 낮춤)
       curvature_lookahead: 5 # 곡률 계산 시 참고할 포인트 거리
+<<<<<<< HEAD
 >>>>>>> [control] 251020 @Doyeop-knut | MPC 제어기 파라미터 수정 -> 증속 후 파라미터 수정 필요
 =======
       target_speed: 15.0 # Target speed after loop closure
@@ -664,3 +693,8 @@ system:
     speed_influence_factor: 0.5
     
 >>>>>>> [cone Detection] 251020 @Doyeop-knut | 범위 수정
+=======
+
+  Vehicle:
+    wheel_base: 1.55
+>>>>>>> [coneDetection] 251021 @Doyeop-knut | 롤백 및 iou 적용,  색상 확률값 연동
