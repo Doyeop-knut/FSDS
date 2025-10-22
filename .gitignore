@@ -2,6 +2,7 @@
 <<<<<<< HEAD
 <<<<<<< HEAD
 <<<<<<< HEAD
+<<<<<<< HEAD
 **/build/
 **/devel/
 =======
@@ -20,6 +21,10 @@ devel/
 **/build/
 **/devel/
 >>>>>>> g
+=======
+**/build/*
+**/devel/*
+>>>>>>> [gitignore] gitignore update
 
 *.avi
 *.csv
@@ -31,9 +36,14 @@ devel/
 
 *.pt
 <<<<<<< HEAD
+<<<<<<< HEAD
 *.Identifier
 
 *.zip
 =======
 *.Identifier
 >>>>>>> gitignore update
+=======
+*.Identifier
+
+>>>>>>> [gitignore] gitignore update
