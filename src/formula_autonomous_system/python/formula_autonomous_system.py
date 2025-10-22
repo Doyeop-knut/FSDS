@@ -62,6 +62,7 @@ from cv_bridge import CvBridge
 
 # 3D LiDAR
 <<<<<<< HEAD
+<<<<<<< HEAD
 import open3d as o3d
 =======
 from sklearn.cluster import DBSCAN
@@ -93,6 +94,9 @@ from scipy.spatial.distance import cdist
 from scipy.interpolate import splprep, splev
 from scipy.spatial import Delaunay
 from scipy.optimize import minimize
+=======
+import open3d as o3d
+>>>>>>> 1
 
 # Camera
 <<<<<<< HEAD
@@ -285,6 +289,7 @@ class FormulaAutonomousSystem:
         self.current_path_is_fallback = False
         self.path_end_threshold = 3 # meters. Distance to end of path to trigger replanning.
 
+<<<<<<< HEAD
 <<<<<<< HEAD
 <<<<<<< HEAD
 >>>>>>> [ConeDetection] 251010 @Doyeop-knut | Cone Detection method 개선 및 Mapping 기능 추가
@@ -486,10 +491,12 @@ class FormulaAutonomousSystem:
 =======
         self.model = torch.load('/home/user/fsds_ws/retina-cone.pt', weights_only=False)  # Adjust path as needed
 =======
+=======
+>>>>>>> 1
         # rospkg를 사용하여 모델 경로 동적으로 찾기
         rospack = rospkg.RosPack()
         package_path = rospack.get_path('formula_autonomous_system')
-        self.model_path = os.path.join(package_path,'python', 'retina-cone.pt')
+        self.model_path = os.path.join(package_path,'python', 'retinanet_QAT.pt')
         rospy.loginfo(f"Loading model from: {self.model_path}")
 
         self.model = torch.load(self.model_path, map_location=torch.device('cpu'))
@@ -501,10 +508,97 @@ class FormulaAutonomousSystem:
             print("Model converted to FP16 (half-precision).")
         print(f"Model target device: {self.device}")
         self.model.eval()
+
+        # System Components
+        self.gps_util = GPSIMUProcessor()
+        self.state_machine = StateMachine()
+        self.lidar_util = LiDARProcessor(self.enable_visualization, self.device)
+        self.camera_util = CameraProcessor()
+        self.track_map = TrackMap(self.device)
+        self.midpoint_map = MidpointMap(self.device)
+        self.path_planner = PathPlanner(self.device)
         self.controller = Control(self.path_planner, self.track_map, self.device) # Control 클래스에 path_planner와 track_map 인스턴스 전달
 
+        self.pointcloud_sub = rospy.Subscriber("/lidar_pointcloud", PointCloud2, self.pointcloud_callback)
+        self.cones_pub = rospy.Publisher("/detected_cones", PointCloud2, queue_size=10) # Example publisher for detected cones
+
+        # RANSAC parameters for cone detection
+        self.ransac_threshold = 0.05  # Distance threshold for inliers
+        self.ransac_max_iterations = 100 # Number of RANSAC iterations
+        self.cone_min_radius = 0.1    # Minimum expected cone base radius (e.g., 10 cm)
+        self.cone_max_radius = 0.3    # Maximum expected cone base radius (e.g., 30 cm)
+        self.ground_plane_z_threshold = 0.1 # Max Z distance from ground to consider for cone base
+
+        # DBSCAN parameters for clustering detected cone points
+        self.dbscan_eps = 0.3         # Maximum distance between two samples for one to be considered as in the neighborhood of the other
+        self.dbscan_min_samples = 5   # The number of samples (or total weight) in a neighborhood for a point to be considered as a core point. 
+
+        rospy.loginfo("Cone Detection GPU Node Initialized.")
+
         self.get_parameters()
+<<<<<<< HEAD
 >>>>>>> [Cone Detection] 251018 @Doyeop-knut @marigold0916 | RetinaNet 기반 코드
+=======
+
+    def pointcloud_callback(self, msg):
+        rospy.loginfo("Received point cloud message.")
+        # Convert ROS PointCloud2 to a PyTorch tensor on GPU
+        points_list = list(pc2.read_points(msg, field_names=("x", "y", "z"), skip_nans=True))
+        if not points_list:
+            rospy.logwarn("Received empty point cloud after NaN removal.")
+            self.publish_cones(torch.tensor([], device=self.device), msg.header) # Publish empty if no cones
+            return
+
+        points_np = np.array(points_list, dtype=np.float32)
+        points_tensor = torch.from_numpy(points_np).to(self.device)
+
+        # Filter points close to the ground for cone base detection
+        # Assuming the ground is around z=0. Adjust if your lidar frame has a different ground level.
+        ground_points_mask = torch.abs(points_tensor[:, 2]) < self.ground_plane_z_threshold
+        ground_points = points_tensor[ground_points_mask]
+
+        if ground_points.shape[0] < 3:
+            rospy.logwarn("Not enough ground points for RANSAC.")
+            self.publish_cones(torch.tensor([], device=self.device), msg.header) # Publish empty if no cones
+            return
+
+        # Project 3D ground points to 2D (x, y) for circle RANSAC
+        points_2d = ground_points[:, :2]
+
+        # Perform RANSAC for circle detection on GPU
+        best_circle_params, best_inliers_2d = self.ransac_gpu(
+            points_2d, self.ransac_threshold, self.ransac_max_iterations,
+            self.cone_min_radius, self.cone_max_radius
+        )
+
+        detected_cone_centroids = torch.tensor([], device=self.device)
+        if best_circle_params is not None and best_inliers_2d.shape[0] > 0:
+            cx, cy, r = best_circle_params
+            rospy.loginfo(f"RANSAC found cone candidate: Center=({cx:.2f}, {cy:.2f}), Radius={r:.2f} with {best_inliers_2d.shape[0]} inliers.")
+            
+            # Re-evaluate inliers in 3D based on the detected 2D circle
+            distances_to_center_3d = torch.sqrt((ground_points[:, 0] - cx)**2 + (ground_points[:, 1] - cy)**2)
+            distances_to_circle_3d = torch.abs(distances_to_center_3d - r)
+            inliers_mask_3d = distances_to_circle_3d < self.ransac_threshold
+            ransac_inliers_3d = ground_points[inliers_mask_3d]
+
+            if ransac_inliers_3d.shape[0] > 0:
+                # Apply DBSCAN to the RANSAC inliers to cluster individual cones
+                labels = self.lidar_util.cluster_points(ransac_inliers_3d, self.dbscan_eps, self.dbscan_min_samples)
+                
+                unique_labels = labels.unique()
+                for label in unique_labels:
+                    if label == -1: # Noise points
+                        continue
+                    
+                    cluster_points = ransac_inliers_3d[labels == label]
+                    if cluster_points.shape[0] >= self.dbscan_min_samples: # Only consider clusters with enough points
+                        centroid = torch.mean(cluster_points, dim=0)
+                        # We can also refine the cone position/radius here if needed
+                        detected_cone_centroids = torch.cat((detected_cone_centroids, centroid.unsqueeze(0)), dim=0)
+
+        self.publish_cones(detected_cone_centroids, msg.header)
+>>>>>>> 1
         
     def init(self):
         """Initialize the system"""
@@ -888,8 +982,12 @@ class FormulaAutonomousSystem:
         rendered_img1, left_bbox, left_conf = self.camera_util._process_and_draw_detections(image1, raw_predictions1)
         rendered_img2, right_bbox, right_conf = self.camera_util._process_and_draw_detections(image2, raw_predictions2)
         
+<<<<<<< HEAD
 >>>>>>> [yolo]
         if cluster.size > 0:
+=======
+        if cluster.numel() > 0:
+>>>>>>> 1
             try:
                 dt_cam_lidar = camera1_msg.header.stamp.to_sec() - lidar_msg.header.stamp.to_sec()
                 vx = vehicle_state[3] # Longitudinal velocity
@@ -902,7 +1000,7 @@ class FormulaAutonomousSystem:
                 compensation_x = vx * dt_cam_lidar + 0.5 * ax * dt_cam_lidar**2
                 compensation_y = vy * dt_cam_lidar + 0.5 * ay * dt_cam_lidar**2
 
-                compensated_cluster = cluster.copy()
+                compensated_cluster = cluster.clone() # Use clone to avoid modifying original tensor
 
                 # Apply translational compensation
                 compensated_cluster[:, 0] += compensation_x
@@ -911,8 +1009,8 @@ class FormulaAutonomousSystem:
                 # Apply rotational compensation (rotate points around vehicle's current position)
                 if abs(yaw_rate) > 1e-6: # Only rotate if there's significant yaw rate
                     angle_compensation = yaw_rate * dt_cam_lidar
-                    cos_angle = math.cos(angle_compensation)
-                    sin_angle = math.sin(angle_compensation)
+                    cos_angle = torch.cos(torch.tensor(angle_compensation, device=self.device))
+                    sin_angle = torch.sin(torch.tensor(angle_compensation, device=self.device))
 
                     # Rotate points around the origin (vehicle's current position is assumed to be origin for this rotation)
                     rotated_x = compensated_cluster[:, 0] * cos_angle - compensated_cluster[:, 1] * sin_angle
@@ -931,26 +1029,34 @@ class FormulaAutonomousSystem:
         cam1_pts = self.camera_util.projectToCam(compensated_cluster, cam1_transform)
         cam2_pts = self.camera_util.projectToCam(compensated_cluster, cam2_transform)
 
-        if cluster.size > 0:
+        if cluster.numel() > 0:
+            # Convert compensated_cluster to numpy for OpenCV-based color detection
+            compensated_cluster_np = compensated_cluster.cpu().numpy()
+
             # Transform cluster points to map frame
-            veh_x = self.gps_util.state[0]
-            veh_y = self.gps_util.state[1]
-            veh_yaw = self.gps_util.state[2]  # Assumes radians
+            veh_x = vehicle_state[0]
+            veh_y = vehicle_state[1]
+            veh_yaw = vehicle_state[2]  # Assumes radians
 
             cos_yaw = math.cos(veh_yaw)
             sin_yaw = math.sin(veh_yaw)
-            rot_matrix = np.array([[cos_yaw, -sin_yaw],
-                                   [sin_yaw,  cos_yaw]])
+            rot_matrix_torch = torch.tensor([[cos_yaw, -sin_yaw],
+                                             [sin_yaw,  cos_yaw]], dtype=torch.float32, device=self.device)
             # Prepare a list to store cones with color information
             cones_with_color = []
             left, right = [], []
 
 <<<<<<< HEAD
 <<<<<<< HEAD
+<<<<<<< HEAD
             # --- Stage 1: Initial Independent Color Classification ---
             initial_cone_data = []
             all_points = []
             for i, cone_3d_veh_frame in enumerate(compensated_cluster):
+=======
+            # Iterate through each 3D cluster point and determine its color
+            for i, cone_3d_veh_frame_np in enumerate(compensated_cluster_np):
+>>>>>>> 1
                 detected_color = "unknown"
                 distance_to_cone = cone_3d_veh_frame[0]
 
@@ -1224,7 +1330,7 @@ class FormulaAutonomousSystem:
 
                 # --- Fallback to Point-based Color Detection if IoU fails ---
                 if detected_color == "unknown":
-                    distance = np.linalg.norm(cone_3d_veh_frame[:2]) # Calculate distance
+                    distance = np.linalg.norm(cone_3d_veh_frame_np[:2]) # Calculate distance using numpy for now
                     # Try with camera 1
                     if i < len(cam1_pts):
                         point_color = self.camera_util.detectConeColor(cam1_pts[i], distance, image1, debug_image=rendered_img1)
@@ -1246,20 +1352,21 @@ class FormulaAutonomousSystem:
                 elif detected_color == "orange":
                     color_id = 3
                 
-                # Transform 3D cone from vehicle frame to map frame
-                cone_3d_map_frame_xy = np.dot(cone_3d_veh_frame[:2], rot_matrix.T) + np.array([veh_x, veh_y])
-                cone_3d_map_frame_z = cone_3d_veh_frame[2]
+                # Transform 3D cone from vehicle frame to map frame using torch
+                cone_3d_veh_frame_tensor = torch.tensor(cone_3d_veh_frame_np, dtype=torch.float32, device=self.device)
+                cone_3d_map_frame_xy_tensor = torch.matmul(cone_3d_veh_frame_tensor[:2], rot_matrix_torch.T) + torch.tensor([veh_x, veh_y], device=self.device)
+                cone_3d_map_frame_z = cone_3d_veh_frame_np[2]
                 
-                cones_with_color.append([cone_3d_map_frame_xy[0], cone_3d_map_frame_xy[1], cone_3d_map_frame_z, color_id])
+                cones_with_color.append([cone_3d_map_frame_xy_tensor[0].item(), cone_3d_map_frame_xy_tensor[1].item(), cone_3d_map_frame_z, color_id])
                 if color_id == 1:
-                    left.append([cone_3d_map_frame_xy[0], cone_3d_map_frame_xy[1]])
+                    left.append([cone_3d_map_frame_xy_tensor[0].item(), cone_3d_map_frame_xy_tensor[1].item()])
                 elif color_id == 2:
-                    right.append([cone_3d_map_frame_xy[0], cone_3d_map_frame_xy[1]])
+                    right.append([cone_3d_map_frame_xy_tensor[0].item(), cone_3d_map_frame_xy_tensor[1].item()])
             
-            global_clusters = np.array(cones_with_color)
+            global_clusters = torch.tensor(cones_with_color, dtype=torch.float32, device=self.device)
             rospy.loginfo_throttle(1.0, f"FormulaAutonomousSystem: Cones from perception: {len(global_clusters)}")
         else:
-            global_clusters = np.empty((0, 4)) # Ensure global_clusters is always a 2D array with 4 columns
+            global_clusters = torch.empty((0, 4), dtype=torch.float32, device=self.device)
 
         # ==================== Map & Path ===================
         # Update map with new cone observations
@@ -1281,7 +1388,7 @@ class FormulaAutonomousSystem:
         if should_replan:
             rospy.loginfo_throttle(1.0, "Replanning path.")
             # Plan path using the map
-            path, tri, tri_points, tri_colors, midpoints, is_fallback, num_blue_cones, num_yellow_cones, num_midpoints = self.path_planner.plan_path(self.track_map.get_cones(), vehicle_state)
+            path, tri, tri_points, tri_colors, midpoints_tensor, is_fallback, num_blue_cones, num_yellow_cones, num_midpoints = self.path_planner.plan_path(self.track_map.get_cones(), vehicle_state)
             
             # If a valid path is generated, store it.
             if path is not None and not is_fallback:
@@ -1298,12 +1405,15 @@ class FormulaAutonomousSystem:
             path = self.current_path
             is_fallback = self.current_path_is_fallback
             # These values are not used when not replanning, so we can set them to default values
-            tri, tri_points, tri_colors, midpoints, num_blue_cones, num_yellow_cones, num_midpoints = None, None, None, None, 0, 0, 0
+            tri, tri_points, tri_colors, midpoints_tensor, num_blue_cones, num_yellow_cones, num_midpoints = None, None, None, None, 0, 0, 0
         
+        # Update midpoint map with new midpoints
+        self.midpoint_map.update(midpoints_tensor)
+
         # Visualize Map and Path
         self.publish_map_cones()
         self.publish_triangulation(tri, tri_points, tri_colors)
-        self.publish_midpoints(midpoints)
+        self.publish_midpoints(midpoints_tensor.cpu().numpy() if midpoints_tensor is not None else None)
         if path is not None:
             self.publish_path(path)
 
@@ -1353,7 +1463,7 @@ class FormulaAutonomousSystem:
                 state= vehicle_state,
                 camera1_image=img1,
                 camera2_image=img2,
-                lidar_points=global_clusters,
+                lidar_points=global_clusters.cpu().numpy() if global_clusters is not None else np.empty((0,4)),
                 map_cones=self.track_map.get_cones(),
                 path=path,
                 control_debug_data=debug_data,
@@ -1425,6 +1535,7 @@ class FormulaAutonomousSystem:
         # Combine into a batch for inference
         batched_input = [img1_tensor.to(self.device, non_blocking=True), img2_tensor.to(self.device, non_blocking=True)]
         
+<<<<<<< HEAD
         # If the model is in FP16, convert input tensors to FP16 as well
         if self.device.type == 'cuda' and next(self.model.parameters()).is_cuda and next(self.model.parameters()).dtype == torch.float16:
             batched_input = [img.half() for img in batched_input]
@@ -1437,6 +1548,11 @@ class FormulaAutonomousSystem:
 <<<<<<< HEAD
 =======
     def publish_path(self, path):
+=======
+        self.map_cone_publisher.publish(marker_array)
+
+    def publish_path(self, path_np):
+>>>>>>> 1
         if not self.enable_visualization:
             return
         if self.visualization_frame_counter % self.visualization_publish_interval != 0:
@@ -1447,7 +1563,19 @@ class FormulaAutonomousSystem:
         path_msg.header.frame_id = "map"
 >>>>>>> [Cone Detection] 251018 @Doyeop-knut @marigold0916 | RetinaNet 기반 코드
 
+<<<<<<< HEAD
 =======
+=======
+        for point in path_np:
+            pose = PoseStamped()
+            pose.header.stamp = path_msg.header.stamp
+            pose.header.frame_id = path_msg.header.frame_id
+            pose.pose.position.x = point[0]
+            pose.pose.position.y = point[1]
+            pose.pose.position.z = 0.1 # slightly above ground
+            pose.pose.orientation.w = 1.0
+            path_msg.poses.append(pose)
+>>>>>>> 1
 
         t.transform.rotation.x = 0.0
         t.transform.rotation.y = 0.0
@@ -1472,6 +1600,7 @@ class FormulaAutonomousSystem:
         image1 = self.camera_util.preprocessImage(image1)
         image2 = self.camera_util.preprocessImage(image2)
         
+<<<<<<< HEAD
         # Process image1
         img1_rgb = cv2.cvtColor(image1, cv2.COLOR_BGR2RGB) 
         img1_tensor = torch.from_numpy(img1_rgb).permute(2, 0, 1).float() / 255.0 
@@ -1487,10 +1616,45 @@ class FormulaAutonomousSystem:
             raw_predictions1 = self.model(img1_tensor)
             raw_predictions2 = self.model(img2_tensor)
 >>>>>>> [1]
+=======
+        # Add text markers for each path point
+        for i, point in enumerate(path_np):
+            marker = Marker()
+            marker.header = header
+            marker.ns = "path_indices"
+            marker.id = i
+            marker.type = Marker.TEXT_VIEW_FACING
+            marker.action = Marker.ADD
+            marker.pose.position.x = point[0]
+            marker.pose.position.y = point[1]
+            marker.pose.position.z = 0.5  # Offset text above the path
+            marker.pose.orientation.w = 1.0
+            marker.scale.z = 0.5  # Text size
+            marker.color.a = 1.0
+            marker.color.r = 1.0
+            marker.color.g = 1.0
+            marker.color.b = 0.0
+            marker.text = str(i)
+            marker_array.markers.append(marker)
+
+        # Add delete markers for old markers that are no longer present
+        for i in range(len(path_np), self.last_path_index_count):
+            marker = Marker()
+            marker.header = header
+            marker.ns = "path_indices"
+            marker.id = i
+            marker.action = Marker.DELETE
+            marker_array.markers.append(marker)
+
+        self.last_path_index_count = len(path_np)
+        if len(marker_array.markers) > 0:
+            self.path_index_publisher.publish(marker_array)
+>>>>>>> 1
 
         rendered_img1, left_bbox, left_conf = self.camera_util._process_and_draw_detections(image1, raw_predictions1)
         rendered_img2, right_bbox, right_conf = self.camera_util._process_and_draw_detections(image2, raw_predictions2)
         
+<<<<<<< HEAD
 <<<<<<< HEAD
         if cluster.numel() > 0:
             try:
@@ -1513,6 +1677,42 @@ class FormulaAutonomousSystem:
                 compensated_cluster[:, 1] += compensation_y
 =======
     def publish_midpoints(self, midpoints):
+=======
+        # Add text markers for each path point
+        for i, point in enumerate(path_np):
+            marker = Marker()
+            marker.header = header
+            marker.ns = "path_indices"
+            marker.id = i
+            marker.type = Marker.TEXT_VIEW_FACING
+            marker.action = Marker.ADD
+            marker.pose.position.x = point[0]
+            marker.pose.position.y = point[1]
+            marker.pose.position.z = 0.5  # Offset text above the path
+            marker.pose.orientation.w = 1.0
+            marker.scale.z = 0.5  # Text size
+            marker.color.a = 1.0
+            marker.color.r = 1.0
+            marker.color.g = 1.0
+            marker.color.b = 0.0
+            marker.text = str(i)
+            marker_array.markers.append(marker)
+
+        # Add delete markers for old markers that are no longer present
+        for i in range(len(path_np), self.last_path_index_count):
+            marker = Marker()
+            marker.header = header
+            marker.ns = "path_indices"
+            marker.id = i
+            marker.action = Marker.DELETE
+            marker_array.markers.append(marker)
+
+        self.last_path_index_count = len(path_np)
+        if len(marker_array.markers) > 0:
+            self.path_index_publisher.publish(marker_array)
+
+    def publish_midpoints(self, midpoints_np):
+>>>>>>> 1
         if not self.enable_visualization:
             return
         if self.visualization_frame_counter % self.visualization_publish_interval != 0:
@@ -1524,6 +1724,7 @@ class FormulaAutonomousSystem:
         header.frame_id = "map"
 >>>>>>> [Cone Detection] 251018 @Doyeop-knut @marigold0916 | RetinaNet 기반 코드
 
+<<<<<<< HEAD
                 # Apply rotational compensation (rotate points around vehicle's current position)
                 if abs(yaw_rate) > 1e-6: # Only rotate if there's significant yaw rate
                     angle_compensation = yaw_rate * dt_cam_lidar
@@ -1538,6 +1739,42 @@ class FormulaAutonomousSystem:
                     compensated_cluster[:, 1] = rotated_y
 =======
     def publish_triangulation(self, tri, points, colors):
+=======
+        if midpoints_np is not None:
+            for i, point in enumerate(midpoints_np):
+                marker = Marker()
+                marker.header = header
+                marker.ns = "cone_midpoints"
+                marker.id = i
+                marker.type = Marker.SPHERE
+                marker.action = Marker.ADD
+                marker.pose.position.x = point[0]
+                marker.pose.position.y = point[1]
+                marker.pose.position.z = 0.1 # slightly above ground
+                marker.pose.orientation.w = 1.0
+                marker.scale.x = 0.2
+                marker.scale.y = 0.2
+                marker.scale.z = 0.2
+                marker.color.a = 1.0
+                marker.color.r = 0.0
+                marker.color.g = 1.0
+                marker.color.b = 0.0
+                marker_array.markers.append(marker)
+        
+        # Add delete markers for old markers
+        for i in range(len(midpoints_np) if midpoints_np is not None else 0, self.last_midpoints_count):
+            marker = Marker()
+            marker.header = header
+            marker.ns = "cone_midpoints"
+            marker.id = i
+            marker.action = Marker.DELETE
+            marker_array.markers.append(marker)
+        
+        self.last_midpoints_count = len(midpoints_np) if midpoints_np is not None else 0
+        self.midpoints_publisher.publish(marker_array)
+
+    def publish_triangulation(self, tri, points_np, colors_np):
+>>>>>>> 1
         if not self.enable_visualization:
             # Always clear markers if visualization is disabled
             marker = Marker()
@@ -1560,7 +1797,7 @@ class FormulaAutonomousSystem:
             self.triangulation_publisher.publish(marker)
             return
 
-        if tri is None or points is None or colors is None:
+        if tri is None or points_np is None or colors_np is None:
             # Clear previous markers if triangulation is not available
             marker = Marker()
             marker.header.stamp = rospy.Time.now()
@@ -1614,6 +1851,7 @@ class FormulaAutonomousSystem:
             for i, cone_3d_veh_frame_np in enumerate(compensated_cluster_np):
                 detected_color = "unknown"
                 
+<<<<<<< HEAD
                 # --- IoU-based Association for Camera 1 ---
                 best_iou1 = -1
                 best_bbox_index1 = -1
@@ -8798,6 +9036,10 @@ class MidpointMap:
         }
         self.midpoints.append(new_midpoint)
         self.next_midpoint_id += 1
+=======
+                p1_coords = points_np[p1_idx]
+                p2_coords = points_np[p2_idx]
+>>>>>>> 1
 
     def _update_midpoint(self, map_idx, obs_point):
         self.midpoints[map_idx]['x'] = (1 - self.smoothing_alpha) * self.midpoints[map_idx]['x'] + self.smoothing_alpha * obs_point[0]
@@ -8809,6 +9051,7 @@ class MidpointMap:
         return [[p['x'], p['y']] for p in sorted_midpoints]
 
 <<<<<<< HEAD
+<<<<<<< HEAD
 >>>>>>> [PathPlanning] 251016 @Doyeop-knut | Path Planner 수정
 =======
 >>>>>>> [yolo]
@@ -8819,10 +9062,15 @@ class PathPlanner:
         self.w_dist = rospy.get_param("/planning/path_planner/weight_dist", 0.3)
         self.w_angle = rospy.get_param("/planning/path_planner/weight_angle", 0.7)
         self.max_path_distance = rospy.get_param("/planning/path_planner/max_path_distance", 20.0)
+=======
+                    color1 = colors_np[p1_idx]
+                    color2 = colors_np[p2_idx]
+>>>>>>> 1
 
 <<<<<<< HEAD
 =======
 
+<<<<<<< HEAD
 >>>>>>> [yolo]
     def _normalize_angle(self, angle):
         """Normalize an angle to [-pi, pi]."""
@@ -8831,6 +9079,18 @@ class PathPlanner:
         while angle < -math.pi:
             angle += 2.0 * math.pi
         return angle
+=======
+    def get_lidar_point_cloud(self, msg):
+        """Convert ROS PointCloud2 message to point cloud (torch.Tensor)"""
+        pointcloud_list = []
+        for point in pc2.read_points(msg, field_names=("x", "y", "z"), skip_nans=True):
+            pointcloud_list.append([point[0], point[1], point[2]])
+        
+        if not pointcloud_list:
+            return torch.empty((0, 3), dtype=torch.float32, device=self.device)
+            
+        return torch.tensor(pointcloud_list, dtype=torch.float32, device=self.device)
+>>>>>>> 1
 
     def _angle_between_vectors(self, v1, v2):
         """Calculates the angle in radians between two vectors."""
@@ -8928,23 +9188,23 @@ class PathPlanner:
         # Filters are bypassed for performance. If needed, re-enable and tune parameters.
         return rgb_image
     
-    def projectToCam(self, points, transform):
-        if not points.size: # Handle empty points array
+    def projectToCam(self, points: torch.Tensor, transform: list) -> list:
+        if points.numel() == 0:
             return []
 
-        T = np.array(transform)
+        T = torch.tensor(transform, dtype=torch.float32, device=points.device)
         rotation = T[:3, :3]
         translation = T[:3, 3]
 
         # Apply the transformation to all points at once
         # points is (N, 3), rotation is (3, 3), translation is (3,)
-        cone_points_in_cam = np.dot(points, rotation.T) + translation
+        cone_points_in_cam = torch.matmul(points, rotation.T) + translation
 
         # Filter points in front of the camera (ROS X-axis points forward)
         valid_mask = cone_points_in_cam[:, 0] > 0
         cone_points_in_cam_filtered = cone_points_in_cam[valid_mask]
 
-        if not cone_points_in_cam_filtered.size:
+        if cone_points_in_cam_filtered.numel() == 0:
             return []
 
         # Convert from ROS camera coordinates to standard CV/image coordinates
@@ -8956,8 +9216,8 @@ class PathPlanner:
         u = self.fx * (x_cv / z_cv) + self.px
         v = self.fy * (y_cv / z_cv) + self.py
         
-        # Combine u and v into a list of tuples
-        projected_points = np.vstack((u, v)).T.tolist()
+        # Combine u and v into a list of tuples (converting back to CPU numpy for cv2 operations later)
+        projected_points = torch.stack((u, v), dim=1).cpu().numpy().tolist()
         return projected_points
 
 
@@ -9343,7 +9603,7 @@ class PathPlanner:
         masks = {"yellow": mask_yellow, "blue": mask_blue, "orange": mask_orange}
 
         cv2.imshow("lidar roi", np.concatenate((hsv_roi,roi),axis=1))
-        cv2.imshow("lidar mask", np.concatenate((mask_yellow,mask_blue,mask_orange),axis=1))
+        # cv2.imshow("masks", np.concatenate((mask_yellow,mask_blue,mask_orange),axis=1))
 
         for color, mask in masks.items():
             pixel_count = cv2.countNonZero(mask)
@@ -9496,7 +9756,7 @@ class PathPlanner:
 
             # 레이블 그리기
             label = f"Cone: {scores[i]:.2f}"
-            cv2.putText(img_copy, label, (x1, y1 - 10),
+            cv2.putText(img_copy, label, (x1, y1 - 10), 
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
     
         return img_copy, np.array(box_output), np.array(confidence_output)
@@ -9598,7 +9858,7 @@ class PathPlanner:
         mask_blue = cv2.inRange(hsv_roi, self.hsv_blue_min, self.hsv_blue_max)
         mask_orange = cv2.inRange(hsv_roi, self.hsv_orange_min, self.hsv_orange_max)
         cv2.imshow("hsv", np.concatenate((hsv_roi,roi),axis=1))
-        cv2.imshow("masks", np.concatenate((mask_yellow,mask_blue,mask_orange),axis=1))
+        # cv2.imshow("masks", np.concatenate((mask_yellow,mask_blue,mask_orange),axis=1))
         masks = {"yellow": mask_yellow, "blue": mask_blue, "orange": mask_orange}
         
         for color, mask in masks.items():
@@ -9687,7 +9947,8 @@ class PathPlanner:
 
 >>>>>>> [control] 251022 @Doyeop-knut | pytorch 기반  mpc 제어기 추가
 class LiDARProcessor:
-    def __init__(self, enable_visualization=True):
+    def __init__(self, enable_visualization=True, device=None):
+        self.device = device if device is not None else torch.device('cpu')
         self.enable_visualization = enable_visualization
         self.lidar_publisher = rospy.Publisher("/processed_lidar", PointCloud2, queue_size=1)
         self.marker_publisher = rospy.Publisher("/cluster_indices", MarkerArray, queue_size=1)
@@ -9718,6 +9979,7 @@ class LiDARProcessor:
         self.rot_r, self.rot_p, self.rot_yaw = rospy.get_param("/perception/lidar_extrinsics/rotation_roll", 0.0), rospy.get_param("/perception/lidar_extrinsics/rotation_pitch", 0.0), rospy.get_param("/perception/lidar_extrinsics/rotation_yaw", 0.0)
         # self.gps_util = GPSIMUProcessor()
     def vehicle_to_lidar_Transform(self, x, y, z, r, p, yaw):
+<<<<<<< HEAD
         veh_to_LiDAR = [
             [math.cos(yaw)* math.cos(p), math.cos(yaw)*math.sin(p)*math.sin(r) - math.sin(yaw)*math.cos(r), math.cos(yaw)*math.sin(p)*math.cos(r)+math.sin(yaw)*math.sin(r), x],
             [math.sin(yaw)* math.cos(p), math.sin(yaw)*math.sin(p)*math.sin(r) + math.cos(yaw)*math.cos(r), math.sin(yaw)*math.sin(p)*math.cos(r)- math.cos(yaw)*math.sin(r),y],
@@ -9823,6 +10085,159 @@ class LiDARProcessor:
                     p1, p2 = all_points[p1_idx], all_points[p2_idx]
                     if np.linalg.norm(p1 - p2) < self.max_edge_length:
                         midpoints.append((p1 + p2) / 2.0)
+=======
+        cr, sr = math.cos(r), math.sin(r)
+        cp, sp = math.cos(p), math.sin(p)
+        cy, sy = math.cos(yaw), math.sin(yaw)
+
+        T = torch.tensor([
+            [cy*cp, cy*sp*sr - sy*cr, cy*sp*cr + sy*sr, x],
+            [sy*cp, sy*sp*sr + cy*cr, sy*sp*cr - cy*sr, y],
+            [-sp,   cp*sr,            cp*cr,            z],
+            [0,     0,                0,                1]
+        ], dtype=torch.float32, device=self.device)
+        return T
+
+    def filtering_points(self, points: torch.Tensor, x_range: Tuple[float, float], y_range: Tuple[float, float], z_range: Tuple[float, float]) -> torch.Tensor:
+        """Filter points within specified ranges using torch.Tensor"""
+        if points.numel() == 0:
+            return points
+
+        mask = (
+            (points[:, 0] >= x_range[0]) & (points[:, 0] <= x_range[1]) &
+            (points[:, 1] >= y_range[0]) & (points[:, 1] <= y_range[1]) &
+            (points[:, 2] >= z_range[0]) & (points[:, 2] <= z_range[1])
+        )
+        return points[mask]
+    
+    def ransac_plane_removal(self, points: torch.Tensor, threshold: float = 0.05, max_trials: int = 100) -> torch.Tensor:
+        """Remove ground plane using Open3D's RANSAC"""
+        if points.numel() == 0 or points.shape[0] < 3:
+            return torch.empty((0, 3), dtype=torch.float32, device=self.device)
+
+        # Convert torch.Tensor to Open3D PointCloud
+        pcd = o3d.geometry.PointCloud()
+        pcd.points = o3d.utility.Vector3dVector(points.cpu().numpy())
+
+        # Perform RANSAC plane segmentation
+        plane_model, inliers = pcd.segment_plane(distance_threshold=threshold, ransac_n=3, num_iterations=max_trials)
+
+        # Select the outlier points (non-ground)
+        outlier_cloud = pcd.select_by_index(inliers, invert=True)
+
+        # Convert back to torch.Tensor and move to device
+        object_points_np = np.asarray(outlier_cloud.points)
+        return torch.tensor(object_points_np, dtype=torch.float32, device=self.device)
+
+    def cluster_points(self, points: torch.Tensor, eps: float = 0.5, min_samples: int = 5) -> torch.Tensor:
+        """Cluster points using Open3D's DBSCAN and return centroids."""
+        if points.numel() == 0 or points.shape[0] < min_samples:
+            return torch.empty((0, 3), dtype=torch.float32, device=self.device)
+
+        # Convert torch.Tensor to Open3D PointCloud
+        pcd = o3d.geometry.PointCloud()
+        pcd.points = o3d.utility.Vector3dVector(points.cpu().numpy())
+
+        # Perform DBSCAN clustering
+        labels = np.array(pcd.cluster_dbscan(eps=eps, min_points=min_samples, print_progress=False))
+
+        # Get unique labels, excluding noise (-1)
+        unique_labels = np.unique(labels)
+        cluster_centroids = []
+
+        for label in unique_labels:
+            if label == -1:
+                continue
+
+            # Get points belonging to the current cluster
+            cluster_indices = np.where(labels == label)[0]
+            cluster_points = points[cluster_indices]
+
+            # Compute the centroid of the cluster
+            centroid = torch.mean(cluster_points, dim=0)
+            cluster_centroids.append(centroid)
+
+        if not cluster_centroids:
+            return torch.empty((0, 3), dtype=torch.float32, device=self.device)
+
+        # Stack centroids into a single tensor
+        return torch.stack(cluster_centroids)
+    
+    def ransac_gpu(self, points_2d, threshold, max_iterations, min_radius, max_radius):
+        """
+        GPU-accelerated RANSAC for detecting circular cone bases in 2D projected point clouds.
+        This implementation uses a more numerically stable method for circle fitting.
+        points_2d: Nx2 tensor of (x, y) coordinates.
+        threshold: Maximum distance for a point to be considered an inlier.
+        max_iterations: Number of RANSAC iterations.
+        min_radius, max_radius: Expected radius range for cone bases.
+        Returns: best_circle_params (cx, cy, r), best_inliers (Nx2 tensor).
+        """
+        num_points = points_2d.shape[0]
+        if num_points < 3:
+            return None, torch.tensor([], device=self.device)
+
+        best_inlier_count = 0
+        best_circle_params = None
+        best_inliers = torch.tensor([], device=self.device)
+
+        for _ in range(max_iterations):
+            # Randomly sample 3 points
+            sample_indices = torch.randint(0, num_points, (3,), device=self.device)
+            p1, p2, p3 = points_2d[sample_indices]
+
+            # Using a more stable method to find the circumcenter of a triangle
+            # based on solving a system of linear equations.
+            # The general equation of a circle is x^2 + y^2 + Ax + By + C = 0
+            # We can solve for A, B, C using the three points.
+            try:
+                A = torch.tensor([[p1[0], p1[1], 1],
+                                  [p2[0], p2[1], 1],
+                                  [p3[0], p3[1], 1]], device=self.device)
+                
+                b = -torch.tensor([p1[0]**2 + p1[1]**2,
+                                    p2[0]**2 + p2[1]**2,
+                                    p3[0]**2 + p3[1]**2], device=self.device)
+
+                # Solve the linear system Ax = b
+                # Use torch.linalg.solve for better numerical stability
+                x = torch.linalg.solve(A, b)
+                
+                # Circle parameters
+                cx = -0.5 * x[0]
+                cy = -0.5 * x[1]
+                r_sq = cx**2 + cy**2 - x[2]
+
+                if r_sq <= 0:
+                    continue
+                
+                r = torch.sqrt(r_sq)
+
+            except torch.linalg.LinAlgError:
+                # This can happen if the points are collinear, leading to a singular matrix
+                continue
+
+            # Filter by radius constraints
+            if not (min_radius <= r <= max_radius):
+                continue
+
+            # Calculate distances from all points to the circle
+            distances_to_center = torch.sqrt((points_2d[:, 0] - cx)**2 + (points_2d[:, 1] - cy)**2)
+            distances_to_circle = torch.abs(distances_to_center - r)
+
+            # Find inliers
+            inliers_mask = distances_to_circle < threshold
+            current_inliers = points_2d[inliers_mask]
+            current_inlier_count = current_inliers.shape[0]
+
+            if current_inlier_count > best_inlier_count:
+                best_inlier_count = current_inlier_count
+                best_circle_params = (cx, cy, r)
+                best_inliers = current_inliers
+
+        return best_circle_params, best_inliers
+    
+>>>>>>> 1
         
         if not midpoints:
 <<<<<<< HEAD
@@ -9855,15 +10270,19 @@ class LiDARProcessor:
         return left_points, right_points
     
     ### For Debugging: Publish Processed Point Cloud ###
-    def publish_point_cloud(self, points: np.ndarray):
+    def publish_point_cloud(self, points: torch.Tensor):
         """Publish processed point cloud and their indices as markers"""
         if not self.enable_visualization:
             return
 >>>>>>> [control] 251020 @Doyeop-knut | MPC 제어기 파라미터 수정 -> 증속 후 파라미터 수정 필요
 
+<<<<<<< HEAD
 =======
         # Correct any detours in the path
         corrected_path = self._correct_path_detours(ordered_midpoints, vehicle_yaw)
+=======
+        clusters_np = points.cpu().numpy() # Convert to numpy for ROS message
+>>>>>>> 1
 
         # Filter path to include only points within max_path_distance from the car
 >>>>>>> [yolo]
@@ -9872,8 +10291,19 @@ class LiDARProcessor:
             if np.linalg.norm(p - current_car_pos) < self.max_path_distance:
                 filtered_path.append(p)
         
+<<<<<<< HEAD
         if len(filtered_path) < 2:
             return None, tri, all_points, colors, unique_midpoints
+=======
+        # Publish point cloud
+        fields = [
+            PointField('x', 0, PointField.FLOAT32, 1),
+            PointField('y', 4, PointField.FLOAT32, 1),
+            PointField('z', 8, PointField.FLOAT32, 1),
+        ]
+        point_cloud_msg = pc2.create_cloud(header, fields, clusters_np)
+        self.lidar_publisher.publish(point_cloud_msg)
+>>>>>>> 1
 
 <<<<<<< HEAD
         if len(filtered_path) < 3: # Spline needs at least 3 points for k=2
@@ -9913,6 +10343,7 @@ class LiDARProcessor:
                 lookahead_point = path_tensor[i]
                 break
         
+<<<<<<< HEAD
         if lookahead_point is None:
             lookahead_point = path_tensor[-1]
 =======
@@ -9938,13 +10369,50 @@ class LiDARProcessor:
         brake = 0.0
         if target_speed < current_speed:
             brake = 0.3
+=======
+        # Add text markers for each cluster
+        for i, point in enumerate(clusters_np):
+            marker = Marker()
+            marker.header = header
+            marker.ns = "cluster_indices"
+            marker.id = i
+            marker.type = Marker.TEXT_VIEW_FACING
+            marker.action = Marker.ADD
+            marker.pose.position.x = point[0]
+            marker.pose.position.y = point[1]
+            marker.pose.position.z = point[2] + 0.5  # Offset text above the point
+            marker.pose.orientation.w = 1.0
+            marker.scale.z = 0.5  # Text size
+            marker.color.a = 1.0
+            marker.color.r = 1.0
+            marker.color.g = 1.0
+            marker.color.b = 1.0
+            marker.text = str(i)
+            marker_array.markers.append(marker)
+
+        # Add delete markers for old markers that are no longer present
+        for i in range(len(clusters_np), self.last_marker_count):
+            marker = Marker()
+            marker.header = header
+            marker.ns = "cluster_indices"
+            marker.id = i
+            marker.action = Marker.DELETE
+            marker_array.markers.append(marker)
+
+        self.last_marker_count = len(clusters_np)
+        if len(marker_array.markers) > 0:
+            self.marker_publisher.publish(marker_array)
+
+# ==================== Map & Path Planner ====================
+>>>>>>> 1
 
 <<<<<<< HEAD
         # Normalize steering angle to [-1, 1]
         normalized_steer = steer / self.max_steer
 =======
 class TrackMap:
-    def __init__(self):
+    def __init__(self, device):
+        self.device = device
         self.cones = []
         self.next_cone_id = 0
         self.association_threshold = rospy.get_param("/mapping/association_threshold", 1.5)
@@ -9967,17 +10435,34 @@ class TrackMap:
 >>>>>>> [Cone Detection] 251018 @Doyeop-knut @marigold0916 | RetinaNet 기반 코드
 
 <<<<<<< HEAD
+<<<<<<< HEAD
     def _compute_stanley(self, vehicle_state, path, is_fallback=False):
+=======
+    def update(self, new_cones_observations: torch.Tensor, vehicle_state):
+>>>>>>> 1
         """
         Computes control commands using the Stanley method.
         """
+<<<<<<< HEAD
         # Unpack vehicle state
         veh_x, veh_y, veh_yaw = vehicle_state[0], vehicle_state[1], vehicle_state[2]
         current_speed = math.sqrt(vehicle_state[3]**2 + vehicle_state[4]**2)
+=======
+        self.update_count += 1
+
+        # 1. Find start line if not already found
+        if self.start_line_center is None and new_cones_observations.numel() > 1:
+            self._find_start_line(new_cones_observations)
+
+        # 2. Attempt loop closure and get corrected observations
+        # This will return transformed observations if LC is successful
+        processed_observations = self._detect_and_correct_loop_closure(new_cones_observations, vehicle_state)
+>>>>>>> 1
 
         path_tensor = torch.tensor(path, dtype=torch.float32, device=self.device)
         veh_pos_tensor = torch.tensor([veh_x, veh_y], dtype=torch.float32, device=self.device)
 
+<<<<<<< HEAD
         # --- 곡률 기반 목표 속도 계산 ---
         if is_fallback:
             target_speed = 4.0 # Set speed to 5.0 for fallback paths
@@ -10009,6 +10494,14 @@ class TrackMap:
 >>>>>>> test
             
             base_target_speed = target_speed_params['target_speed']
+=======
+        if processed_observations.numel() == 0:
+            return
+
+        map_cone_positions = torch.tensor([[c['x'], c['y']] for c in self.cones], dtype=torch.float32, device=self.device)
+        obs_cone_positions = processed_observations[:, :2]
+        distance_matrix = torch.cdist(map_cone_positions, obs_cone_positions)
+>>>>>>> 1
 
             target_speed = base_target_speed / (1.0 + target_speed_params['curvature_speed_factor'] * torch.abs(avg_curvature))
             target_speed = torch.clamp(target_speed, target_speed_params['min_speed'], base_target_speed).item()
@@ -10026,19 +10519,19 @@ class TrackMap:
                 continue
 
             possible_matches_mask = (processed_observations[:, 3] == map_cone['color_id'])
-            if np.any(possible_matches_mask):
+            if torch.any(possible_matches_mask):
                 distances_to_map_cone = distance_matrix[map_idx, possible_matches_mask]
-                obs_indices_for_color = np.where(possible_matches_mask)[0]
+                obs_indices_for_color = torch.where(possible_matches_mask)[0]
                 
-                if distances_to_map_cone.size > 0:
-                    best_match_local_idx = np.argmin(distances_to_map_cone)
+                if distances_to_map_cone.numel() > 0:
+                    best_match_local_idx = torch.argmin(distances_to_map_cone)
                     min_dist = distances_to_map_cone[best_match_local_idx]
 
                     if min_dist < self.association_threshold:
                         obs_idx = obs_indices_for_color[best_match_local_idx]
-                        if obs_idx not in matched_obs_indices:
-                            self._update_cone(map_idx, processed_observations[obs_idx])
-                            matched_obs_indices.add(obs_idx)
+                        if obs_idx.item() not in matched_obs_indices:
+                            self._update_cone(map_idx, processed_observations[obs_idx.item()])
+                            matched_obs_indices.add(obs_idx.item())
                             matched_map_indices.add(map_idx)
 
         # 2단계: 색상이 다르더라도 위치가 매우 가까운 경우, 색상 정보를 업데이트 (오탐지 교정)
@@ -10050,15 +10543,15 @@ class TrackMap:
             if not unmatched_obs_indices: break
 
             distances_to_unmatched = distance_matrix[map_idx, unmatched_obs_indices]
-            if distances_to_unmatched.size == 0:
+            if distances_to_unmatched.numel() == 0:
                 continue
-            best_match_local_idx = np.argmin(distances_to_unmatched)
+            best_match_local_idx = torch.argmin(distances_to_unmatched)
             min_dist = distances_to_unmatched[best_match_local_idx]
 
             if min_dist < self.association_threshold:
                 obs_idx = unmatched_obs_indices[best_match_local_idx]
                 if obs_idx not in matched_obs_indices:
-                    new_color_id = int(processed_observations[obs_idx][3])
+                    new_color_id = int(processed_observations[obs_idx][3].item())
                     # 알려진 색상(0이 아님)을 알 수 없는 색상(0)으로 덮어쓰지 않도록 합니다.
                     # 기존 색상이 '알 수 없음'이거나 새로운 색상이 '알 수 없음'이 아닌 경우에만 색상을 업데이트합니다.
                     if new_color_id != 0 or map_cone['color_id'] == 0:
@@ -10077,6 +10570,7 @@ class TrackMap:
         p2 = path_tensor[target_idx + 1]
         path_yaw = torch.atan2(p2[1] - p1[1], p2[0] - p1[0])
 
+<<<<<<< HEAD
         # 3. Calculate heading error (theta_e)
         heading_error = self.normalize_angle(path_yaw - veh_yaw)
 
@@ -10097,6 +10591,25 @@ class TrackMap:
         # Total steering angle
         steer = heading_error + cte_steer
         steer = -torch.clamp(steer, -self.max_steer, self.max_steer).item()
+=======
+    def _find_start_line(self, observations: torch.Tensor):
+        blue_cones = observations[observations[:, 3] == 1]
+        yellow_cones = observations[observations[:, 3] == 2]
+        if blue_cones.numel() > 0 and yellow_cones.numel() > 0:
+            avg_blue = torch.mean(blue_cones[:, :2], dim=0)
+            avg_yellow = torch.mean(yellow_cones[:, :2], dim=0)
+            self.start_line_center = ((avg_blue + avg_yellow) / 2.0).cpu().numpy() # Store as numpy array
+            rospy.loginfo(f"TrackMap: Start line center established at {self.start_line_center}")
+
+    def _detect_and_correct_loop_closure(self, new_observations: torch.Tensor, vehicle_state):
+        # --- 1. Check Trigger Conditions ---
+        if self.is_loop_closed or len(self.cones) < self.min_cones_for_lc or self.start_line_center is None or self.update_count < self.lc_cooldown_period:
+            return new_observations
+
+        car_pos = torch.tensor(vehicle_state[:2], dtype=torch.float32, device=self.device)
+        start_line_center_tensor = torch.tensor(self.start_line_center, dtype=torch.float32, device=self.device)
+        dist_to_start = torch.linalg.norm(car_pos - start_line_center_tensor)
+>>>>>>> 1
 
         # 6. Throttle control (PID controller)
         current_time = rospy.Time.now().to_sec()
@@ -10107,16 +10620,32 @@ class TrackMap:
         derivative_error = (error - self.previous_error) / dt if dt > 0 else 0.0
         brake = 0
 
+<<<<<<< HEAD
         throttle = self.kp_throttle * error + self.ki_throttle * self.integral_error + self.kd_throttle * derivative_error
         print(f"p = {self.kp_throttle * error}, i = {self.ki_throttle * self.integral_error}, d = {self.kd_throttle * derivative_error}")
         throttle = np.clip(throttle, 0.0, 1.0)
 
         if throttle < 0:
             brake = throttle
+=======
+        # --- 2. Find Candidate Cones for Matching ---
+        map_cones_tensor = torch.tensor([[c['x'], c['y'], c['color_id']] for c in self.cones], dtype=torch.float32, device=self.device)
+        
+        # Reference cones: old cones from the map near the start line
+        dist_from_start = torch.linalg.norm(map_cones_tensor[:, :2] - start_line_center_tensor, dim=1)
+        reference_mask = dist_from_start < self.lc_search_radius
+        reference_cones = map_cones_tensor[reference_mask]
+
+        # Current cones: new observations near the car
+        dist_from_car = torch.linalg.norm(new_observations[:, :2] - car_pos, dim=1)
+        current_mask = dist_from_car < self.lc_search_radius
+        current_cones = new_observations[current_mask]
+>>>>>>> 1
 
         self.previous_error = error
         self.last_control_time = current_time
 
+<<<<<<< HEAD
         # Normalize steering angle to [-1, 1]
         normalized_steer = steer / self.max_steer
         return throttle, normalized_steer, brake, None
@@ -10131,13 +10660,45 @@ class TrackMap:
         # ref_path_tensor: (N, 2)
         # target_speed_tensor: scalar
         # weights_dict: dictionary of scalar weights
+=======
+        # --- 3. Find Matching Pairs ---
+        src_pts, dst_pts = [], []
+        # Use distance matrix between current and reference cones
+        dist_matrix = torch.cdist(current_cones[:, :2], reference_cones[:, :2])
+        
+        for i, c_cone in enumerate(current_cones):
+            # Find potential matches of the same color
+            color_mask = reference_cones[:, 2] == c_cone[3]
+            if not torch.any(color_mask):
+                continue
+            
+            row = dist_matrix[i, color_mask]
+            ref_indices = torch.where(color_mask)[0]
+
+            if row.numel() == 0:
+                continue
+
+            best_ref_local_idx = torch.argmin(row)
+            if row[best_ref_local_idx] < self.association_threshold:
+                src_pts.append(c_cone[:2])
+                dst_pts.append(reference_cones[ref_indices[best_ref_local_idx]][:2])
+>>>>>>> 1
 
         # Unpack control inputs
         accels = u_tensor[0::2]
         steers = u_tensor[1::2]
 
+<<<<<<< HEAD
         # Predict states over the horizon
         predicted_states_list = [initial_state_tensor]
+=======
+        # --- 4. Estimate and Verify Transform ---
+        src_pts_np = torch.stack(src_pts).cpu().numpy().astype(np.float32)
+        dst_pts_np = torch.stack(dst_pts).cpu().numpy().astype(np.float32)
+        
+        # Using estimateAffine2D as it's more robust than the deprecated estimateRigidTransform
+        transform_matrix, _ = cv2.estimateAffine2D(src_pts_np, dst_pts_np, ransacReprojThreshold=0.5)
+>>>>>>> 1
 
         x, y, yaw, v = initial_state_tensor[0], initial_state_tensor[1], initial_state_tensor[2], initial_state_tensor[3]
 
@@ -10154,7 +10715,20 @@ class TrackMap:
             
             predicted_states_list.append(torch.stack([x_new, y_new, yaw_new, v_new]))
 
+<<<<<<< HEAD
             x, y, yaw, v = x_new, y_new, yaw_new, v_new
+=======
+        # --- 5. Apply Correction ---
+        rospy.loginfo(f"*** Loop Closure Successful! *** Error: {avg_error:.2f}m. Correcting observations.")
+        self.is_loop_closed = True
+        
+        # Apply the transform to ALL new observations for this timestep
+        new_obs_pts_np = new_observations[:, :2].cpu().numpy().astype(np.float32)
+        corrected_obs_pts_np = cv2.transform(new_obs_pts_np.reshape(-1, 1, 2), transform_matrix).reshape(-1, 2)
+        
+        corrected_observations = new_observations.clone()
+        corrected_observations[:, :2] = torch.tensor(corrected_obs_pts_np, dtype=torch.float32, device=self.device)
+>>>>>>> 1
         
         predicted_states = torch.stack(predicted_states_list)
 
@@ -10162,6 +10736,7 @@ class TrackMap:
         # Calculate cost
         cost = torch.tensor(0.0, device=u_tensor.device, dtype=u_tensor.dtype)
 
+<<<<<<< HEAD
         # Find closest reference path points for each predicted state
         for i in range(1, self.mpc_horizon + 1):
             pred_x, pred_y, pred_yaw, pred_v = predicted_states[i]
@@ -10183,30 +10758,38 @@ class TrackMap:
             cte = vec_path_normalized[0] * vec_to_pred[1] - vec_path_normalized[1] * vec_to_pred[0]
 =======
     def _add_new_cone(self, cone_obs):
+=======
+    def _add_new_cone(self, cone_obs: torch.Tensor):
+>>>>>>> 1
         new_cone = {
             'id': self.next_cone_id,
-            'x': cone_obs[0],
-            'y': cone_obs[1],
-            'z': cone_obs[2],
-            'color_id': int(cone_obs[3]),
-            'covariance': np.eye(2) * 0.5
+            'x': cone_obs[0].item(),
+            'y': cone_obs[1].item(),
+            'z': cone_obs[2].item(),
+            'color_id': int(cone_obs[3].item()),
+            'covariance': torch.eye(2, device=self.device) * 0.5
         }
         self.cones.append(new_cone)
         self.next_cone_id += 1
 
-    def _update_cone(self, map_idx, cone_obs, update_color=False):
+    def _update_cone(self, map_idx, cone_obs: torch.Tensor, update_color=False):
         # Use exponential smoothing to update cone position
         alpha = self.smoothing_alpha
-        self.cones[map_idx]['x'] = (1 - alpha) * self.cones[map_idx]['x'] + alpha * cone_obs[0]
-        self.cones[map_idx]['y'] = (1 - alpha) * self.cones[map_idx]['y'] + alpha * cone_obs[1]
+        self.cones[map_idx]['x'] = (1 - alpha) * self.cones[map_idx]['x'] + alpha * cone_obs[0].item()
+        self.cones[map_idx]['y'] = (1 - alpha) * self.cones[map_idx]['y'] + alpha * cone_obs[1].item()
         if update_color:
+<<<<<<< HEAD
             self.cones[map_idx]['color_id'] = int(cone_obs[3])
 >>>>>>> [coneDetection] 251019 @Doyeop-knut | cone map update 전
+=======
+            self.cones[map_idx]['color_id'] = int(cone_obs[3].item())
+>>>>>>> 1
 
             # Heading error
             ref_yaw = torch.atan2(ref_p2[1] - ref_p1[1], ref_p2[0] - ref_p1[0])
             etheta = self.normalize_angle(pred_yaw - ref_yaw) # normalize_angle can work with tensors if math.pi is replaced by torch.pi
 
+<<<<<<< HEAD
             cost += weights_dict['w_cte'] * cte**2
             cost += weights_dict['w_etheta'] * etheta**2
             cost += weights_dict['w_vel'] * (target_speed_tensor - pred_v)**2
@@ -10214,6 +10797,19 @@ class TrackMap:
         # Control input cost
         cost += weights_dict['w_accel'] * torch.sum(accels**2)
         cost += weights_dict['w_steer'] * torch.sum(steers**2)
+=======
+class MidpointMap:
+    def __init__(self, device):
+        self.device = device
+        self.midpoints = []
+        self.next_midpoint_id = 0
+        self.association_threshold = rospy.get_param("/planning/midpoint_map/association_threshold", 1.5)
+        self.smoothing_alpha = rospy.get_param("/planning/midpoint_map/smoothing_alpha", 0.5)
+
+    def update(self, new_midpoints_obs: torch.Tensor):
+        if new_midpoints_obs is None or new_midpoints_obs.numel() == 0:
+            return
+>>>>>>> 1
 
         # Control rate cost (smoothness)
         cost += weights_dict['w_accel_rate'] * torch.sum((accels[1:] - accels[:-1])**2)
@@ -10226,13 +10822,20 @@ class TrackMap:
     def _solve_ltv_mpc(self, x0, U_ref, kappa_ref, horizon, dt, is_fallback):
         N = int(horizon)
 
+<<<<<<< HEAD
         Cf, Cr = self._cornering_stiffness(self._ax_prev)
         Ad, Bd, dd = self._ltv_mats_long(U=max(U_ref,0.5), kappa=kappa_ref, Cf=Cf, Cr=Cr, dt=dt)
+=======
+        map_points = torch.tensor([[m['x'], m['y']] for m in self.midpoints], dtype=torch.float32, device=self.device)
+        obs_points = new_midpoints_obs
+        distance_matrix = torch.cdist(map_points, obs_points)
+>>>>>>> 1
 
         # Dynamically adjust weights based on speed and curvature
         Wy, Wpsi, Wvy, Wr, Wax, Wde, Wdax, Wdde = self._weight_profile(U_ref, abs(kappa_ref))
         Wv = self.w_v # w_v is not part of the profile function, get it directly
 
+<<<<<<< HEAD
         if is_fallback:
             Wv = 0.5 * Wv
 
@@ -10366,6 +10969,32 @@ class TrackMap:
 =======
         # 2. Find path errors using a forward-looking target point
         path_points = np.array(path)
+=======
+            best_match_obs_idx = torch.argmin(distance_matrix[map_idx])
+            min_dist = distance_matrix[map_idx, best_match_obs_idx]
+
+            if min_dist < self.association_threshold:
+                if best_match_obs_idx.item() not in matched_obs_indices:
+                    self._update_midpoint(map_idx, obs_points[best_match_obs_idx.item()])
+                    matched_obs_indices.add(best_match_obs_idx.item())
+        
+        for obs_idx, obs_point in enumerate(obs_points):
+            if obs_idx not in matched_obs_indices:
+                self._add_new_midpoint(obs_point)
+
+    def _add_new_midpoint(self, point: torch.Tensor):
+        new_midpoint = {
+            'id': self.next_midpoint_id,
+            'x': point[0].item(),
+            'y': point[1].item(),
+        }
+        self.midpoints.append(new_midpoint)
+        self.next_midpoint_id += 1
+
+    def _update_midpoint(self, map_idx, obs_point: torch.Tensor):
+        self.midpoints[map_idx]['x'] = (1 - self.smoothing_alpha) * self.midpoints[map_idx]['x'] + self.smoothing_alpha * obs_point[0].item()
+        self.midpoints[map_idx]['y'] = (1 - self.smoothing_alpha) * self.midpoints[map_idx]['y'] + self.smoothing_alpha * obs_point[1].item()
+>>>>>>> 1
 
         # Reset tracking if the path is new or significantly different
         if len(path) != self._last_path_len:
@@ -10385,13 +11014,12 @@ class TrackMap:
             closest_idx = self.last_closest_idx # Stay at the last index if search space is empty
 =======
 class PathPlanner:
-    def __init__(self):
+    def __init__(self, device):
+        self.device = device
         self.max_edge_length = rospy.get_param("/planning/path_planner/max_edge_length", 7.0)
-        self.spline_smoothing_factor = rospy.get_param("/planning/path_planner/spline_smoothing_factor", 0.5)
         self.w_dist = rospy.get_param("/planning/path_planner/weight_dist", 0.3)
         self.w_angle = rospy.get_param("/planning/path_planner/weight_angle", 0.7)
         self.max_path_distance = rospy.get_param("/planning/path_planner/max_path_distance", 200.0)
-        self.spline_smoothing_factor = rospy.get_param("/planning/path_planner/spline_smoothing_factor", 0.5)
         self.path_obstacle_threshold = rospy.get_param("/planning/path_planner/path_obstacle_threshold", 1.5)
         self.lane_offset = rospy.get_param("/local_planning/trajectory/lane_offset", 2.0)
         
@@ -10411,6 +11039,7 @@ class PathPlanner:
         self.fallback_path_length = rospy.get_param("/planning/path_planner/fallback_path_length", 15.0)
         self.fallback_path_points = rospy.get_param("/planning/path_planner/fallback_path_points", 10)
 
+<<<<<<< HEAD
 >>>>>>> [control] 251022 @Doyeop-knut | pytorch 기반  mpc 제어기 추가
 
         # Find the actual goal point by looking ahead from the closest point
@@ -10493,6 +11122,33 @@ class PathPlanner:
             last_point = ref_path[-1]
             padding = torch.stack([last_point] * (self.mpc_horizon + 2 - len(ref_path)))
             ref_path = torch.cat([ref_path, padding])
+=======
+        # --- GPU Path Smoothing Parameters ---
+        self.path_smoothing_kernel_size = rospy.get_param("/planning/path_planner/path_smoothing_kernel_size", 5)
+        self.path_smoothing_sigma = rospy.get_param("/planning/path_planner/path_smoothing_sigma", 1.0)
+
+
+    def _normalize_angle(self, angle):
+        """Normalize an angle to [-pi, pi]."""
+        if isinstance(angle, torch.Tensor):
+            return torch.fmod(angle + torch.pi, 2.0 * torch.pi) - torch.pi
+        else:
+            while angle > math.pi:
+                angle -= 2.0 * math.pi
+            while angle < -math.pi:
+                angle += 2.0 * math.pi
+            return angle
+
+    def _angle_between_vectors(self, v1, v2):
+        """Calculates the angle in radians between two vectors."""
+        if isinstance(v1, np.ndarray):
+            v1 = torch.tensor(v1, dtype=torch.float32, device=self.device)
+            v2 = torch.tensor(v2, dtype=torch.float32, device=self.device)
+
+        v1_u = v1 / (torch.linalg.norm(v1) + 1e-6)
+        v2_u = v2 / (torch.linalg.norm(v2) + 1e-6)
+        return torch.arccos(torch.clamp(torch.dot(v1_u, v2_u), -1.0, 1.0))
+>>>>>>> 1
 
 <<<<<<< HEAD
         u0 = torch.zeros(2 * self.mpc_horizon, dtype=torch.float32, device=self.device)
@@ -10686,19 +11342,20 @@ class PathPlanner:
         """
         Generates a simple, straight fallback path.
         """
-        car_pos = np.array(car_pos)
-        car_heading_vec = np.array([math.cos(car_yaw), math.sin(car_yaw)])
+        car_pos_tensor = torch.tensor(car_pos, dtype=torch.float32, device=self.device)
+        car_heading_vec = torch.tensor([math.cos(car_yaw), math.sin(car_yaw)], dtype=torch.float32, device=self.device)
 
         rospy.logwarn_throttle(1.0, "PathPlanner: Generating straight fallback path.")
         point_distance = self.fallback_path_length / self.fallback_path_points
-        path = [car_pos + car_heading_vec * i * point_distance for i in range(1, self.fallback_path_points + 1)]
-        return np.array(path), None, None, None, None, True
+        path = [car_pos_tensor + car_heading_vec * i * point_distance for i in range(1, self.fallback_path_points + 1)]
+        return torch.stack(path).cpu().numpy(), None, None, None, None, True
     def _sort_midpoints(self, midpoints, car_pos, car_yaw):
         """Sorts midpoints into a logical path, starting near the car and following the track's flow."""
         if len(midpoints) < 2:
             return midpoints
 >>>>>>> [control] 251022 @Doyeop-knut | pytorch 기반  mpc 제어기 추가
 
+<<<<<<< HEAD
         # 6. Convert acceleration to throttle/brake
         throttle = 0.0
         brake = 0.0
@@ -10932,6 +11589,50 @@ class TrajectoryPlanner:
         self.publish_trajectory(waypoints_map_frame)
         
         return waypoints_map_frame
+=======
+        midpoints_tensor = torch.tensor(midpoints, dtype=torch.float32, device=self.device)
+        car_pos_tensor = torch.tensor(car_pos, dtype=torch.float32, device=self.device)
+        
+        # Find the best starting point: close and in front of the car
+        start_idx = -1
+        min_cost = float('inf')
+        for i, p_tensor in enumerate(midpoints_tensor):
+            dist = torch.hypot(p_tensor[0] - car_pos_tensor[0], p_tensor[1] - car_pos_tensor[1])
+            angle_to_point = torch.atan2(p_tensor[1] - car_pos_tensor[1], p_tensor[0] - car_pos_tensor[0])
+            angle_diff = self._normalize_angle(angle_to_point - car_yaw)
+            
+            if torch.abs(angle_diff) < (math.pi / 1.5): # Wider 120-degree arc
+                cost = dist * (1 + torch.abs(angle_diff)) # Penalize points off to the side
+                if cost < min_cost:
+                    min_cost = cost
+                    start_idx = i
+        
+        if start_idx == -1: # If no points are in the front arc, fall back to closest
+            distances = torch.hypot(midpoints_tensor[:, 0] - car_pos_tensor[0], midpoints_tensor[:, 1] - car_pos_tensor[1])
+            start_idx = torch.argmin(distances).item()
+
+        ordered_path = [midpoints_tensor[start_idx]]
+        remaining_midpoints = [midpoints_tensor[i] for i in range(len(midpoints_tensor)) if i != start_idx]
+
+        # Establish initial direction with the second point
+        if remaining_midpoints:
+            last_point = ordered_path[-1]
+            
+            best_next_idx = -1
+            min_cost = float('inf')
+            for i, p_tensor in enumerate(remaining_midpoints):
+                dist = torch.hypot(p_tensor[0] - last_point[0], p_tensor[1] - last_point[1])
+                angle_to_point = torch.atan2(p_tensor[1] - last_point[1], p_tensor[0] - last_point[0])
+                angle_diff = self._normalize_angle(angle_to_point - car_yaw) # Compare with car's yaw
+
+                cost = dist * (1 + torch.abs(angle_diff))
+                if cost < min_cost:
+                    min_cost = cost
+                    best_next_idx = i
+            
+            if best_next_idx != -1:
+                ordered_path.append(remaining_midpoints.pop(best_next_idx))
+>>>>>>> 1
 
     def publish_trajectory(self, waypoints):
         marker = Marker()
@@ -10962,22 +11663,23 @@ class TrajectoryPlanner:
         self.trajectory_publisher.publish(marker)
 =======
         # Sort the rest based on a cost function of distance and angle
-        while midpoints_list and len(ordered_path) >= 2:
-            last_point = np.array(ordered_path[-1])
+        while remaining_midpoints and len(ordered_path) >= 2:
+            last_point = ordered_path[-1]
             
             # --- 경로 방향성 계산 로직 개선 ---
             # 직전 두 점이 아닌, 최근 경로의 전반적인 방향을 사용
-            current_path_vec = last_point - np.array(ordered_path[-2])
-            self.path_direction_history.append(current_path_vec / (np.linalg.norm(current_path_vec) + 1e-6))
+            current_path_vec = last_point - ordered_path[-2]
+            self.path_direction_history.append(current_path_vec / (torch.linalg.norm(current_path_vec) + 1e-6))
             
             # 이동 평균을 사용하여 부드러운 경로 방향 벡터 계산
-            smooth_path_vec = np.mean(self.path_direction_history, axis=0)
-            smooth_path_vec /= (np.linalg.norm(smooth_path_vec) + 1e-6)
+            smooth_path_vec = torch.mean(torch.stack(list(self.path_direction_history)), dim=0)
+            smooth_path_vec /= (torch.linalg.norm(smooth_path_vec) + 1e-6)
             
             best_candidate_idx = -1
             min_cost = float('inf')
 >>>>>>> [coneDetection] 251019 @Doyeop-knut | cone map update 전
 
+<<<<<<< HEAD
 <<<<<<< HEAD
     def publish_accumulated_midpoints(self, midpoints_list):
         marker = Marker()
@@ -11011,6 +11713,10 @@ class TrajectoryPlanner:
             for i, candidate_point in enumerate(midpoints_list):
                 candidate_point = np.array(candidate_point)
                 dist = np.linalg.norm(candidate_point - last_point)
+=======
+            for i, candidate_point in enumerate(remaining_midpoints):
+                dist = torch.linalg.norm(candidate_point - last_point)
+>>>>>>> 1
                 
                 if dist > self.max_edge_length: # Don't jump too far
                     continue
@@ -11054,13 +11760,13 @@ class StanleyController:
                     best_candidate_idx = i
             
             if best_candidate_idx != -1:
-                ordered_path.append(midpoints_list.pop(best_candidate_idx))
+                ordered_path.append(remaining_midpoints.pop(best_candidate_idx))
             else:
                 break # No suitable point found
         
-        return np.array(ordered_path)
-    def _correct_path_detours(self, path, car_yaw):
-        if len(path) < 2:
+        return torch.stack(ordered_path).cpu().numpy()
+    def _correct_path_detours(self, path: torch.Tensor, car_yaw):
+        if path.numel() < 2:
             return path
 >>>>>>> [control] 251022 @Doyeop-knut | pytorch 기반  mpc 제어기 추가
 
@@ -11074,9 +11780,9 @@ class StanleyController:
             segment_vec = p2 - p1
             
             # Check if the segment is going backward relative to the car's yaw
-            angle_to_car_yaw = self._normalize_angle(math.atan2(segment_vec[1], segment_vec[0]) - car_yaw)
+            angle_to_car_yaw = self._normalize_angle(torch.atan2(segment_vec[1], segment_vec[0]) - car_yaw)
             
-            if abs(angle_to_car_yaw) > (math.pi / 2.0): # If segment is pointing more than 90 degrees away from car's yaw
+            if torch.abs(angle_to_car_yaw) > (math.pi / 2.0): # If segment is pointing more than 90 degrees away from car's yaw
                 # This segment is going backward or sharply sideways. Ignore this point.
                 continue
             else:
@@ -11129,6 +11835,7 @@ class KalmanConeTracker:
         # Initial state
         self.kf.statePost = np.array([detection[0], detection[1], detection[2], 0, 0, 0], np.float32).reshape(6, 1)
         
+<<<<<<< HEAD
         # Process noise covariance
         self.kf.processNoiseCov = np.eye(6, dtype=np.float32) * 0.1
         self.kf.processNoiseCov[3:, 3:] *= 10.0 # Higher uncertainty for velocity
@@ -11137,17 +11844,20 @@ class KalmanConeTracker:
         return np.array(corrected_path)
 >>>>>>> [control] 251022 @Doyeop-knut | pytorch 기반  mpc 제어기 추가
     def _is_valid_cone_pair(self, p1_idx, p2_idx, all_points, colors):
+=======
+        return torch.stack(corrected_path)
+    def _is_valid_cone_pair(self, p1_idx, p2_idx, all_points: torch.Tensor, colors):
+>>>>>>> 1
         """
         두 콘(p1, p2)이 유효한 중간점 생성 쌍인지 확인합니다.
         규칙: p1과 p2를 잇는 직선 위에 다른 콘이 너무 가까이 있으면 안 됩니다.
         """
         p1 = all_points[p1_idx]
         p2 = all_points[p2_idx]
-        # color1 = colors[p1_idx] # No longer needed
 
         # p1에서 p2로 향하는 벡터
         line_vec = p2 - p1
-        line_len_sq = np.dot(line_vec, line_vec)
+        line_len_sq = torch.dot(line_vec, line_vec)
 
         if line_len_sq == 0:
             return False
@@ -11158,10 +11868,10 @@ class KalmanConeTracker:
             
             p3 = all_points[i]
             # p3가 p1-p2 선분 위에 있는지 확인 (투영(projection) 사용)
-            dot_product = np.dot(p3 - p1, line_vec)
+            dot_product = torch.dot(p3 - p1, line_vec)
             if 0 < dot_product < line_len_sq: # p3가 p1과 p2 사이에 투영되는 경우
                 # 선분과의 거리 계산
-                dist_to_line = np.linalg.norm(np.cross(line_vec, p1 - p3)) / np.linalg.norm(line_vec)
+                dist_to_line = torch.linalg.norm(torch.cross(line_vec, p1 - p3)) / torch.linalg.norm(line_vec)
                 if dist_to_line < self.path_obstacle_threshold:  # 임계값보다 가까우면 방해물로 간주
                     return False # 유효하지 않은 쌍
         return True
@@ -11169,35 +11879,61 @@ class KalmanConeTracker:
         """
         경로 계획에 사용할 콘을 차량 주변의 관심 영역(ROI)으로 필터링합니다.
         """
-        car_pos = vehicle_state[:2]
+        car_pos = torch.tensor(vehicle_state[:2], dtype=torch.float32, device=self.device)
         car_yaw = vehicle_state[2]
         
         filtered_cones = []
         for cone in cones:
-            cone_pos = np.array([cone['x'], cone['y']])
+            cone_pos = torch.tensor([cone['x'], cone['y']], dtype=torch.float32, device=self.device)
             
             # 1. 거리 필터
-            dist = np.linalg.norm(cone_pos - car_pos)
+            dist = torch.linalg.norm(cone_pos - car_pos)
             if dist > self.planner_roi_distance:
                 continue
                 
             # 2. 각도 필터
-            angle_to_cone = math.atan2(cone_pos[1] - car_pos[1], cone_pos[0] - car_pos[0])
+            angle_to_cone = torch.atan2(cone_pos[1] - car_pos[1], cone_pos[0] - car_pos[0])
             angle_diff = self._normalize_angle(angle_to_cone - car_yaw)
             # print(f"angle_diff {angle_diff}")
-            if abs(angle_diff) > self.planner_roi_angle_rad:#math.radians(self.planner_roi_angle_rad):
+            if torch.abs(angle_diff) > self.planner_roi_angle_rad:#math.radians(self.planner_roi_angle_rad):
                 continue
             
             filtered_cones.append(cone)
         return filtered_cones
     
+    def _smooth_path_gpu(self, path):
+        if path.shape[0] < self.path_smoothing_kernel_size:
+            return path
+
+        # Ensure kernel size is odd
+        kernel_size = self.path_smoothing_kernel_size
+        if kernel_size % 2 == 0:
+            kernel_size += 1
+
+        # Create a 1D Gaussian kernel
+        kernel_range = torch.arange(kernel_size, dtype=torch.float32, device=self.device) - (kernel_size - 1) / 2
+        gaussian_kernel = torch.exp(-0.5 * (kernel_range / self.path_smoothing_sigma)**2)
+        gaussian_kernel = gaussian_kernel / gaussian_kernel.sum()
+        gaussian_kernel = gaussian_kernel.view(1, 1, -1)
+
+        # Path needs to be in (N, C, L) format for conv1d, here (1, 2, num_points)
+        path_transposed = path.T.unsqueeze(0)
+
+        # Apply padding
+        padding = (kernel_size - 1) // 2
+        
+        # Apply convolution
+        smoothed_path_transposed = torch.nn.functional.conv1d(path_transposed, gaussian_kernel.repeat(2, 1, 1), padding=padding, groups=2)
+
+        return smoothed_path_transposed.squeeze(0).T
+
     def plan_path(self, cones, vehicle_state):
         """
         Generates a driving path based on the detected cones.
-        Uses Delaunay triangulation and a robust sorting algorithm.
+        Uses GPU-accelerated midpoint generation and path smoothing.
         Falls back to a simple path if not enough cones are available.
         """
-        current_car_pos = vehicle_state[:2]
+        current_car_pos = torch.tensor(vehicle_state[:2], dtype=torch.float32, device=self.device)
         vehicle_yaw = vehicle_state[2]
 
         # --- 경로 계획에 사용할 콘 필터링 ---
@@ -11206,11 +11942,15 @@ class KalmanConeTracker:
 
         # --- 클러스터링 단계 추가 ---
         if len(local_cones) > 5: # 최소 5개 이상의 콘이 있을 때만 클러스터링 수행
-            cone_points = np.array([[c['x'], c['y']] for c in local_cones])
+            cone_points_np = np.array([[c['x'], c['y']] for c in local_cones])
+            # Convert 2D points to 3D for Open3D by adding a dummy Z-coordinate
+            cone_points_3d = np.hstack((cone_points_np, np.zeros((cone_points_np.shape[0], 1))))
             
-            # DBSCAN을 사용하여 콘 그룹 찾기
-            db = DBSCAN(eps=self.planner_clustering_eps, min_samples=3).fit(cone_points)
-            labels = db.labels_
+            pcd = o3d.geometry.PointCloud()
+            pcd.points = o3d.utility.Vector3dVector(cone_points_3d)
+            
+            # Perform DBSCAN clustering using Open3D
+            labels = np.array(pcd.cluster_dbscan(eps=self.planner_clustering_eps, min_points=3, print_progress=False))
             
             unique_labels = set(labels)
             if -1 in unique_labels: # 노이즈 레이블 제거
@@ -11224,9 +11964,9 @@ class KalmanConeTracker:
                 # 차량에서 가장 가까운 클러스터 찾기
                 for label in unique_labels:
                     cluster_mask = (labels == label)
-                    cluster_points = cone_points[cluster_mask]
+                    cluster_points = cone_points_np[cluster_mask]
                     cluster_center = np.mean(cluster_points, axis=0)
-                    dist_to_car = np.linalg.norm(cluster_center - current_car_pos)
+                    dist_to_car = np.linalg.norm(cluster_center - current_car_pos.cpu().numpy())
                     
                     if dist_to_car < min_dist_to_cluster:
                         min_dist_to_cluster = dist_to_car
@@ -11246,6 +11986,7 @@ class KalmanConeTracker:
 >>>>>>> [coneDetection] 251019 @Doyeop-knut | cone map update 전
 
 <<<<<<< HEAD
+<<<<<<< HEAD
         # Measurement noise covariance
         self.kf.measurementNoiseCov = np.eye(3, dtype=np.float32) * 0.5
 
@@ -11256,11 +11997,14 @@ class KalmanConeTracker:
         # Original: if len(blue_cones) < 2 or len(yellow_cones) < 2:
         # New: If there's at least one blue and one yellow cone, proceed to try and make midpoints.
         # Fallback only if no blue or no yellow cones, or if after trying to make midpoints, there are too few.
+=======
+>>>>>>> 1
         if len(blue_cones) == 0 or len(yellow_cones) == 0:
             rospy.logwarn_throttle(1.0, f"PathPlanner: Fallback reason: No blue ({len(blue_cones)}) or no yellow ({len(yellow_cones)}) cones.")
-            path, tri, all_points, colors, unique_midpoints, is_fallback = self._generate_fallback_path(blue_cones, yellow_cones, current_car_pos, vehicle_yaw)
-            return path, tri, all_points, colors, unique_midpoints, is_fallback, len(blue_cones), len(yellow_cones), 0 # 0 midpoints in fallback
+            path, tri, all_points, colors, unique_midpoints, is_fallback = self._generate_fallback_path(blue_cones, yellow_cones, current_car_pos.cpu().numpy(), vehicle_yaw)
+            return path, None, None, None, None, True, len(blue_cones), len(yellow_cones), 0 # 0 midpoints in fallback
 
+<<<<<<< HEAD
         # 1. Prepare points for triangulation
         all_points = np.array([[c['x'], c['y']] for c in blue_cones] + [[c['x'], c['y']] for c in yellow_cones])
 <<<<<<< HEAD
@@ -11378,6 +12122,35 @@ class ConeTracker:
         if ordered_midpoints is None or len(ordered_midpoints) < 2:
             rospy.logwarn_throttle(1.0, f"PathPlanner: Fallback reason: Ordered midpoints are insufficient ({len(ordered_midpoints) if ordered_midpoints is not None else 0}).")
             return None, tri, all_points, colors, unique_midpoints, True, len(blue_cones), len(yellow_cones), 0 # Indicate fallback
+=======
+        # --- GPU-based Midpoint Generation ---
+        blue_points = torch.tensor([[c['x'], c['y']] for c in blue_cones], dtype=torch.float32, device=self.device)
+        yellow_points = torch.tensor([[c['x'], c['y']] for c in yellow_cones], dtype=torch.float32, device=self.device)
+
+        dist_matrix = torch.cdist(blue_points, yellow_points)
+        
+        # For each blue cone, find the closest yellow cone
+        min_dists, min_indices = torch.min(dist_matrix, dim=1)
+        
+        # Create midpoints
+        midpoints = (blue_points + yellow_points[min_indices]) / 2.0
+        
+        # Filter midpoints that are too far apart
+        valid_mask = min_dists < self.max_edge_length
+        midpoints = midpoints[valid_mask]
+
+        if midpoints.shape[0] < 2:
+            rospy.logwarn_throttle(1.0, f"PathPlanner: Fallback reason: Not enough midpoints ({midpoints.shape[0]}).")
+            return None, None, None, None, midpoints, True, len(blue_cones), len(yellow_cones), 0
+
+        # Sort midpoints to form a continuous path
+        ordered_midpoints_np = self._sort_midpoints(midpoints.cpu().numpy(), current_car_pos.cpu().numpy(), vehicle_yaw)
+        if ordered_midpoints_np is None or len(ordered_midpoints_np) < 2:
+            rospy.logwarn_throttle(1.0, f"PathPlanner: Fallback reason: Ordered midpoints are insufficient.")
+            return None, None, None, None, midpoints, True, len(blue_cones), len(yellow_cones), 0
+
+        ordered_midpoints = torch.from_numpy(ordered_midpoints_np).to(self.device)
+>>>>>>> 1
 
 >>>>>>> [control] 251020 @Doyeop-knut | MPC 제어기 파라미터 수정 -> 증속 후 파라미터 수정 필요
         self.path_direction_history.clear() # 새로운 계획 시작 시 방향 기록 초기화
@@ -11385,6 +12158,7 @@ class ConeTracker:
         corrected_path = self._correct_path_detours(ordered_midpoints, vehicle_yaw)
 >>>>>>> [coneDetection] 251019 @Doyeop-knut | cone map update 전
 
+<<<<<<< HEAD
     def update(self, detections):
         """
         Update tracks with new detections.
@@ -11515,23 +12289,44 @@ class ConeTracker:
 
         return path, tri, all_points, colors, unique_midpoints, False, len(blue_cones), len(yellow_cones), len(unique_midpoints) # Not a fallback path
 >>>>>>> [control] 251022 @Doyeop-knut | pytorch 기반  mpc 제어기 추가
+=======
+        # Filter path to include only points within max_path_distance from the car
+        filtered_path_list = []
+        for p in corrected_path:
+            if torch.linalg.norm(p - current_car_pos) < self.max_path_distance:
+                filtered_path_list.append(p)
+        
+        if len(filtered_path_list) < 2:
+            rospy.logwarn_throttle(1.0, "PathPlanner: Fallback reason: Filtered path has less than 2 points.")
+            return None, None, None, None, midpoints, True, len(blue_cones), len(yellow_cones), 0
+
+        filtered_path = torch.stack(filtered_path_list)
+
+        # Smooth the path with GPU-based method
+        path_tensor = self._smooth_path_gpu(filtered_path)
+        path = path_tensor.cpu().numpy()
+
+        return path, None, None, None, midpoints, False, len(blue_cones), len(yellow_cones), len(midpoints)
+>>>>>>> 1
 
     def _calculate_path_curvature(self, path, lookahead=5):
         """경로의 각 지점에서 곡률을 계산합니다."""
-        curvatures = [0.0] * len(path)
+        curvatures = torch.zeros(len(path), dtype=torch.float32, device=self.device)
         if len(path) < 3:
             return curvatures
 
-        for i in range(len(path)):
+        path_tensor = torch.tensor(path, dtype=torch.float32, device=self.device)
+
+        for i in range(len(path_tensor)):
             p_prev_idx = max(0, i - lookahead)
-            p_next_idx = min(len(path) - 1, i + lookahead)
+            p_next_idx = min(len(path_tensor) - 1, i + lookahead)
             
             if p_prev_idx == i or p_next_idx == i: continue
-            p_prev, p_curr, p_next = path[p_prev_idx], path[i], path[p_next_idx]
+            p_prev, p_curr, p_next = path_tensor[p_prev_idx], path_tensor[i], path_tensor[p_next_idx]
             # Menger Curvature: 세 점으로 곡률 근사
-            area = 0.5 * abs((p_prev[0]*(p_curr[1]-p_next[1]) + p_curr[0]*(p_next[1]-p_prev[1]) + p_next[0]*(p_prev[1]-p_curr[1])))
-            curvatures[i] = (4 * area) / (np.linalg.norm(p_prev-p_curr) * np.linalg.norm(p_curr-p_next) * np.linalg.norm(p_next-p_prev) + 1e-6)
-        return curvatures
+            area = 0.5 * torch.abs((p_prev[0]*(p_curr[1]-p_next[1]) + p_curr[0]*(p_next[1]-p_prev[1]) + p_next[0]*(p_prev[1]-p_curr[1])))
+            curvatures[i] = (4 * area) / (torch.linalg.norm(p_prev-p_curr) * torch.linalg.norm(p_curr-p_next) * torch.linalg.norm(p_next-p_prev) + 1e-6)
+        return curvatures.cpu().numpy()
 # ==================== Utility Classes ====================
 
 class GPSIMUProcessor:
@@ -11885,7 +12680,9 @@ class DataLogger:
 
 StateTransitionResult = namedtuple(
     'StateTransitionResult', 
-    ['success', 'from_state', 'to_state', 'reason']
+    [
+        'success', 'from_state', 'to_state', 'reason'
+    ]
 )
 
 class StateMachine:
@@ -12082,26 +12879,9 @@ class Control:
         # MPC
         self.mpc_horizon = rospy.get_param("/control/MPC/horizon", 5)
         self.mpc_dt = rospy.get_param("/control/MPC/dt", 0.01)
-        self.mpc_speed_weights = sorted(rospy.get_param("/control/MPC/speed_dependent_weights", []), key=lambda x: x['max_speed'])
-        self.mpc_fallback_weights = rospy.get_param("/control/MPC/mpc_fallback_weights", {})
-
-        # Side Slip Control
-        self.ssc_enable = rospy.get_param("/control/SideSlipControl/enable", False)
-        self.ssc_slip_angle_threshold = rospy.get_param("/control/SideSlipControl/slip_angle_threshold", 0.1)
-        self.ssc_speed_reduction_factor = rospy.get_param("/control/SideSlipControl/speed_reduction_factor", 0.8)
-
-        # Curvature Weight Tuning
-        self.cwt_enable = rospy.get_param("/control/CurvatureWeightTuning/enable", False)
-        self.cwt_max_curvature = rospy.get_param("/control/CurvatureWeightTuning/max_curvature_for_tuning", 0.4)
-        self.cwt_cte_factor = rospy.get_param("/control/CurvatureWeightTuning/cte_factor", 1.5)
-        self.cwt_steer_factor = rospy.get_param("/control/CurvatureWeightTuning/steer_factor", 1.0)
-        self.cwt_steer_rate_factor = rospy.get_param("/control/CurvatureWeightTuning/steer_rate_factor", 0.5)
-
-        # Advanced Curvature Weight Tuning
-        self.acwt_enable = rospy.get_param("/control/AdvancedCurvatureTuning/enable", False)
-        self.acwt_curvature_power = rospy.get_param("/control/AdvancedCurvatureTuning/curvature_power", 1.5)
-        self.acwt_etheta_factor = rospy.get_param("/control/AdvancedCurvatureTuning/etheta_factor", 1.8)
-        self.acwt_speed_influence_factor = rospy.get_param("/control/AdvancedCurvatureTuning/speed_influence_factor", 0.5)
+        self.mpc_first_lap_weights = rospy.get_param("/control/MPC/first_lap_weights", {})
+        self.mpc_second_lap_weights = rospy.get_param("/control/MPC/second_lap_weights", {})
+        self.mpc_fallback_weights = rospy.get_param("/control/MPC/fallback_weights", {})
 
 
         # --- Assign the compute function based on selected type ---
@@ -12116,84 +12896,6 @@ class Control:
             self.compute_control = self._compute_pure_pursuit
             
         rospy.loginfo(f"Control: Using {self.controller_type} controller.")
-
-    def _get_dynamic_weights(self, speed: float) -> dict:
-        """
-        Interpolates MPC weights based on the current vehicle speed for smoother transitions.
-        """
-        # Find the two weight configurations to interpolate between
-        lower_config = self.mpc_speed_weights[0]
-        upper_config = self.mpc_speed_weights[-1]
-        # print(f"lower = {lower_config}, upper = {upper_config}")
-
-        for i in range(len(self.mpc_speed_weights) - 1):
-            if self.mpc_speed_weights[i]['max_speed'] <= speed < self.mpc_speed_weights[i+1]['max_speed']:
-                lower_config = self.mpc_speed_weights[i]
-                upper_config = self.mpc_speed_weights[i+1]
-                break
-        
-        # If speed is outside the defined range, clamp to the nearest configuration
-        if speed >= upper_config['max_speed']:
-            return upper_config['weights'].copy()
-        if speed < lower_config['max_speed']:
-            return lower_config['weights'].copy()
-
-        # Interpolation logic
-        lower_speed = lower_config['max_speed']
-        upper_speed = upper_config['max_speed']
-        lower_weights = lower_config['weights']
-        upper_weights = upper_config['weights']
-
-        # Calculate interpolation factor (0.0 to 1.0)
-        interp_factor = (speed - lower_speed) / (upper_speed - lower_speed + 1e-6)
-
-        interpolated_weights = {}
-        for key in lower_weights:
-            interpolated_weights[key] = lower_weights[key] + interp_factor * (upper_weights[key] - lower_weights[key])
-        
-        rospy.logdebug(f"Interpolated MPC weights for speed {speed:.2f} m/s (factor: {interp_factor:.2f})")
-        print(f"at {speed:.2f} m/s , interpolated = {interpolated_weights}")
-        return interpolated_weights
-
-    def _tune_weights_for_curvature(self, weights: dict, avg_curvature: float, current_speed: float) -> dict:
-        """
-        Dynamically tunes MPC weights based on path curvature and vehicle speed, 
-        using either the simple or advanced method based on configuration.
-        """
-        tuned_weights = weights.copy()
-        
-        # Normalize curvature to a [0, 1] range
-        normalized_curvature = min(abs(avg_curvature) / self.cwt_max_curvature, 1.0)
-
-        if self.acwt_enable:
-            # --- Advanced Tuning Logic ---
-            # Apply non-linear power to curvature
-            powered_curvature = normalized_curvature ** self.acwt_curvature_power
-
-            # Adjust tuning strength based on speed (less tuning at low speed)
-            # This creates a factor from (1 - speed_influence) to 1.0
-            speed_factor = (1.0 - self.acwt_speed_influence_factor) + (self.acwt_speed_influence_factor * (current_speed / self.post_lc_target_speed))
-            speed_factor = np.clip(speed_factor, 0.1, 1.0) # Clamp to avoid excessive reduction
-
-            # Calculate final tuning intensity
-            tuning_intensity = powered_curvature * speed_factor
-
-            # Apply advanced tuning rules
-            tuned_weights['w_cte'] *= (1.0 + self.cwt_cte_factor * tuning_intensity)
-            tuned_weights['w_etheta'] *= (1.0 + self.acwt_etheta_factor * tuning_intensity)
-            tuned_weights['w_steer'] /= (1.0 + self.cwt_steer_factor * tuning_intensity)
-            tuned_weights['w_steer_rate'] /= (1.0 + self.cwt_steer_rate_factor * tuning_intensity)
-            
-            rospy.logdebug(f"Advanced Tuning: NormCurv={normalized_curvature:.2f}, SpeedFactor={speed_factor:.2f}, Intensity={tuning_intensity:.2f}")
-
-        elif self.cwt_enable:
-            # --- Simple (Original) Tuning Logic ---
-            tuned_weights['w_cte'] *= (1.0 + self.cwt_cte_factor * normalized_curvature)
-            tuned_weights['w_steer'] /= (1.0 + self.cwt_steer_factor * normalized_curvature)
-            tuned_weights['w_steer_rate'] /= (1.0 + self.cwt_steer_rate_factor * normalized_curvature)
-            rospy.logdebug(f"Simple Tuning: NormCurv={normalized_curvature:.2f}")
-
-        return tuned_weights
 
     def normalize_angle(self, angle):
         """Normalize an angle to [-pi, pi]."""
@@ -12211,50 +12913,52 @@ class Control:
         veh_x, veh_y, veh_yaw = vehicle_state[0], vehicle_state[1], vehicle_state[2]
         current_speed = round(math.sqrt(vehicle_state[3]**2 + vehicle_state[4]**2),4)
 
+        path_tensor = torch.tensor(path, dtype=torch.float32, device=self.device)
+        veh_pos_tensor = torch.tensor([veh_x, veh_y], dtype=torch.float32, device=self.device)
+
         # --- 곡률 기반 목표 속도 계산 ---
         if is_fallback:
             target_speed = 6.0 # Set speed to 5.0 for fallback paths
         else:
-            path_curvatures = self.path_planner._calculate_path_curvature(path, self.pre_lc_curvature_lookahead)
+            path_curvatures = self.path_planner._calculate_path_curvature(path_tensor, self.pre_lc_curvature_lookahead)
             # 전방 경로의 평균 곡률 계산 (예: 앞 10개 포인트)
             lookahead_curvatures = path_curvatures[:self.pre_lc_curvature_lookahead]
-            avg_curvature = np.round(np.mean(lookahead_curvatures),3) if lookahead_curvatures else 0.0
+            avg_curvature = torch.mean(torch.tensor(lookahead_curvatures, device=self.device)) if len(lookahead_curvatures) > 0 else torch.tensor(0.0, device=self.device)
             
             if self.track_map.is_loop_closed:
                 base_target_speed = self.post_lc_target_speed
             else:
                 base_target_speed = self.pre_lc_target_speed
 
-            target_speed = base_target_speed / (1.0 + self.pre_lc_curvature_speed_factor * abs(avg_curvature))
-            target_speed = np.clip(target_speed, self.pre_lc_min_speed, base_target_speed)
+            target_speed = base_target_speed / (1.0 + self.pre_lc_curvature_speed_factor * torch.abs(avg_curvature))
+            target_speed = torch.clamp(target_speed, self.pre_lc_min_speed, base_target_speed).item()
 
         # 1. Find the closest point on the path to the vehicle
-        path_points = np.array(path)
-        distances = np.linalg.norm(path_points - np.array([veh_x, veh_y]), axis=1)
-        closest_idx = np.argmin(distances)
+        distances = torch.linalg.norm(path_tensor - veh_pos_tensor, dim=1)
+        closest_idx = torch.argmin(distances)
 
         # 2. Find the lookahead point
         lookahead_point = None
-        for i in range(closest_idx, len(path_points)):
-            dist_from_veh = np.linalg.norm(path_points[i] - np.array([veh_x, veh_y]))
+        for i in range(closest_idx, len(path_tensor)):
+            dist_from_veh = torch.linalg.norm(path_tensor[i] - veh_pos_tensor)
             if dist_from_veh >= self.lookahead_dist:
-                lookahead_point = path_points[i]
+                lookahead_point = path_tensor[i]
                 break
         
         if lookahead_point is None:
-            lookahead_point = path_points[-1]
+            lookahead_point = path_tensor[-1]
 
         # 3. Transform the lookahead point to the vehicle's coordinate frame
-        rot_inv = np.array([[math.cos(veh_yaw), math.sin(veh_yaw)],
-                            [-math.sin(veh_yaw), math.cos(veh_yaw)]])
-        translated_point = lookahead_point - np.array([veh_x, veh_y])
-        local_point = rot_inv.dot(translated_point)
+        rot_inv = torch.tensor([[math.cos(veh_yaw), math.sin(veh_yaw)],
+                                [-math.sin(veh_yaw), math.cos(veh_yaw)]], dtype=torch.float32, device=self.device)
+        translated_point = lookahead_point - veh_pos_tensor
+        local_point = torch.matmul(rot_inv, translated_point)
 
         # 4. Calculate the steering angle
-        alpha = math.atan2(local_point[1], local_point[0])
-        actual_lookahead_dist = np.linalg.norm(lookahead_point - np.array([veh_x, veh_y]))
-        steer = math.atan2(2.0 * self.wheelbase * math.sin(alpha), actual_lookahead_dist)
-        steer = -np.clip(steer, -self.max_steer, self.max_steer)
+        alpha = torch.atan2(local_point[1], local_point[0])
+        actual_lookahead_dist = torch.linalg.norm(lookahead_point - veh_pos_tensor)
+        steer = torch.atan2(2.0 * self.wheelbase * torch.sin(alpha), actual_lookahead_dist)
+        steer = -torch.clamp(steer, -self.max_steer, self.max_steer).item()
 
         # 5. Throttle control
         throttle = self.kp_throttle * (target_speed - current_speed)
@@ -12277,6 +12981,9 @@ class Control:
         veh_x, veh_y, veh_yaw = vehicle_state[0], vehicle_state[1], vehicle_state[2]
         current_speed = math.sqrt(vehicle_state[3]**2 + vehicle_state[4]**2)
 
+        path_tensor = torch.tensor(path, dtype=torch.float32, device=self.device)
+        veh_pos_tensor = torch.tensor([veh_x, veh_y], dtype=torch.float32, device=self.device)
+
         # --- 곡률 기반 목표 속도 계산 ---
         if is_fallback:
             target_speed = 4.0 # Set speed to 5.0 for fallback paths
@@ -12296,48 +13003,47 @@ class Control:
                     'curvature_lookahead': self.pre_lc_curvature_lookahead
                 }
 
-            path_curvatures = self.path_planner._calculate_path_curvature(path, target_speed_params['curvature_lookahead'])
+            path_curvatures = self.path_planner._calculate_path_curvature(path_tensor, target_speed_params['curvature_lookahead'])
             lookahead_curvatures = path_curvatures[:10]
-            avg_curvature = np.mean(lookahead_curvatures) if lookahead_curvatures else 0.0
+            avg_curvature = torch.mean(torch.tensor(lookahead_curvatures, device=self.device)) if len(lookahead_curvatures) > 0 else torch.tensor(0.0, device=self.device)
             
             base_target_speed = target_speed_params['target_speed']
 
-            target_speed = base_target_speed / (1.0 + target_speed_params['curvature_speed_factor'] * abs(avg_curvature))
-            target_speed = np.clip(target_speed, target_speed_params['min_speed'], base_target_speed)
+            target_speed = base_target_speed / (1.0 + target_speed_params['curvature_speed_factor'] * torch.abs(avg_curvature))
+            target_speed = torch.clamp(target_speed, target_speed_params['min_speed'], base_target_speed).item()
         # 1. Find the closest path point (target_idx)
-        path_points = np.array(path)
-        distances = np.linalg.norm(path_points - np.array([veh_x, veh_y]), axis=1)
-        target_idx = np.argmin(distances)
+        distances = torch.linalg.norm(path_tensor - veh_pos_tensor, dim=1)
+        target_idx = torch.argmin(distances)
 
         # Ensure target_idx is not the last point of the path to calculate path heading
-        if target_idx >= len(path_points) - 1:
-            target_idx = len(path_points) - 2
+        if target_idx >= len(path_tensor) - 1:
+            target_idx = len(path_tensor) - 2
 
         # 2. Calculate path heading (yaw)
-        p1 = path_points[target_idx]
-        p2 = path_points[target_idx + 1]
-        path_yaw = math.atan2(p2[1] - p1[1], p2[0] - p1[0])
+        p1 = path_tensor[target_idx]
+        p2 = path_tensor[target_idx + 1]
+        path_yaw = torch.atan2(p2[1] - p1[1], p2[0] - p1[0])
 
         # 3. Calculate heading error (theta_e)
         heading_error = self.normalize_angle(path_yaw - veh_yaw)
 
         # 4. Calculate cross-track error (e_fa)
         # Vector from closest path point to vehicle
-        vec_path_to_veh = np.array([veh_x, veh_y]) - p1
+        vec_path_to_veh = veh_pos_tensor - p1
         # Path vector
         vec_path = p2 - p1
-        vec_path_normalized = vec_path / (np.linalg.norm(vec_path) + 1e-6)
+        vec_path_normalized = vec_path / (torch.linalg.norm(vec_path) + 1e-6)
         
         # Cross product to find the error and its sign
-        cross_track_error = np.cross(vec_path_normalized, vec_path_to_veh)
+        cross_track_error = vec_path_normalized[0] * vec_path_to_veh[1] - vec_path_normalized[1] * vec_path_to_veh[0]
         
         # 5. Calculate steering angle (delta)
         # Cross-track steering component
-        cte_steer = math.atan2(self.k_crosstrack * cross_track_error, max(current_speed, 0.1)) # Add small epsilon to avoid division by zero
+        cte_steer = torch.atan2(self.k_crosstrack * cross_track_error, torch.max(torch.tensor(current_speed, device=self.device), torch.tensor(0.1, device=self.device))) # Add small epsilon to avoid division by zero
 
         # Total steering angle
         steer = heading_error + cte_steer
-        steer = -np.clip(steer, -self.max_steer, self.max_steer)
+        steer = -torch.clamp(steer, -self.max_steer, self.max_steer).item()
 
         # 6. Throttle control (reusing the same P-controller)
         throttle = self.kp_throttle * (target_speed - current_speed)
@@ -12351,65 +13057,6 @@ class Control:
         normalized_steer = steer / self.max_steer
 
         return throttle, normalized_steer, brake, {}
-
-    def _cost_function(self, u, *args):
-        initial_state, ref_path, target_speed, weights = args
-        
-        # Unpack control inputs
-        accels = u[0::2]
-        steers = u[1::2]
-
-        # Predict states over the horizon
-        predicted_states = np.zeros((self.mpc_horizon + 1, 4))
-        predicted_states[0] = initial_state
-        for i in range(self.mpc_horizon):
-            # Kinematic Bicycle Model
-            x, y, yaw, v = predicted_states[i]
-            a = accels[i]
-            delta = steers[i]
-            # Update state
-            x += v * math.cos(yaw) * self.mpc_dt
-            y += v * math.sin(yaw) * self.mpc_dt
-            yaw += v / self.wheelbase * math.tan(delta) * self.mpc_dt
-            v += a * self.mpc_dt
-            predicted_states[i+1] = [x, y, yaw, v]
-        # Calculate cost
-        cost = 0.0
-
-        # Find closest reference path points for each predicted state
-        for i in range(1, self.mpc_horizon + 1):
-            pred_x, pred_y, pred_yaw, pred_v = predicted_states[i]
-            
-            # Find closest point on reference path
-            distances = np.linalg.norm(ref_path - np.array([pred_x, pred_y]), axis=1)
-            closest_idx = np.argmin(distances)
-            
-            # Cross-track error
-            ref_p1 = ref_path[closest_idx]
-            ref_p2 = ref_path[closest_idx + 1] if closest_idx < len(ref_path) - 1 else ref_p1
-            
-            vec_path = ref_p2 - ref_p1
-            vec_path_normalized = vec_path / (np.linalg.norm(vec_path) + 1e-6)
-            vec_to_pred = np.array([pred_x, pred_y]) - ref_p1
-            cte = np.cross(vec_path_normalized, vec_to_pred)
-
-            # Heading error
-            ref_yaw = torch.atan2(ref_p2[1] - ref_p1[1], ref_p2[0] - ref_p1[0])
-            etheta = self.normalize_angle(pred_yaw - ref_yaw)
-
-            cost += weights['w_cte'] * cte**2
-            cost += weights['w_etheta'] * etheta**2
-            cost += weights['w_vel'] * (target_speed - pred_v)**2
-
-        # Control input cost
-        cost += weights['w_accel'] * np.sum(accels**2)
-        cost += weights['w_steer'] * np.sum(steers**2)
-
-        # Control rate cost (smoothness)
-        cost += weights['w_accel_rate'] * np.sum((accels[1:] - accels[:-1])**2)
-        cost += weights['w_steer_rate'] * np.sum((steers[1:] - steers[:-1])**2)
-        
-        return cost
 
     def _cost_function_torch(self, u_tensor, initial_state_tensor, ref_path_tensor, target_speed_tensor, weights_dict):
         # Ensure all inputs are tensors and on the correct device
@@ -12493,9 +13140,10 @@ class Control:
         initial_state = [veh_x, veh_y, veh_yaw, current_speed]
 
         # --- For Logging: Calculate current errors ---
-        path_points_for_error = np.array(path)
-        distances_error = np.linalg.norm(path_points_for_error - np.array([veh_x, veh_y]), axis=1)
-        closest_idx_error = np.argmin(distances_error)
+        path_points_for_error = torch.tensor(path, dtype=torch.float32, device=self.device)
+        veh_pos_tensor = torch.tensor([veh_x, veh_y], dtype=torch.float32, device=self.device)
+        distances_error = torch.linalg.norm(path_points_for_error - veh_pos_tensor, dim=1)
+        closest_idx_error = torch.argmin(distances_error)
 
         if closest_idx_error >= len(path_points_for_error) - 1:
             p1_error = path_points_for_error[closest_idx_error - 1]
@@ -12504,12 +13152,12 @@ class Control:
             p1_error = path_points_for_error[closest_idx_error]
             p2_error = path_points_for_error[closest_idx_error + 1]
 
-        path_yaw_error = math.atan2(p2_error[1] - p1_error[1], p2_error[0] - p1_error[0])
+        path_yaw_error = torch.atan2(p2_error[1] - p1_error[1], p2_error[0] - p1_error[0])
         etheta_current = self.normalize_angle(path_yaw_error - veh_yaw)
         vec_path_error = p2_error - p1_error
-        vec_path_normalized_error = vec_path_error / (np.linalg.norm(vec_path_error) + 1e-6)
-        vec_to_veh_error = np.array([veh_x, veh_y]) - p1_error
-        cte_current = np.cross(vec_path_normalized_error, vec_to_veh_error)
+        vec_path_normalized_error = vec_path_error / (torch.linalg.norm(vec_path_error) + 1e-6)
+        vec_to_veh_error = veh_pos_tensor - p1_error
+        cte_current = vec_path_normalized_error[0] * vec_to_veh_error[1] - vec_path_normalized_error[1] * vec_to_veh_error[0]
         # --- End of Error Calculation for Logging ---
 
         # --- Fallback Mode vs Normal Mode ---
@@ -12517,15 +13165,12 @@ class Control:
             # In fallback mode, prioritize stability with safe weights and low speed
             weights = self.mpc_fallback_weights.copy()
             mpc_target_speed = self.pre_lc_min_speed # Use a predefined safe speed
-            avg_curvature = 0.0 # No curvature in fallback
+            avg_curvature = torch.tensor(0.0, device=self.device) # No curvature in fallback
             rospy.logwarn_throttle(1.0, "Control: Fallback path detected. Using safe control mode.")
         else:
             # --- Normal Operation ---
-            # 1. Get base weights interpolated for the current speed
-            weights = self._get_dynamic_weights(current_speed)
-
-            # 2. Calculate curvature and adjust target speed
             if self.track_map.is_loop_closed:
+                weights = self.mpc_second_lap_weights.copy()
                 target_speed_params = {
                     'target_speed': self.post_lc_target_speed,
                     'min_speed': self.post_lc_min_speed,
@@ -12533,6 +13178,7 @@ class Control:
                     'curvature_lookahead': self.post_lc_curvature_lookahead
                 }
             else:
+                weights = self.mpc_first_lap_weights.copy()
                 target_speed_params = {
                     'target_speed': self.pre_lc_target_speed,
                     'min_speed': self.pre_lc_min_speed,
@@ -12540,39 +13186,25 @@ class Control:
                     'curvature_lookahead': self.pre_lc_curvature_lookahead
                 }
 
-            path_curvatures = self.path_planner._calculate_path_curvature(path, target_speed_params['curvature_lookahead'])
+            path_curvatures = self.path_planner._calculate_path_curvature(path_points_for_error, target_speed_params['curvature_lookahead'])
             lookahead_curvatures = path_curvatures[:self.mpc_horizon]
-            avg_curvature = np.mean(lookahead_curvatures) if lookahead_curvatures else 0.0
+            avg_curvature = torch.mean(torch.tensor(lookahead_curvatures, device=self.device)) if len(lookahead_curvatures) > 0 else torch.tensor(0.0, device=self.device)
             
             base_target_speed = target_speed_params['target_speed']
-            mpc_target_speed = base_target_speed / (1.0 + target_speed_params['curvature_speed_factor'] * abs(avg_curvature))
-            mpc_target_speed = np.clip(mpc_target_speed, target_speed_params['min_speed'], base_target_speed)
-
-            # 3. Dynamically tune weights for curvature and speed
-            weights = self._tune_weights_for_curvature(weights, avg_curvature, current_speed)
-
-            # 4. Apply Side Slip Control
-            if self.ssc_enable:
-                vx = vehicle_state[3]
-                vy = vehicle_state[4]
-                # Avoid division by zero and calculate only when moving
-                if abs(vx) > 0.5:
-                    side_slip_angle = math.atan2(vy, vx)
-                    if abs(side_slip_angle) > self.ssc_slip_angle_threshold:
-                        rospy.logwarn_throttle(0.5, f"Side slip detected! Angle: {math.degrees(side_slip_angle):.2f} deg. Reducing target speed.")
-                        mpc_target_speed *= self.ssc_speed_reduction_factor
+            mpc_target_speed = base_target_speed / (1.0 + target_speed_params['curvature_speed_factor'] * torch.abs(avg_curvature))
+            mpc_target_speed = torch.clamp(mpc_target_speed, target_speed_params['min_speed'], base_target_speed).item()
 
         # --- MPC Solver (common for all modes) ---
-        path_points = np.array(path)
-        distances = np.linalg.norm(path_points - np.array([veh_x, veh_y]), axis=1)
-        start_idx = np.argmin(distances)
+        path_points = torch.tensor(path, dtype=torch.float32, device=self.device)
+        distances = torch.linalg.norm(path_points - veh_pos_tensor, dim=1)
+        start_idx = torch.argmin(distances)
         ref_path = path_points[start_idx:start_idx + self.mpc_horizon + 2]
         if len(ref_path) < self.mpc_horizon + 2:
             last_point = ref_path[-1]
-            padding = np.array([last_point] * (self.mpc_horizon + 2 - len(ref_path)))
-            ref_path = np.vstack([ref_path, padding])
+            padding = torch.stack([last_point] * (self.mpc_horizon + 2 - len(ref_path)))
+            ref_path = torch.cat([ref_path, padding])
 
-        u0 = np.zeros(2 * self.mpc_horizon)
+        u0 = torch.zeros(2 * self.mpc_horizon, dtype=torch.float32, device=self.device)
         bounds = []
         for _ in range(self.mpc_horizon):
             bounds.append((self.min_accel, self.max_accel))
@@ -12580,7 +13212,7 @@ class Control:
 
         # Convert inputs to PyTorch tensors
         initial_state_tensor = torch.tensor(initial_state, dtype=torch.float32, device=self.device)
-        ref_path_tensor = torch.tensor(ref_path, dtype=torch.float32, device=self.device)
+        ref_path_tensor = ref_path
         mpc_target_speed_tensor = torch.tensor(mpc_target_speed, dtype=torch.float32, device=self.device)
         
         # Convert weights to tensors if they are not already
@@ -12616,137 +13248,12 @@ class Control:
         # --- Prepare Debug Data for Logging ---
         debug_data = {
             'target_speed': mpc_target_speed,
-            'avg_curvature': avg_curvature,
-            'side_slip_angle': math.degrees(side_slip_angle) if 'side_slip_angle' in locals() else 0.0,
+            'avg_curvature': avg_curvature.item(),
+            'side_slip_angle': 0.0,
             'cost': mpc_cost_value,
             'weights': weights,
-            'cte': cte_current,
-            'etheta': etheta_current
-        }
-
-        # --- Map acceleration to throttle/brake ---
-        throttle = 0.0
-        brake = 0.0
-        if optimal_accel > 0:
-            throttle = np.clip(optimal_accel / self.max_accel, 0.0, 0.5)
-        else:
-            brake = np.clip(-optimal_accel / abs(self.min_accel), 0.0, 0.5)
-
-        # Normalize steering angle to [-1, 1]
-        normalized_steer = np.clip(-optimal_steer / self.max_steer, -1.0, 1.0)
-
-        return throttle, normalized_steer, brake, debug_data
-
-    def _compute_mpc_scipy(self, vehicle_state, path, is_fallback=False):
-        # Unpack vehicle state
-        veh_x, veh_y, veh_yaw = vehicle_state[0], vehicle_state[1], vehicle_state[2]
-        current_speed = math.sqrt(vehicle_state[3]**2 + vehicle_state[4]**2)
-        initial_state = [veh_x, veh_y, veh_yaw, current_speed]
-
-        # --- For Logging: Calculate current errors ---
-        path_points_for_error = np.array(path)
-        distances_error = np.linalg.norm(path_points_for_error - np.array([veh_x, veh_y]), axis=1)
-        closest_idx_error = np.argmin(distances_error)
-
-        if closest_idx_error >= len(path_points_for_error) - 1:
-            p1_error = path_points_for_error[closest_idx_error - 1]
-            p2_error = path_points_for_error[closest_idx_error]
-        else:
-            p1_error = path_points_for_error[closest_idx_error]
-            p2_error = path_points_for_error[closest_idx_error + 1]
-
-        path_yaw_error = math.atan2(p2_error[1] - p1_error[1], p2_error[0] - p1_error[0])
-        etheta_current = self.normalize_angle(path_yaw_error - veh_yaw)
-        vec_path_error = p2_error - p1_error
-        vec_path_normalized_error = vec_path_error / (np.linalg.norm(vec_path_error) + 1e-6)
-        vec_to_veh_error = np.array([veh_x, veh_y]) - p1_error
-        cte_current = np.cross(vec_path_normalized_error, vec_to_veh_error)
-        # --- End of Error Calculation for Logging ---
-
-        # --- Fallback Mode vs Normal Mode ---
-        if is_fallback:
-            # In fallback mode, prioritize stability with safe weights and low speed
-            weights = self.mpc_fallback_weights.copy()
-            mpc_target_speed = self.pre_lc_min_speed # Use a predefined safe speed
-            avg_curvature = 0.0 # No curvature in fallback
-            rospy.logwarn_throttle(1.0, "Control: Fallback path detected. Using safe control mode.")
-        else:
-            # --- Normal Operation ---
-            # 1. Get base weights interpolated for the current speed
-            weights = self._get_dynamic_weights(current_speed)
-
-            # 2. Calculate curvature and adjust target speed
-            if self.track_map.is_loop_closed:
-                target_speed_params = {
-                    'target_speed': self.post_lc_target_speed,
-                    'min_speed': self.post_lc_min_speed,
-                    'curvature_speed_factor': self.post_lc_curvature_speed_factor,
-                    'curvature_lookahead': self.post_lc_curvature_lookahead
-                }
-            else:
-                target_speed_params = {
-                    'target_speed': self.pre_lc_target_speed,
-                    'min_speed': self.pre_lc_min_speed,
-                    'curvature_speed_factor': self.pre_lc_curvature_speed_factor,
-                    'curvature_lookahead': self.pre_lc_curvature_lookahead
-                }
-
-            path_curvatures = self.path_planner._calculate_path_curvature(path, target_speed_params['curvature_lookahead'])
-            lookahead_curvatures = path_curvatures[:self.mpc_horizon]
-            avg_curvature = np.mean(lookahead_curvatures) if lookahead_curvatures else 0.0
-            
-            base_target_speed = target_speed_params['target_speed']
-            mpc_target_speed = base_target_speed / (1.0 + target_speed_params['curvature_speed_factor'] * abs(avg_curvature))
-            mpc_target_speed = np.clip(mpc_target_speed, target_speed_params['min_speed'], base_target_speed)
-
-            # 3. Dynamically tune weights for curvature and speed
-            weights = self._tune_weights_for_curvature(weights, avg_curvature, current_speed)
-
-            # 4. Apply Side Slip Control
-            if self.ssc_enable:
-                vx = vehicle_state[3]
-                vy = vehicle_state[4]
-                # Avoid division by zero and calculate only when moving
-                if abs(vx) > 0.5:
-                    side_slip_angle = math.atan2(vy, vx)
-                    if abs(side_slip_angle) > self.ssc_slip_angle_threshold:
-                        rospy.logwarn_throttle(0.5, f"Side slip detected! Angle: {math.degrees(side_slip_angle):.2f} deg. Reducing target speed.")
-                        mpc_target_speed *= self.ssc_speed_reduction_factor
-
-        # --- MPC Solver (common for all modes) ---
-        path_points = np.array(path)
-        distances = np.linalg.norm(path_points - np.array([veh_x, veh_y]), axis=1)
-        start_idx = np.argmin(distances)
-        ref_path = path_points[start_idx:start_idx + self.mpc_horizon + 2]
-        if len(ref_path) < self.mpc_horizon + 2:
-            last_point = ref_path[-1]
-            padding = np.array([last_point] * (self.mpc_horizon + 2 - len(ref_path)))
-            ref_path = np.vstack([ref_path, padding])
-
-        u0 = np.zeros(2 * self.mpc_horizon)
-        bounds = []
-        for _ in range(self.mpc_horizon):
-            bounds.append((self.min_accel, self.max_accel))
-            bounds.append((-self.max_steer, self.max_steer))
-
-        # SciPy optimization
-        res = minimize(self._cost_function, u0, args=(initial_state, ref_path, mpc_target_speed, weights),
-                       method='SLSQP', bounds=bounds) # SLSQP is a good general-purpose method
-
-        optimal_controls = res.x
-        optimal_accel = optimal_controls[0]
-        optimal_steer = optimal_controls[1]
-        mpc_cost_value = res.fun # Get the final cost for logging
-
-        # --- Prepare Debug Data for Logging ---
-        debug_data = {
-            'target_speed': mpc_target_speed,
-            'avg_curvature': avg_curvature,
-            'side_slip_angle': math.degrees(side_slip_angle) if 'side_slip_angle' in locals() else 0.0,
-            'cost': mpc_cost_value,
-            'weights': weights,
-            'cte': cte_current,
-            'etheta': etheta_current
+            'cte': cte_current.item(),
+            'etheta': etheta_current.item()
         }
 
         # --- Map acceleration to throttle/brake ---
