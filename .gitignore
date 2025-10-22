@@ -1,5 +1,5 @@
-build/*
-devel/*
+**/build/*
+**/devel/*
 
 *.avi
 *.csv
@@ -11,3 +11,4 @@ devel/*
 
 *.pt
 *.Identifier
+
