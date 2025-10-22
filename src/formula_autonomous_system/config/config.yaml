@@ -50,7 +50,7 @@ perception:
     # Camera intrinsic parameters (pixels)
     # 640x480, horizontal FOV: 90 deg: focal length = 320.0
     focal_length_x: 320.0
-    focal_length_y: 240.0
+    focal_length_y: 320.0
     principal_point_x: 320.0
     principal_point_y: 240.0
 
@@ -106,7 +106,7 @@ perception:
 
   camera_cone_detection:
     min_bbox_area: 300 # Minimum bounding box area (pixels) to consider for detection
-    visualize_lidar_on_camera: true # Whether to visualize projected LiDAR points on camera images
+    visualize_lidar_on_camera: false # Whether to visualize projected LiDAR points on camera images
     lidar_cam_iou_threshold: 0.5 # Minimum IoU between LiDAR window and camera bbox for a match
 
 localization:
@@ -130,7 +130,7 @@ localization:
 local_planning:
   trajectory:
     lane_offset: 3.0
-    planner_roi_distance : 10.0
+    planner_roi_distance : 40.0
     planner_roi_angle : 80.0
     planner_clustering_eps : 4.0
 
@@ -147,19 +147,19 @@ mapping:
 
 planning:
   path_planner:
-    max_edge_length: 7.0 # Max distance between connected midpoints in path planning
+    max_edge_length: 15.0 # Max distance between connected midpoints in path planning
     path_obstacle_threshold: 0.5 # Minimum clearance distance for a path segment to be valid
     weight_dist: 0.3
     weight_angle: 0.7
     max_path_distance: 100.0 # Max distance for the planned path
     spline_smoothing_factor: 1.0 # Smoothing factor for path spline
-    fallback_path_length: 15.0 # Length of the fallback path in meters
+    fallback_path_length: 5.0 # Length of the fallback path in meters
     fallback_path_points: 10 # Number of points in the fallback path
 
 control:
   ControllerSelection:
-    # lateral_controller_type: "PurePursuit", "Stanley", "MPC", "MPC_SciPy"
-    lateral_controller_type: "MPC_SciPy" 
+    # lateral_controller_type: "PurePursuit", "Stanley", "MPC"
+    lateral_controller_type: "MPC" 
 
   PurePursuit:
     lookahead_distance: 1.0
@@ -168,43 +168,32 @@ control:
     k_gain: 1.1
 
   MPC:
-    horizon: 5
-    dt: 0.1
-    speed_dependent_weights:
-      - max_speed: 8.0 # Low speed, sharp corners
-        weights:
-          w_cte: 500.0
-          w_etheta: 200.0
-          w_vel: 30.0
-          w_steer: 10.0
-          w_accel: 50.0
-          w_steer_rate: 100.0
-          w_accel_rate: 50.0
-      - max_speed: 15.0 # Medium speed
-        weights:
-          w_cte: 300.0
-          w_etheta: 200.0
-          w_vel: 50.0
-          w_steer: 30.0
-          w_accel: 10.0
-          w_steer_rate: 100.0
-          w_accel_rate: 15.0
-      - max_speed: 27.0 # High speed
-        weights:
-          w_etheta: 120.0
-          w_vel: 100.0
-          w_steer: 15.0
-          w_accel: 15.0
-          w_steer_rate: 100.0
-          w_accel_rate: 30.0
-    mpc_fallback_weights:
-      w_cte: 500.0
-      w_etheta: 300.0
-      w_vel: 30.0
-      w_steer: 6.0
-      w_accel: 50.0
-      w_steer_rate: 150.0
-      w_accel_rate: 50.0
+    horizon: 10
+    dt: 0.01
+    first_lap_weights:
+      w_cte: 1.0
+      w_etheta: 1.0
+      w_vel: 1.0
+      w_steer: 5.0
+      w_accel: 1.0
+      w_steer_rate: 1.0
+      w_accel_rate: 1.0
+    second_lap_weights:
+      w_cte: 2.0
+      w_etheta: 2.0
+      w_vel: 1.0
+      w_steer: 1.0
+      w_accel: 1.0
+      w_steer_rate: 1.0
+      w_accel_rate: 1.0
+    fallback_weights:
+      w_cte: 1.0
+      w_etheta: 1.0
+      w_vel: 1.0
+      w_steer: 1.0
+      w_accel: 1.0
+      w_steer_rate: 1.0
+      w_accel_rate: 1.0
 
   SpeedControl:
     pid_kp: 0.5
