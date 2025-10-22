@@ -48,25 +48,13 @@ RM = /usr/bin/cmake -E remove -f
 EQUALS = =
 
 # The top-level source directory on which CMake was run.
-CMAKE_SOURCE_DIR = /home/user/fsds_ws/src
+CMAKE_SOURCE_DIR = /home/user/FSDS/src
 
 # The top-level build directory on which CMake was run.
-CMAKE_BINARY_DIR = /home/user/fsds_ws/build
+CMAKE_BINARY_DIR = /home/user/FSDS/build
 
 #=============================================================================
 # Targets provided globally by CMake.
-
-# Special rule for the target install/strip
-install/strip: preinstall
-	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --cyan "Installing the project stripped..."
-	/usr/bin/cmake -DCMAKE_INSTALL_DO_STRIP=1 -P cmake_install.cmake
-.PHONY : install/strip
-
-# Special rule for the target install/strip
-install/strip/fast: preinstall/fast
-	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --cyan "Installing the project stripped..."
-	/usr/bin/cmake -DCMAKE_INSTALL_DO_STRIP=1 -P cmake_install.cmake
-.PHONY : install/strip/fast
 
 # Special rule for the target install/local
 install/local: preinstall
@@ -135,16 +123,28 @@ test/fast: test
 
 .PHONY : test/fast
 
+# Special rule for the target install/strip
+install/strip: preinstall
+	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --cyan "Installing the project stripped..."
+	/usr/bin/cmake -DCMAKE_INSTALL_DO_STRIP=1 -P cmake_install.cmake
+.PHONY : install/strip
+
+# Special rule for the target install/strip
+install/strip/fast: preinstall/fast
+	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --cyan "Installing the project stripped..."
+	/usr/bin/cmake -DCMAKE_INSTALL_DO_STRIP=1 -P cmake_install.cmake
+.PHONY : install/strip/fast
+
 # The main all target
 all: cmake_check_build_system
-	cd /home/user/fsds_ws/build && $(CMAKE_COMMAND) -E cmake_progress_start /home/user/fsds_ws/build/CMakeFiles /home/user/fsds_ws/build/tutorial/CMakeFiles/progress.marks
-	cd /home/user/fsds_ws/build && $(MAKE) -f CMakeFiles/Makefile2 tutorial/all
-	$(CMAKE_COMMAND) -E cmake_progress_start /home/user/fsds_ws/build/CMakeFiles 0
+	cd /home/user/FSDS/build && $(CMAKE_COMMAND) -E cmake_progress_start /home/user/FSDS/build/CMakeFiles /home/user/FSDS/build/tutorial/CMakeFiles/progress.marks
+	cd /home/user/FSDS/build && $(MAKE) -f CMakeFiles/Makefile2 tutorial/all
+	$(CMAKE_COMMAND) -E cmake_progress_start /home/user/FSDS/build/CMakeFiles 0
 .PHONY : all
 
 # The main clean target
 clean:
-	cd /home/user/fsds_ws/build && $(MAKE) -f CMakeFiles/Makefile2 tutorial/clean
+	cd /home/user/FSDS/build && $(MAKE) -f CMakeFiles/Makefile2 tutorial/clean
 .PHONY : clean
 
 # The main clean target
@@ -154,142 +154,22 @@ clean/fast: clean
 
 # Prepare targets for installation.
 preinstall: all
-	cd /home/user/fsds_ws/build && $(MAKE) -f CMakeFiles/Makefile2 tutorial/preinstall
+	cd /home/user/FSDS/build && $(MAKE) -f CMakeFiles/Makefile2 tutorial/preinstall
 .PHONY : preinstall
 
 # Prepare targets for installation.
 preinstall/fast:
-	cd /home/user/fsds_ws/build && $(MAKE) -f CMakeFiles/Makefile2 tutorial/preinstall
+	cd /home/user/FSDS/build && $(MAKE) -f CMakeFiles/Makefile2 tutorial/preinstall
 .PHONY : preinstall/fast
 
 # clear depends
 depend:
-	cd /home/user/fsds_ws/build && $(CMAKE_COMMAND) -S$(CMAKE_SOURCE_DIR) -B$(CMAKE_BINARY_DIR) --check-build-system CMakeFiles/Makefile.cmake 1
+	cd /home/user/FSDS/build && $(CMAKE_COMMAND) -S$(CMAKE_SOURCE_DIR) -B$(CMAKE_BINARY_DIR) --check-build-system CMakeFiles/Makefile.cmake 1
 .PHONY : depend
 
 # Convenience name for target.
-tutorial/CMakeFiles/tutorial_generate_messages_lisp.dir/rule:
-	cd /home/user/fsds_ws/build && $(MAKE) -f CMakeFiles/Makefile2 tutorial/CMakeFiles/tutorial_generate_messages_lisp.dir/rule
-.PHONY : tutorial/CMakeFiles/tutorial_generate_messages_lisp.dir/rule
-
-# Convenience name for target.
-tutorial_generate_messages_lisp: tutorial/CMakeFiles/tutorial_generate_messages_lisp.dir/rule
-
-.PHONY : tutorial_generate_messages_lisp
-
-# fast build rule for target.
-tutorial_generate_messages_lisp/fast:
-	cd /home/user/fsds_ws/build && $(MAKE) -f tutorial/CMakeFiles/tutorial_generate_messages_lisp.dir/build.make tutorial/CMakeFiles/tutorial_generate_messages_lisp.dir/build
-.PHONY : tutorial_generate_messages_lisp/fast
-
-# Convenience name for target.
-tutorial/CMakeFiles/tutorial_generate_messages_cpp.dir/rule:
-	cd /home/user/fsds_ws/build && $(MAKE) -f CMakeFiles/Makefile2 tutorial/CMakeFiles/tutorial_generate_messages_cpp.dir/rule
-.PHONY : tutorial/CMakeFiles/tutorial_generate_messages_cpp.dir/rule
-
-# Convenience name for target.
-tutorial_generate_messages_cpp: tutorial/CMakeFiles/tutorial_generate_messages_cpp.dir/rule
-
-.PHONY : tutorial_generate_messages_cpp
-
-# fast build rule for target.
-tutorial_generate_messages_cpp/fast:
-	cd /home/user/fsds_ws/build && $(MAKE) -f tutorial/CMakeFiles/tutorial_generate_messages_cpp.dir/build.make tutorial/CMakeFiles/tutorial_generate_messages_cpp.dir/build
-.PHONY : tutorial_generate_messages_cpp/fast
-
-# Convenience name for target.
-tutorial/CMakeFiles/tutorial_gencpp.dir/rule:
-	cd /home/user/fsds_ws/build && $(MAKE) -f CMakeFiles/Makefile2 tutorial/CMakeFiles/tutorial_gencpp.dir/rule
-.PHONY : tutorial/CMakeFiles/tutorial_gencpp.dir/rule
-
-# Convenience name for target.
-tutorial_gencpp: tutorial/CMakeFiles/tutorial_gencpp.dir/rule
-
-.PHONY : tutorial_gencpp
-
-# fast build rule for target.
-tutorial_gencpp/fast:
-	cd /home/user/fsds_ws/build && $(MAKE) -f tutorial/CMakeFiles/tutorial_gencpp.dir/build.make tutorial/CMakeFiles/tutorial_gencpp.dir/build
-.PHONY : tutorial_gencpp/fast
-
-# Convenience name for target.
-tutorial/CMakeFiles/tutorial_genlisp.dir/rule:
-	cd /home/user/fsds_ws/build && $(MAKE) -f CMakeFiles/Makefile2 tutorial/CMakeFiles/tutorial_genlisp.dir/rule
-.PHONY : tutorial/CMakeFiles/tutorial_genlisp.dir/rule
-
-# Convenience name for target.
-tutorial_genlisp: tutorial/CMakeFiles/tutorial_genlisp.dir/rule
-
-.PHONY : tutorial_genlisp
-
-# fast build rule for target.
-tutorial_genlisp/fast:
-	cd /home/user/fsds_ws/build && $(MAKE) -f tutorial/CMakeFiles/tutorial_genlisp.dir/build.make tutorial/CMakeFiles/tutorial_genlisp.dir/build
-.PHONY : tutorial_genlisp/fast
-
-# Convenience name for target.
-tutorial/CMakeFiles/tutorial_generate_messages_nodejs.dir/rule:
-	cd /home/user/fsds_ws/build && $(MAKE) -f CMakeFiles/Makefile2 tutorial/CMakeFiles/tutorial_generate_messages_nodejs.dir/rule
-.PHONY : tutorial/CMakeFiles/tutorial_generate_messages_nodejs.dir/rule
-
-# Convenience name for target.
-tutorial_generate_messages_nodejs: tutorial/CMakeFiles/tutorial_generate_messages_nodejs.dir/rule
-
-.PHONY : tutorial_generate_messages_nodejs
-
-# fast build rule for target.
-tutorial_generate_messages_nodejs/fast:
-	cd /home/user/fsds_ws/build && $(MAKE) -f tutorial/CMakeFiles/tutorial_generate_messages_nodejs.dir/build.make tutorial/CMakeFiles/tutorial_generate_messages_nodejs.dir/build
-.PHONY : tutorial_generate_messages_nodejs/fast
-
-# Convenience name for target.
-tutorial/CMakeFiles/tutorial_gennodejs.dir/rule:
-	cd /home/user/fsds_ws/build && $(MAKE) -f CMakeFiles/Makefile2 tutorial/CMakeFiles/tutorial_gennodejs.dir/rule
-.PHONY : tutorial/CMakeFiles/tutorial_gennodejs.dir/rule
-
-# Convenience name for target.
-tutorial_gennodejs: tutorial/CMakeFiles/tutorial_gennodejs.dir/rule
-
-.PHONY : tutorial_gennodejs
-
-# fast build rule for target.
-tutorial_gennodejs/fast:
-	cd /home/user/fsds_ws/build && $(MAKE) -f tutorial/CMakeFiles/tutorial_gennodejs.dir/build.make tutorial/CMakeFiles/tutorial_gennodejs.dir/build
-.PHONY : tutorial_gennodejs/fast
-
-# Convenience name for target.
-tutorial/CMakeFiles/tutorial_generate_messages.dir/rule:
-	cd /home/user/fsds_ws/build && $(MAKE) -f CMakeFiles/Makefile2 tutorial/CMakeFiles/tutorial_generate_messages.dir/rule
-.PHONY : tutorial/CMakeFiles/tutorial_generate_messages.dir/rule
-
-# Convenience name for target.
-tutorial_generate_messages: tutorial/CMakeFiles/tutorial_generate_messages.dir/rule
-
-.PHONY : tutorial_generate_messages
-
-# fast build rule for target.
-tutorial_generate_messages/fast:
-	cd /home/user/fsds_ws/build && $(MAKE) -f tutorial/CMakeFiles/tutorial_generate_messages.dir/build.make tutorial/CMakeFiles/tutorial_generate_messages.dir/build
-.PHONY : tutorial_generate_messages/fast
-
-# Convenience name for target.
-tutorial/CMakeFiles/tutorial_generate_messages_eus.dir/rule:
-	cd /home/user/fsds_ws/build && $(MAKE) -f CMakeFiles/Makefile2 tutorial/CMakeFiles/tutorial_generate_messages_eus.dir/rule
-.PHONY : tutorial/CMakeFiles/tutorial_generate_messages_eus.dir/rule
-
-# Convenience name for target.
-tutorial_generate_messages_eus: tutorial/CMakeFiles/tutorial_generate_messages_eus.dir/rule
-
-.PHONY : tutorial_generate_messages_eus
-
-# fast build rule for target.
-tutorial_generate_messages_eus/fast:
-	cd /home/user/fsds_ws/build && $(MAKE) -f tutorial/CMakeFiles/tutorial_generate_messages_eus.dir/build.make tutorial/CMakeFiles/tutorial_generate_messages_eus.dir/build
-.PHONY : tutorial_generate_messages_eus/fast
-
-# Convenience name for target.
 tutorial/CMakeFiles/data_logger.dir/rule:
-	cd /home/user/fsds_ws/build && $(MAKE) -f CMakeFiles/Makefile2 tutorial/CMakeFiles/data_logger.dir/rule
+	cd /home/user/FSDS/build && $(MAKE) -f CMakeFiles/Makefile2 tutorial/CMakeFiles/data_logger.dir/rule
 .PHONY : tutorial/CMakeFiles/data_logger.dir/rule
 
 # Convenience name for target.
@@ -299,53 +179,8 @@ data_logger: tutorial/CMakeFiles/data_logger.dir/rule
 
 # fast build rule for target.
 data_logger/fast:
-	cd /home/user/fsds_ws/build && $(MAKE) -f tutorial/CMakeFiles/data_logger.dir/build.make tutorial/CMakeFiles/data_logger.dir/build
+	cd /home/user/FSDS/build && $(MAKE) -f tutorial/CMakeFiles/data_logger.dir/build.make tutorial/CMakeFiles/data_logger.dir/build
 .PHONY : data_logger/fast
-
-# Convenience name for target.
-tutorial/CMakeFiles/tutorial_geneus.dir/rule:
-	cd /home/user/fsds_ws/build && $(MAKE) -f CMakeFiles/Makefile2 tutorial/CMakeFiles/tutorial_geneus.dir/rule
-.PHONY : tutorial/CMakeFiles/tutorial_geneus.dir/rule
-
-# Convenience name for target.
-tutorial_geneus: tutorial/CMakeFiles/tutorial_geneus.dir/rule
-
-.PHONY : tutorial_geneus
-
-# fast build rule for target.
-tutorial_geneus/fast:
-	cd /home/user/fsds_ws/build && $(MAKE) -f tutorial/CMakeFiles/tutorial_geneus.dir/build.make tutorial/CMakeFiles/tutorial_geneus.dir/build
-.PHONY : tutorial_geneus/fast
-
-# Convenience name for target.
-tutorial/CMakeFiles/tutorial_generate_messages_py.dir/rule:
-	cd /home/user/fsds_ws/build && $(MAKE) -f CMakeFiles/Makefile2 tutorial/CMakeFiles/tutorial_generate_messages_py.dir/rule
-.PHONY : tutorial/CMakeFiles/tutorial_generate_messages_py.dir/rule
-
-# Convenience name for target.
-tutorial_generate_messages_py: tutorial/CMakeFiles/tutorial_generate_messages_py.dir/rule
-
-.PHONY : tutorial_generate_messages_py
-
-# fast build rule for target.
-tutorial_generate_messages_py/fast:
-	cd /home/user/fsds_ws/build && $(MAKE) -f tutorial/CMakeFiles/tutorial_generate_messages_py.dir/build.make tutorial/CMakeFiles/tutorial_generate_messages_py.dir/build
-.PHONY : tutorial_generate_messages_py/fast
-
-# Convenience name for target.
-tutorial/CMakeFiles/tutorial_genpy.dir/rule:
-	cd /home/user/fsds_ws/build && $(MAKE) -f CMakeFiles/Makefile2 tutorial/CMakeFiles/tutorial_genpy.dir/rule
-.PHONY : tutorial/CMakeFiles/tutorial_genpy.dir/rule
-
-# Convenience name for target.
-tutorial_genpy: tutorial/CMakeFiles/tutorial_genpy.dir/rule
-
-.PHONY : tutorial_genpy
-
-# fast build rule for target.
-tutorial_genpy/fast:
-	cd /home/user/fsds_ws/build && $(MAKE) -f tutorial/CMakeFiles/tutorial_genpy.dir/build.make tutorial/CMakeFiles/tutorial_genpy.dir/build
-.PHONY : tutorial_genpy/fast
 
 src/data_logger.o: src/data_logger.cpp.o
 
@@ -353,7 +188,7 @@ src/data_logger.o: src/data_logger.cpp.o
 
 # target to build an object file
 src/data_logger.cpp.o:
-	cd /home/user/fsds_ws/build && $(MAKE) -f tutorial/CMakeFiles/data_logger.dir/build.make tutorial/CMakeFiles/data_logger.dir/src/data_logger.cpp.o
+	cd /home/user/FSDS/build && $(MAKE) -f tutorial/CMakeFiles/data_logger.dir/build.make tutorial/CMakeFiles/data_logger.dir/src/data_logger.cpp.o
 .PHONY : src/data_logger.cpp.o
 
 src/data_logger.i: src/data_logger.cpp.i
@@ -362,7 +197,7 @@ src/data_logger.i: src/data_logger.cpp.i
 
 # target to preprocess a source file
 src/data_logger.cpp.i:
-	cd /home/user/fsds_ws/build && $(MAKE) -f tutorial/CMakeFiles/data_logger.dir/build.make tutorial/CMakeFiles/data_logger.dir/src/data_logger.cpp.i
+	cd /home/user/FSDS/build && $(MAKE) -f tutorial/CMakeFiles/data_logger.dir/build.make tutorial/CMakeFiles/data_logger.dir/src/data_logger.cpp.i
 .PHONY : src/data_logger.cpp.i
 
 src/data_logger.s: src/data_logger.cpp.s
@@ -371,7 +206,7 @@ src/data_logger.s: src/data_logger.cpp.s
 
 # target to generate assembly for a file
 src/data_logger.cpp.s:
-	cd /home/user/fsds_ws/build && $(MAKE) -f tutorial/CMakeFiles/data_logger.dir/build.make tutorial/CMakeFiles/data_logger.dir/src/data_logger.cpp.s
+	cd /home/user/FSDS/build && $(MAKE) -f tutorial/CMakeFiles/data_logger.dir/build.make tutorial/CMakeFiles/data_logger.dir/src/data_logger.cpp.s
 .PHONY : src/data_logger.cpp.s
 
 # Help Target
@@ -380,25 +215,14 @@ help:
 	@echo "... all (the default if no target is provided)"
 	@echo "... clean"
 	@echo "... depend"
-	@echo "... install/strip"
 	@echo "... install/local"
 	@echo "... install"
 	@echo "... list_install_components"
 	@echo "... rebuild_cache"
 	@echo "... edit_cache"
 	@echo "... test"
-	@echo "... tutorial_generate_messages_lisp"
-	@echo "... tutorial_generate_messages_cpp"
-	@echo "... tutorial_gencpp"
-	@echo "... tutorial_genlisp"
-	@echo "... tutorial_generate_messages_nodejs"
-	@echo "... tutorial_gennodejs"
-	@echo "... tutorial_generate_messages"
-	@echo "... tutorial_generate_messages_eus"
+	@echo "... install/strip"
 	@echo "... data_logger"
-	@echo "... tutorial_geneus"
-	@echo "... tutorial_generate_messages_py"
-	@echo "... tutorial_genpy"
 	@echo "... src/data_logger.o"
 	@echo "... src/data_logger.i"
 	@echo "... src/data_logger.s"
@@ -413,6 +237,6 @@ help:
 # No rule that depends on this can have commands that come from listfiles
 # because they might be regenerated.
 cmake_check_build_system:
-	cd /home/user/fsds_ws/build && $(CMAKE_COMMAND) -S$(CMAKE_SOURCE_DIR) -B$(CMAKE_BINARY_DIR) --check-build-system CMakeFiles/Makefile.cmake 0
+	cd /home/user/FSDS/build && $(CMAKE_COMMAND) -S$(CMAKE_SOURCE_DIR) -B$(CMAKE_BINARY_DIR) --check-build-system CMakeFiles/Makefile.cmake 0
 .PHONY : cmake_check_build_system
 

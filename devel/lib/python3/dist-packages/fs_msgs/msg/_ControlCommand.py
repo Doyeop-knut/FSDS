@@ -16,6 +16,7 @@ class ControlCommand(genpy.Message):
 float64 throttle # [-] range : (0, 1)
 float64 steering # [-] range : (-1, 1)
 float64 brake # # [-] range : (0, 1)
+
 ================================================================================
 MSG: std_msgs/Header
 # Standard metadata for higher-level stamped data types.

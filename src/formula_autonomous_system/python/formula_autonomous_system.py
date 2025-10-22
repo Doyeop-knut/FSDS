@@ -1582,11 +1582,11 @@ class PathPlanner:
             rospy.logwarn_throttle(1.0, "PathPlanner: Only blue cones, generating virtual yellow cones.")
         elif not effective_blue_cones and not effective_yellow_cones:
             rospy.logwarn_throttle(1.0, "PathPlanner: No cones for fallback path.")
-            return None, None, None, None, None
+            return None, None, None, None, None, True
 
         # Now, both effective_blue_cones and effective_yellow_cones should have cones (real or virtual)
         if not effective_blue_cones or not effective_yellow_cones:
-            return None, None, None, None, None
+            return None, None, None, None, None, True
 
         rospy.logwarn_throttle(1.0, "PathPlanner: Not enough cones for triangulation, generating fallback path.")
         
@@ -2708,7 +2708,7 @@ class Control:
 
         # --- 곡률 기반 목표 속도 계산 ---
         if is_fallback:
-            mpc_target_speed = 5.0 # Set speed to 5.0 for fallback paths
+            mpc_target_speed = (self.pre_lc_target_speed + self.pre_lc_min_speed)/2 # Set speed to 5.0 for fallback paths
             weights = self.mpc_weights_pre_lc.copy() # Use pre-LC weights for fallback
         else:
             if self.track_map.is_loop_closed:

@@ -4,7 +4,7 @@ set(CMAKE_DEPENDS_LANGUAGES
   )
 # The set of files for implicit dependencies of each language:
 set(CMAKE_DEPENDS_CHECK_CXX
-  "/home/user/fsds_ws/src/tutorial/src/data_logger.cpp" "/home/user/fsds_ws/build/tutorial/CMakeFiles/data_logger.dir/src/data_logger.cpp.o"
+  "/home/user/FSDS/src/tutorial/src/data_logger.cpp" "/home/user/FSDS/build/tutorial/CMakeFiles/data_logger.dir/src/data_logger.cpp.o"
   )
 set(CMAKE_CXX_COMPILER_ID "GNU")
 
@@ -17,8 +17,8 @@ set(CMAKE_TARGET_DEFINITIONS_CXX
 
 # The include file search paths:
 set(CMAKE_CXX_TARGET_INCLUDE_PATH
-  "/home/user/fsds_ws/src/tutorial/include"
-  "/home/user/fsds_ws/devel/include"
+  "/home/user/FSDS/src/tutorial/include"
+  "/home/user/FSDS/devel/include"
   "/opt/ros/noetic/include"
   "/opt/ros/noetic/share/xmlrpcpp/cmake/../../../include/xmlrpcpp"
   )

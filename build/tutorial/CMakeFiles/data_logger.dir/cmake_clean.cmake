@@ -1,7 +1,7 @@
 file(REMOVE_RECURSE
-  "/home/user/fsds_ws/devel/lib/tutorial/data_logger"
-  "/home/user/fsds_ws/devel/lib/tutorial/data_logger.pdb"
   "CMakeFiles/data_logger.dir/src/data_logger.cpp.o"
+  "data_logger"
+  "data_logger.pdb"
 )
 
 # Per-language clean rules from dependency scanning.

@@ -43,10 +43,10 @@ RM = /usr/bin/cmake -E remove -f
 EQUALS = =
 
 # The top-level source directory on which CMake was run.
-CMAKE_SOURCE_DIR = /home/user/fsds_ws/src
+CMAKE_SOURCE_DIR = /home/user/FSDS/src
 
 # The top-level build directory on which CMake was run.
-CMAKE_BINARY_DIR = /home/user/fsds_ws/build
+CMAKE_BINARY_DIR = /home/user/FSDS/build
 
 # Utility rule file for geometry_msgs_generate_messages_cpp.
 
@@ -63,10 +63,10 @@ fs_msgs/CMakeFiles/geometry_msgs_generate_messages_cpp.dir/build: geometry_msgs_
 .PHONY : fs_msgs/CMakeFiles/geometry_msgs_generate_messages_cpp.dir/build
 
 fs_msgs/CMakeFiles/geometry_msgs_generate_messages_cpp.dir/clean:
-	cd /home/user/fsds_ws/build/fs_msgs && $(CMAKE_COMMAND) -P CMakeFiles/geometry_msgs_generate_messages_cpp.dir/cmake_clean.cmake
+	cd /home/user/FSDS/build/fs_msgs && $(CMAKE_COMMAND) -P CMakeFiles/geometry_msgs_generate_messages_cpp.dir/cmake_clean.cmake
 .PHONY : fs_msgs/CMakeFiles/geometry_msgs_generate_messages_cpp.dir/clean
 
 fs_msgs/CMakeFiles/geometry_msgs_generate_messages_cpp.dir/depend:
-	cd /home/user/fsds_ws/build && $(CMAKE_COMMAND) -E cmake_depends "Unix Makefiles" /home/user/fsds_ws/src /home/user/fsds_ws/src/fs_msgs /home/user/fsds_ws/build /home/user/fsds_ws/build/fs_msgs /home/user/fsds_ws/build/fs_msgs/CMakeFiles/geometry_msgs_generate_messages_cpp.dir/DependInfo.cmake --color=$(COLOR)
+	cd /home/user/FSDS/build && $(CMAKE_COMMAND) -E cmake_depends "Unix Makefiles" /home/user/FSDS/src /home/user/FSDS/src/fs_msgs /home/user/FSDS/build /home/user/FSDS/build/fs_msgs /home/user/FSDS/build/fs_msgs/CMakeFiles/geometry_msgs_generate_messages_cpp.dir/DependInfo.cmake --color=$(COLOR)
 .PHONY : fs_msgs/CMakeFiles/geometry_msgs_generate_messages_cpp.dir/depend
 

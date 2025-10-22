@@ -1,8 +1,8 @@
-# Install script for directory: /home/user/fsds_ws/src/formula_autonomous_system
+# Install script for directory: /home/user/FSDS/src/formula_autonomous_system
 
 # Set the install prefix
 if(NOT DEFINED CMAKE_INSTALL_PREFIX)
-  set(CMAKE_INSTALL_PREFIX "/home/user/fsds_ws/install")
+  set(CMAKE_INSTALL_PREFIX "/home/user/FSDS/install")
 endif()
 string(REGEX REPLACE "/$" "" CMAKE_INSTALL_PREFIX "${CMAKE_INSTALL_PREFIX}")
 
@@ -38,25 +38,25 @@ if(NOT DEFINED CMAKE_CROSSCOMPILING)
 endif()
 
 if("x${CMAKE_INSTALL_COMPONENT}x" STREQUAL "xUnspecifiedx" OR NOT CMAKE_INSTALL_COMPONENT)
-  file(INSTALL DESTINATION "${CMAKE_INSTALL_PREFIX}/lib/pkgconfig" TYPE FILE FILES "/home/user/fsds_ws/build/formula_autonomous_system/catkin_generated/installspace/formula_autonomous_system.pc")
+  file(INSTALL DESTINATION "${CMAKE_INSTALL_PREFIX}/lib/pkgconfig" TYPE FILE FILES "/home/user/FSDS/build/formula_autonomous_system/catkin_generated/installspace/formula_autonomous_system.pc")
 endif()
 
 if("x${CMAKE_INSTALL_COMPONENT}x" STREQUAL "xUnspecifiedx" OR NOT CMAKE_INSTALL_COMPONENT)
   file(INSTALL DESTINATION "${CMAKE_INSTALL_PREFIX}/share/formula_autonomous_system/cmake" TYPE FILE FILES
-    "/home/user/fsds_ws/build/formula_autonomous_system/catkin_generated/installspace/formula_autonomous_systemConfig.cmake"
-    "/home/user/fsds_ws/build/formula_autonomous_system/catkin_generated/installspace/formula_autonomous_systemConfig-version.cmake"
+    "/home/user/FSDS/build/formula_autonomous_system/catkin_generated/installspace/formula_autonomous_systemConfig.cmake"
+    "/home/user/FSDS/build/formula_autonomous_system/catkin_generated/installspace/formula_autonomous_systemConfig-version.cmake"
     )
 endif()
 
 if("x${CMAKE_INSTALL_COMPONENT}x" STREQUAL "xUnspecifiedx" OR NOT CMAKE_INSTALL_COMPONENT)
-  file(INSTALL DESTINATION "${CMAKE_INSTALL_PREFIX}/share/formula_autonomous_system" TYPE FILE FILES "/home/user/fsds_ws/src/formula_autonomous_system/package.xml")
+  file(INSTALL DESTINATION "${CMAKE_INSTALL_PREFIX}/share/formula_autonomous_system" TYPE FILE FILES "/home/user/FSDS/src/formula_autonomous_system/package.xml")
 endif()
 
 if("x${CMAKE_INSTALL_COMPONENT}x" STREQUAL "xUnspecifiedx" OR NOT CMAKE_INSTALL_COMPONENT)
-  file(INSTALL DESTINATION "${CMAKE_INSTALL_PREFIX}/lib/formula_autonomous_system" TYPE PROGRAM FILES "/home/user/fsds_ws/build/formula_autonomous_system/catkin_generated/installspace/formula_autonomous_system.py")
+  file(INSTALL DESTINATION "${CMAKE_INSTALL_PREFIX}/lib/formula_autonomous_system" TYPE PROGRAM FILES "/home/user/FSDS/build/formula_autonomous_system/catkin_generated/installspace/formula_autonomous_system.py")
 endif()
 
 if("x${CMAKE_INSTALL_COMPONENT}x" STREQUAL "xUnspecifiedx" OR NOT CMAKE_INSTALL_COMPONENT)
-  file(INSTALL DESTINATION "${CMAKE_INSTALL_PREFIX}/lib/formula_autonomous_system" TYPE PROGRAM FILES "/home/user/fsds_ws/build/formula_autonomous_system/catkin_generated/installspace/formula_autonomous_system_node.py")
+  file(INSTALL DESTINATION "${CMAKE_INSTALL_PREFIX}/lib/formula_autonomous_system" TYPE PROGRAM FILES "/home/user/FSDS/build/formula_autonomous_system/catkin_generated/installspace/formula_autonomous_system_node.py")
 endif()
 

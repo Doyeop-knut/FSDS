@@ -1,12 +1,12 @@
 file(REMOVE_RECURSE
-  "/home/user/fsds_ws/devel/share/roseus/ros/fs_msgs/manifest.l"
-  "/home/user/fsds_ws/devel/share/roseus/ros/fs_msgs/msg/Cone.l"
-  "/home/user/fsds_ws/devel/share/roseus/ros/fs_msgs/msg/ControlCommand.l"
-  "/home/user/fsds_ws/devel/share/roseus/ros/fs_msgs/msg/ExtraInfo.l"
-  "/home/user/fsds_ws/devel/share/roseus/ros/fs_msgs/msg/FinishedSignal.l"
-  "/home/user/fsds_ws/devel/share/roseus/ros/fs_msgs/msg/GoSignal.l"
-  "/home/user/fsds_ws/devel/share/roseus/ros/fs_msgs/msg/Track.l"
-  "/home/user/fsds_ws/devel/share/roseus/ros/fs_msgs/srv/Reset.l"
+  "/home/user/FSDS/devel/share/roseus/ros/fs_msgs/manifest.l"
+  "/home/user/FSDS/devel/share/roseus/ros/fs_msgs/msg/Cone.l"
+  "/home/user/FSDS/devel/share/roseus/ros/fs_msgs/msg/ControlCommand.l"
+  "/home/user/FSDS/devel/share/roseus/ros/fs_msgs/msg/ExtraInfo.l"
+  "/home/user/FSDS/devel/share/roseus/ros/fs_msgs/msg/FinishedSignal.l"
+  "/home/user/FSDS/devel/share/roseus/ros/fs_msgs/msg/GoSignal.l"
+  "/home/user/FSDS/devel/share/roseus/ros/fs_msgs/msg/Track.l"
+  "/home/user/FSDS/devel/share/roseus/ros/fs_msgs/srv/Reset.l"
   "CMakeFiles/fs_msgs_generate_messages_eus"
 )
 

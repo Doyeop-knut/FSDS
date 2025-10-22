@@ -43,10 +43,10 @@ RM = /usr/bin/cmake -E remove -f
 EQUALS = =
 
 # The top-level source directory on which CMake was run.
-CMAKE_SOURCE_DIR = /home/user/fsds_ws/src
+CMAKE_SOURCE_DIR = /home/user/FSDS/src
 
 # The top-level build directory on which CMake was run.
-CMAKE_BINARY_DIR = /home/user/fsds_ws/build
+CMAKE_BINARY_DIR = /home/user/FSDS/build
 
 # Utility rule file for fs_msgs_genlisp.
 
@@ -63,10 +63,10 @@ fs_msgs/CMakeFiles/fs_msgs_genlisp.dir/build: fs_msgs_genlisp
 .PHONY : fs_msgs/CMakeFiles/fs_msgs_genlisp.dir/build
 
 fs_msgs/CMakeFiles/fs_msgs_genlisp.dir/clean:
-	cd /home/user/fsds_ws/build/fs_msgs && $(CMAKE_COMMAND) -P CMakeFiles/fs_msgs_genlisp.dir/cmake_clean.cmake
+	cd /home/user/FSDS/build/fs_msgs && $(CMAKE_COMMAND) -P CMakeFiles/fs_msgs_genlisp.dir/cmake_clean.cmake
 .PHONY : fs_msgs/CMakeFiles/fs_msgs_genlisp.dir/clean
 
 fs_msgs/CMakeFiles/fs_msgs_genlisp.dir/depend:
-	cd /home/user/fsds_ws/build && $(CMAKE_COMMAND) -E cmake_depends "Unix Makefiles" /home/user/fsds_ws/src /home/user/fsds_ws/src/fs_msgs /home/user/fsds_ws/build /home/user/fsds_ws/build/fs_msgs /home/user/fsds_ws/build/fs_msgs/CMakeFiles/fs_msgs_genlisp.dir/DependInfo.cmake --color=$(COLOR)
+	cd /home/user/FSDS/build && $(CMAKE_COMMAND) -E cmake_depends "Unix Makefiles" /home/user/FSDS/src /home/user/FSDS/src/fs_msgs /home/user/FSDS/build /home/user/FSDS/build/fs_msgs /home/user/FSDS/build/fs_msgs/CMakeFiles/fs_msgs_genlisp.dir/DependInfo.cmake --color=$(COLOR)
 .PHONY : fs_msgs/CMakeFiles/fs_msgs_genlisp.dir/depend
 

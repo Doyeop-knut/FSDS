@@ -3,7 +3,7 @@
 # generated from catkin/cmake/template/script.py.in
 # creates a relay to a python script source file, acting as that file.
 # The purpose is that of a symlink
-python_script = '/home/user/fsds_ws/src/formula_autonomous_system/python/formula_autonomous_system_node.py'
+python_script = '/home/user/FSDS/src/formula_autonomous_system/python/formula_autonomous_system_node.py'
 with open(python_script, 'r') as fh:
     context = {
         '__builtins__': __builtins__,

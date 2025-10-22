@@ -67,14 +67,14 @@ set(fs_msgs_CONFIG_INCLUDED TRUE)
 
 # set variables for source/devel/install prefixes
 if("FALSE" STREQUAL "TRUE")
-  set(fs_msgs_SOURCE_PREFIX /home/user/fsds_ws/src/fs_msgs)
-  set(fs_msgs_DEVEL_PREFIX /home/user/fsds_ws/devel)
+  set(fs_msgs_SOURCE_PREFIX /home/user/FSDS/src/fs_msgs)
+  set(fs_msgs_DEVEL_PREFIX /home/user/FSDS/devel)
   set(fs_msgs_INSTALL_PREFIX "")
   set(fs_msgs_PREFIX ${fs_msgs_DEVEL_PREFIX})
 else()
   set(fs_msgs_SOURCE_PREFIX "")
   set(fs_msgs_DEVEL_PREFIX "")
-  set(fs_msgs_INSTALL_PREFIX /home/user/fsds_ws/install)
+  set(fs_msgs_INSTALL_PREFIX /home/user/FSDS/install)
   set(fs_msgs_PREFIX ${fs_msgs_INSTALL_PREFIX})
 endif()
 
@@ -156,7 +156,7 @@ foreach(library ${libraries})
     set(lib_path "")
     set(lib "${library}-NOTFOUND")
     # since the path where the library is found is returned we have to iterate over the paths manually
-    foreach(path /home/user/fsds_ws/install/lib;/home/user/fsds_ws/devel/lib;/opt/ros/noetic/lib)
+    foreach(path /home/user/FSDS/install/lib;/home/user/FSDS/devel/lib;/opt/ros/noetic/lib)
       find_library(lib ${library}
         PATHS ${path}
         NO_DEFAULT_PATH NO_CMAKE_FIND_ROOT_PATH)

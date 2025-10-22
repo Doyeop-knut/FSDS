@@ -43,10 +43,10 @@ RM = /usr/bin/cmake -E remove -f
 EQUALS = =
 
 # The top-level source directory on which CMake was run.
-CMAKE_SOURCE_DIR = /home/user/fsds_ws/src
+CMAKE_SOURCE_DIR = /home/user/FSDS/src
 
 # The top-level build directory on which CMake was run.
-CMAKE_BINARY_DIR = /home/user/fsds_ws/build
+CMAKE_BINARY_DIR = /home/user/FSDS/build
 
 # Utility rule file for dynamic_reconfigure_generate_messages_py.
 
@@ -63,10 +63,10 @@ formula_autonomous_system/CMakeFiles/dynamic_reconfigure_generate_messages_py.di
 .PHONY : formula_autonomous_system/CMakeFiles/dynamic_reconfigure_generate_messages_py.dir/build
 
 formula_autonomous_system/CMakeFiles/dynamic_reconfigure_generate_messages_py.dir/clean:
-	cd /home/user/fsds_ws/build/formula_autonomous_system && $(CMAKE_COMMAND) -P CMakeFiles/dynamic_reconfigure_generate_messages_py.dir/cmake_clean.cmake
+	cd /home/user/FSDS/build/formula_autonomous_system && $(CMAKE_COMMAND) -P CMakeFiles/dynamic_reconfigure_generate_messages_py.dir/cmake_clean.cmake
 .PHONY : formula_autonomous_system/CMakeFiles/dynamic_reconfigure_generate_messages_py.dir/clean
 
 formula_autonomous_system/CMakeFiles/dynamic_reconfigure_generate_messages_py.dir/depend:
-	cd /home/user/fsds_ws/build && $(CMAKE_COMMAND) -E cmake_depends "Unix Makefiles" /home/user/fsds_ws/src /home/user/fsds_ws/src/formula_autonomous_system /home/user/fsds_ws/build /home/user/fsds_ws/build/formula_autonomous_system /home/user/fsds_ws/build/formula_autonomous_system/CMakeFiles/dynamic_reconfigure_generate_messages_py.dir/DependInfo.cmake --color=$(COLOR)
+	cd /home/user/FSDS/build && $(CMAKE_COMMAND) -E cmake_depends "Unix Makefiles" /home/user/FSDS/src /home/user/FSDS/src/formula_autonomous_system /home/user/FSDS/build /home/user/FSDS/build/formula_autonomous_system /home/user/FSDS/build/formula_autonomous_system/CMakeFiles/dynamic_reconfigure_generate_messages_py.dir/DependInfo.cmake --color=$(COLOR)
 .PHONY : formula_autonomous_system/CMakeFiles/dynamic_reconfigure_generate_messages_py.dir/depend
 

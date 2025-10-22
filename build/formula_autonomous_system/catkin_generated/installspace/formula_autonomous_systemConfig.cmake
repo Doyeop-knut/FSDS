@@ -67,14 +67,14 @@ set(formula_autonomous_system_CONFIG_INCLUDED TRUE)
 
 # set variables for source/devel/install prefixes
 if("FALSE" STREQUAL "TRUE")
-  set(formula_autonomous_system_SOURCE_PREFIX /home/user/fsds_ws/src/formula_autonomous_system)
-  set(formula_autonomous_system_DEVEL_PREFIX /home/user/fsds_ws/devel)
+  set(formula_autonomous_system_SOURCE_PREFIX /home/user/FSDS/src/formula_autonomous_system)
+  set(formula_autonomous_system_DEVEL_PREFIX /home/user/FSDS/devel)
   set(formula_autonomous_system_INSTALL_PREFIX "")
   set(formula_autonomous_system_PREFIX ${formula_autonomous_system_DEVEL_PREFIX})
 else()
   set(formula_autonomous_system_SOURCE_PREFIX "")
   set(formula_autonomous_system_DEVEL_PREFIX "")
-  set(formula_autonomous_system_INSTALL_PREFIX /home/user/fsds_ws/install)
+  set(formula_autonomous_system_INSTALL_PREFIX /home/user/FSDS/install)
   set(formula_autonomous_system_PREFIX ${formula_autonomous_system_INSTALL_PREFIX})
 endif()
 
@@ -156,7 +156,7 @@ foreach(library ${libraries})
     set(lib_path "")
     set(lib "${library}-NOTFOUND")
     # since the path where the library is found is returned we have to iterate over the paths manually
-    foreach(path /home/user/fsds_ws/install/lib;/home/user/fsds_ws/devel/lib;/opt/ros/noetic/lib)
+    foreach(path /home/user/FSDS/install/lib;/home/user/FSDS/devel/lib;/opt/ros/noetic/lib)
       find_library(lib ${library}
         PATHS ${path}
         NO_DEFAULT_PATH NO_CMAKE_FIND_ROOT_PATH)

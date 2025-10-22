@@ -7,4 +7,7 @@
 # new environment variables
 
 # modified environment variables
-export PWD='/home/user/fsds_ws/build'
+export LD_LIBRARY_PATH='/opt/ros/noetic/lib:/usr/lib/mesa-diverted/x86_64-linux-gnu:/usr/lib/x86_64-linux-gnu/mesa:/usr/lib/x86_64-linux-gnu/dri:/usr/lib/x86_64-linux-gnu/gallium-pipe'
+export PKG_CONFIG_PATH='/opt/ros/noetic/lib/pkgconfig'
+export PWD='/home/user/FSDS/build'
+export PYTHONPATH='/opt/ros/noetic/lib/python3/dist-packages'

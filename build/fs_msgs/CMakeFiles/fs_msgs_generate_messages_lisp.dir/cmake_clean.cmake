@@ -1,11 +1,11 @@
 file(REMOVE_RECURSE
-  "/home/user/fsds_ws/devel/share/common-lisp/ros/fs_msgs/msg/Cone.lisp"
-  "/home/user/fsds_ws/devel/share/common-lisp/ros/fs_msgs/msg/ControlCommand.lisp"
-  "/home/user/fsds_ws/devel/share/common-lisp/ros/fs_msgs/msg/ExtraInfo.lisp"
-  "/home/user/fsds_ws/devel/share/common-lisp/ros/fs_msgs/msg/FinishedSignal.lisp"
-  "/home/user/fsds_ws/devel/share/common-lisp/ros/fs_msgs/msg/GoSignal.lisp"
-  "/home/user/fsds_ws/devel/share/common-lisp/ros/fs_msgs/msg/Track.lisp"
-  "/home/user/fsds_ws/devel/share/common-lisp/ros/fs_msgs/srv/Reset.lisp"
+  "/home/user/FSDS/devel/share/common-lisp/ros/fs_msgs/msg/Cone.lisp"
+  "/home/user/FSDS/devel/share/common-lisp/ros/fs_msgs/msg/ControlCommand.lisp"
+  "/home/user/FSDS/devel/share/common-lisp/ros/fs_msgs/msg/ExtraInfo.lisp"
+  "/home/user/FSDS/devel/share/common-lisp/ros/fs_msgs/msg/FinishedSignal.lisp"
+  "/home/user/FSDS/devel/share/common-lisp/ros/fs_msgs/msg/GoSignal.lisp"
+  "/home/user/FSDS/devel/share/common-lisp/ros/fs_msgs/msg/Track.lisp"
+  "/home/user/FSDS/devel/share/common-lisp/ros/fs_msgs/srv/Reset.lisp"
   "CMakeFiles/fs_msgs_generate_messages_lisp"
 )
 

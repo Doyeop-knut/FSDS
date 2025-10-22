@@ -169,6 +169,7 @@ struct Definition< ::fs_msgs::ControlCommand_<ContainerAllocator> >
 "float64 throttle # [-] range : (0, 1)\n"
 "float64 steering # [-] range : (-1, 1)\n"
 "float64 brake # # [-] range : (0, 1)\n"
+"\n"
 "================================================================================\n"
 "MSG: std_msgs/Header\n"
 "# Standard metadata for higher-level stamped data types.\n"

@@ -6,7 +6,7 @@
 
 #IncludeRegexTransform: 
 
-/home/user/fsds_ws/devel/include/fs_msgs/ControlCommand.h
+/home/user/FSDS/devel/include/fs_msgs/ControlCommand.h
 string
 -
 vector
@@ -24,7 +24,7 @@ ros/message_operations.h
 std_msgs/Header.h
 -
 
-/home/user/fsds_ws/devel/include/fs_msgs/FinishedSignal.h
+/home/user/FSDS/devel/include/fs_msgs/FinishedSignal.h
 string
 -
 vector
@@ -42,7 +42,7 @@ ros/message_operations.h
 std_msgs/Header.h
 -
 
-/home/user/fsds_ws/devel/include/fs_msgs/GoSignal.h
+/home/user/FSDS/devel/include/fs_msgs/GoSignal.h
 string
 -
 vector
@@ -60,7 +60,7 @@ ros/message_operations.h
 std_msgs/Header.h
 -
 
-/home/user/fsds_ws/src/formula_autonomous_system/cpp/include/formula_autonomous_system.hpp
+/home/user/FSDS/src/formula_autonomous_system/cpp/include/formula_autonomous_system.hpp
 string
 -
 vector
@@ -140,9 +140,77 @@ opencv2/imgproc.hpp
 cv_bridge/cv_bridge.h
 -
 
-/home/user/fsds_ws/src/formula_autonomous_system/cpp/src/formula_autonomous_system.cpp
+/home/user/FSDS/src/formula_autonomous_system/cpp/include/formula_autonomous_system_node.hpp
+string
+-
+vector
+-
+map
+-
+memory
+-
+mutex
+-
+thread
+-
+atomic
+-
+ros/ros.h
+-
+sensor_msgs/PointCloud2.h
+-
+sensor_msgs/Image.h
+-
+sensor_msgs/Imu.h
+-
+sensor_msgs/NavSatFix.h
+-
+std_msgs/Bool.h
+-
+std_msgs/String.h
+-
+geometry_msgs/PoseStamped.h
+-
+geometry_msgs/TwistStamped.h
+-
+geometry_msgs/AccelStamped.h
+-
+nav_msgs/Odometry.h
+-
+tf2_ros/transform_broadcaster.h
+-
+tf2_ros/static_transform_broadcaster.h
+-
+tf2/LinearMath/Quaternion.h
+-
+tf2_geometry_msgs/tf2_geometry_msgs.h
+-
+tf/transform_broadcaster.h
+-
+visualization_msgs/MarkerArray.h
+-
+fs_msgs/ControlCommand.h
+-
+fs_msgs/FinishedSignal.h
+-
+fs_msgs/GoSignal.h
+-
+pcl_conversions/pcl_conversions.h
+-
+pcl/point_cloud.h
+-
+pcl/point_types.h
+-
 formula_autonomous_system.hpp
-/home/user/fsds_ws/src/formula_autonomous_system/cpp/src/formula_autonomous_system.hpp
+-
+
+/home/user/FSDS/src/formula_autonomous_system/cpp/src/formula_autonomous_system.cpp
+formula_autonomous_system.hpp
+/home/user/FSDS/src/formula_autonomous_system/cpp/src/formula_autonomous_system.hpp
+
+/home/user/FSDS/src/formula_autonomous_system/cpp/src/formula_autonomous_system_node.cpp
+formula_autonomous_system_node.hpp
+/home/user/FSDS/src/formula_autonomous_system/cpp/src/formula_autonomous_system_node.hpp
 
 /opt/ros/noetic/include/cv_bridge/cv_bridge.h
 sensor_msgs/Image.h
