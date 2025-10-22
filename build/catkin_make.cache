@@ -1,0 +1,2 @@
+formula_autonomous_system:fs_msgs:tutorial
+-DCATKIN_DEVEL_PREFIX=/home/user/FSDS/devel -DCMAKE_INSTALL_PREFIX=/home/user/FSDS/install -G Unix Makefiles

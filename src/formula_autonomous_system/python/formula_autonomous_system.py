@@ -11190,6 +11190,7 @@ class PathPlanner:
         if not effective_blue_cones or not effective_yellow_cones:
 <<<<<<< HEAD
 <<<<<<< HEAD
+<<<<<<< HEAD
             return None, None, None, None, None
 >>>>>>> [control] 251020 @Doyeop-knut | MPC 제어기 파라미터 수정 -> 증속 후 파라미터 수정 필요
 =======
@@ -11198,6 +11199,9 @@ class PathPlanner:
 =======
             return None, None, None, None, None
 >>>>>>> [coneDetection] 251021 @Doyeop-knut | 롤백 및 iou 적용,  색상 확률값 연동
+=======
+            return None, None, None, None, None, True
+>>>>>>> [control] 251023 @Doyeop-knut | 롤백 및 파라미터 수정
 
         # Convert inputs to PyTorch tensors
         initial_state_tensor = torch.tensor(initial_state, dtype=torch.float32, device=self.device)
@@ -13162,11 +13166,16 @@ class Control:
 
         # --- Fallback Mode vs Normal Mode ---
         if is_fallback:
+<<<<<<< HEAD
             # In fallback mode, prioritize stability with safe weights and low speed
             weights = self.mpc_fallback_weights.copy()
             mpc_target_speed = self.pre_lc_min_speed # Use a predefined safe speed
             avg_curvature = torch.tensor(0.0, device=self.device) # No curvature in fallback
             rospy.logwarn_throttle(1.0, "Control: Fallback path detected. Using safe control mode.")
+=======
+            mpc_target_speed = (self.pre_lc_target_speed + self.pre_lc_min_speed)/2 # Set speed to 5.0 for fallback paths
+            weights = self.mpc_weights_pre_lc.copy() # Use pre-LC weights for fallback
+>>>>>>> [control] 251023 @Doyeop-knut | 롤백 및 파라미터 수정
         else:
             # --- Normal Operation ---
             if self.track_map.is_loop_closed:
