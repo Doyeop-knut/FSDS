@@ -195,20 +195,20 @@ control:
     mpc_speed_scaling_factor: 0.8 # Adjust this value to control the aggressiveness of speed-based weight scaling
     max_speed_for_scaling: 10.0 # Max speed for normalizing current speed (e.g., loop_closed_target_speed)
     pre_loop_closure:
-      w_cte: 25.0
-      w_etheta: 22.0
-      w_accel: 1.0
-      w_steer: 1.75
+      w_cte: 40.0
+      w_etheta: 30.0
+      w_accel: 1.1
+      w_steer: 1.45
       w_steer_rate: 10.0
-      w_accel_rate: 1.0
+      w_accel_rate: 5.0
       w_vel : 0.55
     post_loop_closure:
       # Aggressive tuning for high-speed tracking. Less aggressive than before to reduce oscillation.
-      w_cte: 60.0
-      w_etheta: 60.0
+      w_cte: 80.0
+      w_etheta: 65.0
       w_accel: 2.5
-      w_steer: 5.0
-      w_steer_rate: 10.0
+      w_steer: 4.0
+      w_steer_rate: 8.0
       w_accel_rate: 50.0
       w_vel : 0.55
 
@@ -218,9 +218,9 @@ control:
     pid_kd: 0.005
     max_throttle: 1.0
     pre_loop_closure:
-      target_speed: 7.0
-      min_speed: 5.0 # 코너 최소 속도
-      curvature_speed_factor: 20.0 # 곡률에 따른 감속 강도
+      target_speed: 8.0
+      min_speed: 6.0 # 코너 최소 속도
+      curvature_speed_factor: 25.0 # 곡률에 따른 감속 강도
       curvature_lookahead: 5 # 곡률 계산 시 참고할 포인트 거리
     post_loop_closure:
       target_speed: 10.0 # Target speed after loop closure

@@ -2750,9 +2750,10 @@ class Control:
         # At higher speeds, generally want tighter path following and smoother control inputs.
         # So, increase penalties for path deviation and control input changes.
         weights['w_accel'] *= speed_scaling_factor
-        # weights['w_steer'] *= speed_scaling_factor
+        weights['w_steer'] *= speed_scaling_factor
         weights['w_accel_rate'] *= speed_scaling_factor
         weights['w_steer_rate'] *= speed_scaling_factor
+        print(f"MPC Speed Scaling Factor: {speed_scaling_factor}, weights = {weights}")
 
         # Get reference path for the horizon
         path_points = np.array(path)
