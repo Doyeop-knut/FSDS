@@ -13199,6 +13199,7 @@ class Control:
             lookahead_curvatures = path_curvatures[:self.mpc_horizon]
             avg_curvature = torch.mean(torch.tensor(lookahead_curvatures, device=self.device)) if len(lookahead_curvatures) > 0 else torch.tensor(0.0, device=self.device)
             
+<<<<<<< HEAD
             base_target_speed = target_speed_params['target_speed']
             mpc_target_speed = base_target_speed / (1.0 + target_speed_params['curvature_speed_factor'] * torch.abs(avg_curvature))
             mpc_target_speed = torch.clamp(mpc_target_speed, target_speed_params['min_speed'], base_target_speed).item()
@@ -13208,6 +13209,36 @@ class Control:
         distances = torch.linalg.norm(path_points - veh_pos_tensor, dim=1)
         start_idx = torch.argmin(distances)
         ref_path = path_points[start_idx:start_idx + self.mpc_horizon + 2]
+=======
+            mpc_target_speed = target_speed_params['target_speed'] / (1.0 + target_speed_params['curvature_speed_factor'] * abs(avg_curvature))
+            mpc_target_speed = np.clip(mpc_target_speed, target_speed_params['min_speed'], target_speed_params['target_speed'])
+
+        # Apply speed-proportional scaling to MPC weights
+        # Normalize current speed by a maximum expected speed for scaling factor
+        normalized_speed = current_speed / self.max_speed_for_scaling
+        # Use a power function to make scaling more aggressive or less aggressive
+        speed_scaling_factor = (normalized_speed ** self.mpc_speed_scaling_factor) if self.mpc_speed_scaling_factor != 0 else 1.0
+        speed_scaling_factor = np.clip(speed_scaling_factor, 0.1, 2.0) # Clip to reasonable range
+
+        # Example: Increase path following weights with speed, decrease control input weights
+        weights['w_cte'] *= speed_scaling_factor
+        weights['w_etheta'] *= speed_scaling_factor
+        weights['w_vel'] *= speed_scaling_factor # Penalize velocity error more at higher speeds
+
+        # At higher speeds, generally want tighter path following and smoother control inputs.
+        # So, increase penalties for path deviation and control input changes.
+        weights['w_accel'] *= speed_scaling_factor
+        weights['w_steer'] *= speed_scaling_factor
+        weights['w_accel_rate'] *= speed_scaling_factor
+        weights['w_steer_rate'] *= speed_scaling_factor
+        print(f"MPC Speed Scaling Factor: {speed_scaling_factor}, weights = {weights}")
+
+        # Get reference path for the horizon
+        path_points = np.array(path)
+        distances = np.linalg.norm(path_points - np.array([veh_x, veh_y]), axis=1)
+        start_idx = np.argmin(distances)
+        ref_path = path_points[start_idx:start_idx + self.mpc_horizon + 2] # Need one extra point for heading calculation
+>>>>>>> [control] 251024 @Doyeop-knut | mpc 파라미터 수정
         if len(ref_path) < self.mpc_horizon + 2:
             last_point = ref_path[-1]
             padding = torch.stack([last_point] * (self.mpc_horizon + 2 - len(ref_path)))
