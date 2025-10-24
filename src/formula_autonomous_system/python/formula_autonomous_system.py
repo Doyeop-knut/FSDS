@@ -10,7 +10,6 @@
 @copyright Copyright (c) 2025
 """
 
-import threading
 import rospy
 import numpy as np
 import cv2
@@ -23,7 +22,6 @@ from collections import deque, namedtuple
 
 import tf2_ros
 from geometry_msgs.msg import TransformStamped, Point, PoseStamped
-from message_filters import Subscriber, ApproximateTimeSynchronizer
 
 # ROS
 from std_msgs.msg import String, ColorRGBA
@@ -65,32 +63,6 @@ class AutonomousEvent(Enum):
     SYSTEM_READY = 1
     GO_SIGNAL = 2
 # ==================== Main System ====================
-import time, rospy
-from std_msgs.msg import Float32
-
-class RateMeter:
-    def __init__(self, name, ema_alpha=0.2):
-        self.name = name
-        self.alpha = float(ema_alpha)
-        self._last_t = None
-        self.hz_ema = 0.0
-        self.hz_inst = 0.0
-        self._last_log_sec = -1
-
-    def tick(self):
-        now = time.perf_counter()
-        if self._last_t is not None:
-            dt = now - self._last_t
-            if dt > 0:
-                self.hz_inst = 1.0 / dt
-                self.hz_ema = (1.0 - self.alpha) * self.hz_ema + self.alpha * self.hz_inst
-        self._last_t = now
-
-    def log_throttle(self, interval_sec=1.0):
-        sec = int(time.time())
-        if sec != self._last_log_sec:
-            self._last_log_sec = sec
-            rospy.loginfo(f"[HZ] {self.name}: inst={self.hz_inst:5.1f} Hz, ema={self.hz_ema:5.1f} Hz")
 
 class FormulaAutonomousSystem:
     def __init__(self):
@@ -103,17 +75,21 @@ class FormulaAutonomousSystem:
         self.dbscan_eps = float()
         self.dbscan_points = 0
         self.prev_x, self.prev_y, self.prev_z = 0,0,0
-        self.bridge = CvBridge()
-
+        
         
         self.tf_broadcaster = tf2_ros.TransformBroadcaster()
+        self.bridge = CvBridge()
 
         self.enable_visualization = rospy.get_param("/system/visualization/enable_visualization", True)
         self.enable_logging = rospy.get_param("/system/logging/enable_logging", True)
+
+        rospack = rospkg.RosPack()
+        package_path = rospack.get_path('formula_autonomous_system')
+        
         if self.enable_logging:
             # ==================== 데이터 로거 추가 ====================
             self.data_logger = DataLogger(
-            log_directory="~/fsds_ws/src/tutorial/log",
+            log_directory=os.path.join(package_path,'log'),
             session_name=datetime.datetime.now().strftime("%Y%m%d_%H%M%S"),
             max_lidar_points=50,  # 필요시 이 값을 조절
             )
@@ -124,17 +100,10 @@ class FormulaAutonomousSystem:
         self.triangulation_publisher = rospy.Publisher("/delaunay_triangulation", Marker, queue_size=1)
         self.path_index_publisher = rospy.Publisher("/path_indices", MarkerArray, queue_size=1)
         self.midpoints_publisher = rospy.Publisher("/cone_midpoints", MarkerArray, queue_size=1)
-        self.control_publisher = rospy.Publisher("/fsds/control_command", ControlCommand, queue_size=1)
         self.last_path_index_count = 0
         self.last_midpoints_count = 0
         self.visualization_frame_counter = 0
         self.visualization_publish_interval = 5 # Publish visualization every 5 frames
-        self.frame_counter = 0
-
-        self._plan_tick  = 0
-        self._last_path  = None
-
-
         # System Components
         self.gps_util = GPSIMUProcessor()
         self.state_machine = StateMachine()
@@ -145,41 +114,15 @@ class FormulaAutonomousSystem:
         self.path_planner = PathPlanner()
         self.controller = Control(self.path_planner, self.track_map) # Control 클래스에 path_planner와 track_map 인스턴스 전달
 
-        self.rm_ctrl    = RateMeter("control")
-        self.rm_plan    = RateMeter("planner")
-        self.rm_map     = RateMeter("mapping")
-        self.rm_cam     = RateMeter("camera_inference")
-        self.rm_lidar   = RateMeter("lidar_proc")
-
-                # === CTRL: locks & timer (BEGIN) ===
-        self._snap_lock = threading.RLock()          # 최신 스냅
-        self._path_lock = threading.RLock()          # 최신 경로
-        self._snap = None
-        self._u_last = (0.0, 0.0, 0.0)
-
-        self.ctrl_hz = rospy.get_param("~ctrl_hz", 30.0)
-        self.ctrl_budget_ms = 1000.0 / max(1.0, self.ctrl_hz)   # 예: 33.3ms
-        self.perception_budget_ms = rospy.get_param("~perception_budget_ms",
-                                                    self.ctrl_budget_ms * 0.6)
-
-        # 고정 주기 제어 타이머
-        rospy.Timer(rospy.Duration.from_sec(1.0/self.ctrl_hz), self._ctrl_cb, oneshot=False)
-        # === CTRL: locks & timer (END) ===
-
         # rospkg를 사용하여 모델 경로 동적으로 찾기
-        rospack = rospkg.RosPack()
-        self.last_predictions = None
-        
-        package_path = rospack.get_path('formula_autonomous_system')
         self.model_path = os.path.join(package_path,'python', 'retina-cone.pt')
-        
         rospy.loginfo(f"Loading model from: {self.model_path}")
 
         self.model = torch.load(self.model_path, map_location=torch.device('cpu'))
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         torch.backends.cuda.matmul.allow_tf32 = True
         torch.backends.cudnn.allow_tf32 = True
         self.model.to(memory_format=torch.channels_last)
-        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.model.to(self.device)
         if self.device.type == 'cuda':
             self.model.half()
@@ -187,45 +130,12 @@ class FormulaAutonomousSystem:
         print(f"Model target device: {self.device}")
         self.model.eval()
         self.get_parameters()
+
         cam_mat = self.camera_util.cam_matrix()
         self.cam1_transform = self.camera_util.transform_matrix(-self.left_tx, -self.left_ty, -self.left_tz, self.left_rr, self.left_rp, self.left_ry)
         self.cam2_transform = self.camera_util.transform_matrix(-self.right_tx, -self.right_ty, -self.right_tz, self.right_rr, self.right_rp, self.right_ry)
-        self.rm_ctrl    = RateMeter("control")
-        self.rm_plan    = RateMeter("planner")
-        self.rm_map     = RateMeter("mapping")
-        self.rm_cam     = RateMeter("camera_inference")
-        self.rm_lidar   = RateMeter("lidar_proc")
-
-    def _ctrl_cb(self, _evt):
-        t0 = time.perf_counter()
-        snap = None
-        if self._snap_lock.acquire(blocking=False):     # ← 대기 금지
-            snap = self._snap
-            self._snap_lock.release()
-
-        # 스냅샷 없으면 안전 ZOH
-        if not snap or snap.get("path") is None or len(snap["path"]) == 0 \
-        or self.state_machine.current_state != AutonomousMode.AS_DRIVING:
-            th, st, br = self._u_last
-            cmd = ControlCommand(); cmd.throttle = 0.7*th; cmd.steering = 0.7*st; cmd.brake = max(0.5, 0.7*br)
-            self.control_publisher.publish(cmd)
-            self._u_last = (cmd.throttle, cmd.steering, cmd.brake)
-            self.rm_ctrl.tick(); self.rm_ctrl.log_throttle(1.0)
-            return
-
-        # MPC 계산 (워밍·블로킹·반복2 가정)
-        throttle, steer, brake = self.controller.compute_control(snap["state"], snap["path"], snap.get("is_fallback", False))
-        dt_ms = (time.perf_counter() - t0) * 1000.0
-        if dt_ms > self.ctrl_budget_ms:   # 예산 초과 → 감쇠
-            throttle = 0.7*self._u_last[0] + 0.3*throttle
-            steer    = 0.7*self._u_last[1] + 0.3*steer
-            brake    = max(0.5, 0.7*self._u_last[2] + 0.3*brake)
-
-        cmd = ControlCommand(); cmd.throttle = float(throttle); cmd.steering = float(steer); cmd.brake = float(brake)
-        self.control_publisher.publish(cmd)
-        self._u_last = (cmd.throttle, cmd.steering, cmd.brake)
-        self.rm_ctrl.tick(); self.rm_ctrl.log_throttle(1.0)
-
+        
+        
     def init(self):
         """Initialize the system"""
         self.is_initialized = True
@@ -233,9 +143,6 @@ class FormulaAutonomousSystem:
 
     def get_parameters(self):
         """Get parameters from ROS parameter server"""
-        self.infer_skip_n = rospy.get_param("/perception/inference/skip_n", 3)
-        self.plan_skip_n = rospy.get_param("~plan_skip_n", 2)   # 1=매프레임, 2=격프레임, 3=3프레임마다
-
         self.x_min, self.x_max = rospy.get_param("/perception/lidar_roi_extraction/x_min") , rospy.get_param("/perception/lidar_roi_extraction/x_max")
         self.y_min, self.y_max = rospy.get_param("/perception/lidar_roi_extraction/y_min") , rospy.get_param("/perception/lidar_roi_extraction/y_max")
         self.z_min, self.z_max = rospy.get_param("/perception/lidar_roi_extraction/z_min") , rospy.get_param("/perception/lidar_roi_extraction/z_max")
@@ -247,136 +154,76 @@ class FormulaAutonomousSystem:
         self.left_rr, self.left_rp, self.left_ry = rospy.get_param("/perception/camera_extrinsics/rotation_roll"), rospy.get_param("/perception/camera_extrinsics/rotation_pitch"), rospy.get_param("/perception/camera_extrinsics/rotation_yaw")
         self.right_tx, self.right_ty, self.right_tz = rospy.get_param("/perception/camera_right_extrinsics/translation_x"), rospy.get_param("/perception/camera_right_extrinsics/translation_y"),rospy.get_param("/perception/camera_right_extrinsics/translation_z")
         self.right_rr, self.right_rp, self.right_ry = rospy.get_param("/perception/camera_right_extrinsics/rotation_roll"), rospy.get_param("/perception/camera_right_extrinsics/rotation_pitch"), rospy.get_param("/perception/camera_right_extrinsics/rotation_yaw")
-        self.tc_dt_min       = rospy.get_param("~tc_dt_min", 0.01)         # 10 ms 미만이면 보정 생략
-        self.tc_yawrate_min  = rospy.get_param("~tc_yawrate_min_deg", 0.3) # 0.5 deg/s 미만이면 회전 생략
-        self.tc_yawrate_min  = np.deg2rad(self.tc_yawrate_min)
-        self.tc_speed_min    = rospy.get_param("~tc_speed_min", 0.1)       # 0.2 m/s 미만이면 병진 생략
-
         return True
-    
-    def _apply_time_compensation(self, points_xyz, dt, yaw_rate, speed):
-        """
-        points_xyz: (N,3) in {차량 혹은 센서 좌표계}
-        dt: [s], yaw_rate: [rad/s], speed: [m/s] (전진 속도, 간단 근사)
-        """
-        if points_xyz is None or len(points_xyz) == 0:
-            return points_xyz
 
-        # 임계치 기반 스킵
-        if dt < self.tc_dt_min:
-            return points_xyz
-
-        do_rot = abs(yaw_rate) >= self.tc_yawrate_min
-        do_trn = abs(speed)    >= self.tc_speed_min
-        if not do_rot and not do_trn:
-            return points_xyz
-
-        # 회전(요): z축 기준
-        if do_rot:
-            dpsi = yaw_rate * dt
-            c, s = np.cos(dpsi), np.sin(dpsi)
-            R = np.array([[c, -s, 0.0],
-                        [s,  c, 0.0],
-                        [0.0, 0.0, 1.0]], dtype=np.float32)
-            pts = (points_xyz @ R.T)
-        else:
-            pts = points_xyz
-
-        # 병진(전진): 간단히 x축 방향 speed*dt 만큼 평행이동 (차량 좌표 기준)
-        if do_trn:
-            t = np.array([speed*dt, 0.0, 0.0], dtype=np.float32)
-            pts = pts + t
-
-        return pts
-    
     def run(self, lidar_msg, camera1_msg, camera2_msg, imu_msg, gps_msg, go_signal_msg):
-        run_start_time = time.time()
-        """Run the autonomous system (Pythonic version)
-        
-        Returns:
-            tuple: (success, control_command, autonomous_mode)
-                - success (bool): 처리 성공 여부
-                - control_command (ControlCommand): 제어 명령
-                - autonomous_mode (String): 자율주행 모드 상태
-        """
-        
-        if not self.is_initialized:
-            rospy.logwarn_throttle(1.0, "FormulaAutonomousSystem: Not initialized")
-            return False
-        self.frame_counter += 1
+        try:
+            """Run the autonomous system (Pythonic version)
+            
+            Returns:
+                tuple: (success, control_command, autonomous_mode)
+                    - success (bool): 처리 성공 여부
+                    - control_command (ControlCommand): 제어 명령
+                    - autonomous_mode (String): 자율주행 모드 상태
+            """
+            if not self.is_initialized:
+                rospy.logwarn_throttle(1.0, "FormulaAutonomousSystem: Not initialized")
+                return False
 
-        autonomous_mode = String()
-        autonomous_mode.data = "AS_OFF"
-        self.state_machine.inject_system_init()
+            autonomous_mode = String()
+            autonomous_mode.data = "AS_OFF"
+            self.state_machine.inject_system_init()
 
-        sensor_start_time = time.time()
-        acc, gyro, orientation = self.get_imu_data(imu_msg)
-        imu_data = [acc[0], acc[1], gyro[2]]
-        roll,pitch,yaw = self.gps_util.Quat_to_Euler(orientation)
-        lat, lon, alt = self.get_gps_data(gps_msg)
-        gps_data = self.gps_util.gps_to_local(lat, lon)
-        self.gps_util.updateIMU(imu_data, yaw, imu_msg.header.stamp.to_sec())
-        self.gps_util.updateGPS(gps_data,gps_msg.header.stamp.to_sec())
-        vehicle_state = self.gps_util.state
+            acc, gyro, orientation = self.get_imu_data(imu_msg)
+            imu_data = [acc[0], acc[1], gyro[2]]
+            roll,pitch,yaw = self.gps_util.Quat_to_Euler(orientation)
+            lat, lon, alt = self.get_gps_data(gps_msg)
+            gps_data = self.gps_util.gps_to_local(lat, lon)
+            self.gps_util.updateIMU(imu_data, yaw, imu_msg.header.stamp.to_sec())
+            self.gps_util.updateGPS(gps_data,gps_msg.header.stamp.to_sec())
+            vehicle_state = self.gps_util.state
 
-        # vehicle_state 계산 직후
-        path_snapshot = None; is_fallback = False
-        if self._path_lock.acquire(blocking=False):
-            path_snapshot = self._last_path
-            is_fallback = getattr(self, "_last_path_is_fallback", False)
-            self._path_lock.release()
+            # ==================== TF Publisher ====================
+            t = TransformStamped()
+            t.header.stamp = rospy.Time.now()
+            t.header.frame_id = "map"
+            t.child_frame_id = "odom"
+            t.transform.translation.x = vehicle_state[0]
+            t.transform.translation.y = vehicle_state[1]
+            t.transform.translation.z = 0.0
 
-        snap = {"state": vehicle_state, "path": path_snapshot, "is_fallback": is_fallback, "t": rospy.Time.now()}
-        if self._snap_lock.acquire(blocking=False):
-            self._snap = snap
-            self._snap_lock.release()
+            # Convert yaw to quaternion
+            veh_yaw = vehicle_state[2]
+            q_z = math.sin(veh_yaw / 2.0)
+            q_w = math.cos(veh_yaw / 2.0)
 
-        # ==================== TF Publisher ====================
-        t = TransformStamped()
-        t.header.stamp = rospy.Time.now()
-        t.header.frame_id = "map"
-        t.child_frame_id = "odom"
-        t.transform.translation.x = vehicle_state[0]
-        t.transform.translation.y = vehicle_state[1]
-        t.transform.translation.z = 0.0
+            t.transform.rotation.x = 0.0
+            t.transform.rotation.y = 0.0
+            t.transform.rotation.z = q_z
+            t.transform.rotation.w = q_w
+            
+            self.tf_broadcaster.sendTransform(t)
+            # =====================================================
 
-        # Convert yaw to quaternion
-        veh_yaw = vehicle_state[2]
-        q_z = math.sin(veh_yaw / 2.0)
-        q_w = math.cos(veh_yaw / 2.0)
-
-        t.transform.rotation.x = 0.0
-        t.transform.rotation.y = 0.0
-        t.transform.rotation.z = q_z
-        t.transform.rotation.w = q_w
-        
-        self.tf_broadcaster.sendTransform(t)
-        # =====================================================
-
-        rospy.loginfo_throttle(1.0,f"v = {round(math.sqrt(vehicle_state[3]**2 + vehicle_state[4]**2),4)} m/s")
-        # lidar_start_time = time.time()
-        ## LiDAR Processed
-        points=self.get_lidar_point_cloud(lidar_msg)
-        filtered = self.lidar_util.filtering_points(points, (self.x_min, self.x_max), (self.y_min, self.y_max), (self.z_min, self.z_max))
-        removal =  self.lidar_util.ransac_plane_removal(filtered, threshold=self.ransac_distance, max_trials=self.ransac_iter)
-        cluster = self.lidar_util.cluster_points(removal, eps=self.dbscan_eps, min_samples=self.dbscan_points)
-        # lidar_duration = time.time() - lidar_start_time
-        # rospy.loginfo(f"lidar_freq = {1/(lidar_duration):.4f} Hzlidar_duration = {lidar_duration:.4f} sec")
-        ## Camera Processed
-        image1 = self.get_camera_image(camera1_msg)
-        image2 = self.get_camera_image(camera2_msg)
-        image1 = self.camera_util.preprocessImage(image1)
-        image2 = self.camera_util.preprocessImage(image2)
-        do_infer = (self.frame_counter % self.infer_skip_n == 0)
-        if do_infer:
+            rospy.loginfo_throttle(1.0,f"v = {round(math.sqrt(vehicle_state[3]**2 + vehicle_state[4]**2),4)} m/s")
+            ## LiDAR Processed
+            points=self.get_lidar_point_cloud(lidar_msg)
+            filtered = self.lidar_util.filtering_points(points, (self.x_min, self.x_max), (self.y_min, self.y_max), (self.z_min, self.z_max))
+            removal =  self.lidar_util.ransac_plane_removal(filtered, threshold=self.ransac_distance, max_trials=self.ransac_iter)
+            cluster = self.lidar_util.cluster_points(removal, eps=self.dbscan_eps, min_samples=self.dbscan_points)
+           
+            image1 = self.get_camera_image(camera1_msg)
+            image2 = self.get_camera_image(camera2_msg)
+            image1 = self.camera_util.preprocessImage(image1)
+            image2 = self.camera_util.preprocessImage(image2)
+            
             # Process image1
             img1_bgr = np.ascontiguousarray(image1)  # ★ 보장
-            img2_bgr = np.ascontiguousarray(image2)
-
             img1_rgb = cv2.cvtColor(img1_bgr, cv2.COLOR_BGR2RGB)
             img1_tensor = torch.from_numpy(img1_rgb).permute(2,0,1).float().div_(255.0).pin_memory()
 
             # Process image2
+            img2_bgr = np.ascontiguousarray(image2)
             img2_rgb = cv2.cvtColor(img2_bgr, cv2.COLOR_BGR2RGB)
             img2_tensor = torch.from_numpy(img2_rgb).permute(2,0,1).float().div_(255.0).pin_memory()
 
@@ -387,258 +234,247 @@ class FormulaAutonomousSystem:
             if self.device.type == 'cuda' and next(self.model.parameters()).is_cuda and next(self.model.parameters()).dtype == torch.float16:
                 batched_input = [img.half() for img in batched_input]
 
-            # Get predictions from the model
             with torch.inference_mode():
-                with torch.cuda.amp.autocast(enabled=(self.device.type == 'cuda')):
-                    raw_predictions = self.model(batched_input)  # Returns List[List[Dict]] for batched input
-            self.rm_cam.tick()
-            self.rm_cam.log_throttle(1.0)
+                    with torch.cuda.amp.autocast(enabled=(self.device.type == 'cuda')):
+                        raw_predictions = self.model(batched_input) 
+            # with torch.no_grad():
+            #     raw_predictions = self.model(batched_input)  # Returns List[List[Dict]] for batched input
+
             raw_predictions1 = [raw_predictions[0]] # Extract predictions for image1
             raw_predictions2 = [raw_predictions[1]] # Extract predictions for image2
-            self.last_predictions = (raw_predictions1, raw_predictions2)
-        else:
-            raw_predictions1, raw_predictions2 = self.last_predictions if self.last_predictions is not None else (None, None)
 
-        # 후속 처리 시, None 여부 체크
-        if raw_predictions1 is not None:
             rendered_img1, left_bbox, left_conf = self.camera_util._process_and_draw_detections(image1, raw_predictions1)
-        else:
-            rendered_img1, left_bbox, left_conf = image1, np.empty((0,4),dtype=np.float32), []
-
-        if raw_predictions2 is not None:
             rendered_img2, right_bbox, right_conf = self.camera_util._process_and_draw_detections(image2, raw_predictions2)
-        else:
-            rendered_img2, right_bbox, right_conf = image2, np.empty((0,4),dtype=np.float32), []
-        
-        if cluster.size > 0:
-            try:
-                vx = vehicle_state[3] # Longitudinal velocity
-                vy = vehicle_state[4] # Lateral velocity
-                yaw_rate = vehicle_state[5] # Yaw rate
-                compensated_cluster = cluster.copy()
-
-                # 치환/감싸기
-                dt_cam_lidar = camera1_msg.header.stamp.to_sec() - lidar_msg.header.stamp.to_sec()
-                yaw_rate = float(yaw_rate) if hasattr(self.gps_util, "yaw_rate") else 0.0
-                speed    = float(math.sqrt(vx**2+vy**2))     if hasattr(self.gps_util, "speed")    else 0.0
-                compensated_cluster = self._apply_time_compensation(
-                    points_xyz=cluster,   # (N,3)
-                    dt=dt_cam_lidar,
-                    yaw_rate=yaw_rate,
-                    speed=speed
-                    )
-
-            except Exception as e:
-                rospy.logwarn_throttle(1.0, f"Could not perform time compensation: {e}")
-                compensated_cluster = cluster
-        else:
-            compensated_cluster = cluster
-
-        # print(color)
-        cam1_pts = self.camera_util.projectToCam(compensated_cluster, self.cam1_transform)
-        cam2_pts = self.camera_util.projectToCam(compensated_cluster, self.cam2_transform)
-
-        if cluster.size > 0:
-            # Transform cluster points to map frame
-            veh_x = self.gps_util.state[0]
-            veh_y = self.gps_util.state[1]
-            veh_yaw = self.gps_util.state[2]  # Assumes radians
-
-            cos_yaw = math.cos(veh_yaw)
-            sin_yaw = math.sin(veh_yaw)
-            rot_matrix = np.array([[cos_yaw, -sin_yaw],
-                                   [sin_yaw,  cos_yaw]])
-            # Prepare a list to store cones with color information
-            cones_with_color = []
-            left, right = [], []
-
-            # Create dictionaries to map LiDAR cluster indices to bounding box indices
-            lidar_to_bbox_map1 = {i: [] for i in range(len(compensated_cluster))}
-            lidar_to_bbox_map2 = {i: [] for i in range(len(compensated_cluster))}
-
-            # Convert projected points to numpy arrays for vectorized operations
-            cam1_pts_np = np.array(cam1_pts) if cam1_pts else np.empty((0, 2))
-            cam2_pts_np = np.array(cam2_pts) if cam2_pts else np.empty((0, 2))
-
-            if left_bbox is not None and len(left_bbox) > 0 and len(cam1_pts_np) > 0:
-                # Expand dimensions for broadcasting: cam1_pts_np (N, 2), left_bbox (M, 4)
-                # Check if point_u >= x1, point_u <= x2, point_v >= y1, point_v <= y2
-                # Resulting masks will be (N, M)
-                u_in_x_range = (cam1_pts_np[:, 0][:, None] >= left_bbox[:, 0]) & \
-                               (cam1_pts_np[:, 0][:, None] <= left_bbox[:, 2])
-                v_in_y_range = (cam1_pts_np[:, 1][:, None] >= left_bbox[:, 1]) & \
-                               (cam1_pts_np[:, 1][:, None] <= left_bbox[:, 3])
-                
-                # Combined mask (N, M) where True means point i is in bbox j
-                point_in_bbox_mask = u_in_x_range & v_in_y_range
-
-                # Populate lidar_to_bbox_map1
-                for i in range(len(compensated_cluster)):
-                    # Find which bounding boxes contain the i-th projected LiDAR point
-                    matching_bboxes_indices = np.where(point_in_bbox_mask[i])[0]
-                    if len(matching_bboxes_indices) > 0:
-                        lidar_to_bbox_map1[i].extend(matching_bboxes_indices.tolist())
-
-            if right_bbox is not None and len(right_bbox) > 0 and len(cam2_pts_np) > 0:
-                u_in_x_range = (cam2_pts_np[:, 0][:, None] >= right_bbox[:, 0]) & \
-                               (cam2_pts_np[:, 0][:, None] <= right_bbox[:, 2])
-                v_in_y_range = (cam2_pts_np[:, 1][:, None] >= right_bbox[:, 1]) & \
-                               (cam2_pts_np[:, 1][:, None] <= right_bbox[:, 3])
-                
-                point_in_bbox_mask = u_in_x_range & v_in_y_range
-
-                for i in range(len(compensated_cluster)):
-                    matching_bboxes_indices = np.where(point_in_bbox_mask[i])[0]
-                    if len(matching_bboxes_indices) > 0:
-                        lidar_to_bbox_map2[i].extend(matching_bboxes_indices.tolist())
-
-            # Iterate through each 3D cluster point and determine its color
-            for i, cone_3d_veh_frame in enumerate(compensated_cluster):
-                detected_color = "unknown"
-                # Algorithm 1: Bbox-based detection
-                color_from_bbox = "unknown"
-                if i in lidar_to_bbox_map1 and lidar_to_bbox_map1[i]:
-                    bbox_index = lidar_to_bbox_map1[i][0]
-                    bbox = left_bbox[bbox_index]
-                    color_from_bbox = self.camera_util.detect_color_from_bbox(image1, bbox, debug_image=rendered_img1)
-
-                if color_from_bbox == "unknown" and i in lidar_to_bbox_map2 and lidar_to_bbox_map2[i]:
-                    bbox_index = lidar_to_bbox_map2[i][0]
-                    bbox = right_bbox[bbox_index]
-                    color_from_bbox = self.camera_util.detect_color_from_bbox(image2, bbox, debug_image=rendered_img2)
-
-                # Algorithm 2: Point-based detection
-                color_from_point = "unknown"
-                if i < len(cam1_pts):
-                    color_from_point = self.camera_util.detectConeColor(cam1_pts[i], image1, debug_image=rendered_img1)
-                
-                if color_from_point == "unknown" and i < len(cam2_pts):
-                    color_from_point = self.camera_util.detectConeColor(cam2_pts[i], image2, debug_image=rendered_img2)
-
-                # Combine results: If either algorithm finds a color, use it.
-                # Priority is given to bbox-based detection in case of conflict.
-                if color_from_bbox != "unknown":
-                    detected_color = color_from_bbox
-                elif color_from_point != "unknown":
-                    detected_color = color_from_point
-                else:
-                    detected_color = "unknown"
-                
-                # --- Color ID assignment ---
-                color_id = 0  # Default to unknown
-                if detected_color == "blue":
-                    color_id = 1
-                elif detected_color == "yellow":
-                    color_id = 2
-                elif detected_color == "orange":
-                    color_id = 3
-                
-                # Transform 3D cone from vehicle frame to map frame
-                cone_3d_map_frame_xy = np.dot(cone_3d_veh_frame[:2], rot_matrix.T) + np.array([veh_x, veh_y])
-                cone_3d_map_frame_z = cone_3d_veh_frame[2]
-                
-                cones_with_color.append([cone_3d_map_frame_xy[0], cone_3d_map_frame_xy[1], cone_3d_map_frame_z, color_id])
-                if color_id == 1:
-                    left.append([cone_3d_map_frame_xy[0], cone_3d_map_frame_xy[1]])
-                elif color_id == 2:
-                    right.append([cone_3d_map_frame_xy[0], cone_3d_map_frame_xy[1]])
             
-            global_clusters = np.array(cones_with_color)
-        else:
-            global_clusters = np.empty((0, 4)) # Ensure global_clusters is always a 2D array with 4 columns
-        self.rm_lidar.tick()
-        self.rm_lidar.log_throttle(1.0)
-        # ==================== Map & Path ===================
-        # Update map with new cone observations
-        self.track_map.update(global_clusters, vehicle_state)
-        self.rm_map.tick()
-        self.rm_map.log_throttle(1.0)
-        # print(f"closed loop  = {self.track_map.is_loop_closed}")
+            if cluster.size > 0:
+                try:
+                    dt_cam_lidar = camera1_msg.header.stamp.to_sec() - lidar_msg.header.stamp.to_sec()
+                    vx = vehicle_state[3] # Longitudinal velocity
+                    vy = vehicle_state[4] # Lateral velocity
+                    yaw_rate = vehicle_state[5] # Yaw rate
 
-        # Plan path using the map
-        self._plan_tick += 1
-        do_plan = (self._plan_tick % self.plan_skip_n == 0)
-        if do_plan:
-            path = self.path_planner.plan_path(self.midpoint_map.get_all_midpoints(), vehicle_state)
-            self._last_path = path
-            self.rm_plan.tick()
-            self.rm_plan.log_throttle(1.0)
-        else:
-            path = self._last_path
+                    # Calculate translational compensation
+                    compensation_x = vx * dt_cam_lidar
+                    compensation_y = vy * dt_cam_lidar
 
-        path, tri, tri_points, tri_colors, midpoints, is_fallback = self.path_planner.plan_path(self.track_map.get_cones(), vehicle_state)
-        # Visualize Map and Path
-        self.publish_map_cones()
-        self.publish_triangulation(tri, tri_points, tri_colors)
-        self.publish_midpoints(midpoints)
-        if path is not None:
-            self.publish_path(path)
+                    compensated_cluster = cluster.copy()
 
-        # =====================================================
-        # Draw LiDAR points on the images that already have bounding boxes
-        img1 = self.camera_util.visualization(cam1_pts, rendered_img1)
-        img2 = self.camera_util.visualization(cam2_pts, rendered_img2)
+                    # Apply translational compensation
+                    compensated_cluster[:, 0] += compensation_x
+                    compensated_cluster[:, 1] += compensation_y
 
-        if self.enable_visualization and (self.visualization_frame_counter % self.visualization_publish_interval == 0):
-            cv2.imshow("image1", img1)
-            cv2.imshow("image2", img2)
-            cv2.waitKey(1)
-        self.lidar_util.publish_point_cloud(cluster)        
+                    # Apply rotational compensation (rotate points around vehicle's current position)
+                    if abs(yaw_rate) > 1e-6: # Only rotate if there's significant yaw rate
+                        angle_compensation = yaw_rate * dt_cam_lidar
+                        cos_angle = math.cos(angle_compensation)
+                        sin_angle = math.sin(angle_compensation)
 
-        ## GO_SIGNAL
-        if go_signal_msg.mission != "None" and go_signal_msg.mission != "":
-            self.state_machine.inject_go_signal(go_signal_msg.mission, go_signal_msg.track)
-        autonomous_mode.data = self.state_machine.get_current_state_string()
+                        # Rotate points around the origin (vehicle's current position is assumed to be origin for this rotation)
+                        rotated_x = compensated_cluster[:, 0] * cos_angle - compensated_cluster[:, 1] * sin_angle
+                        rotated_y = compensated_cluster[:, 0] * sin_angle + compensated_cluster[:, 1] * cos_angle
+                        compensated_cluster[:, 0] = rotated_x
+                        compensated_cluster[:, 1] = rotated_y
 
-        # filtered_points = LiDARProcessor().filtering_points(np.array([[x,y,z]]), (1.0, 20.0), (-10.0, 10.0), (-0.5, 0.5))
-        # print("Filtered Points:", filtered_points)
-        ## GPS velocity
-        # Control
-        control_command_msg = ControlCommand()
-        if self.state_machine.current_state == AutonomousMode.AS_DRIVING and path is not None and len(path) > 0:
-            # Call the selected controller to compute commands
-            throttle, steer, brake = self.controller.compute_control(vehicle_state, path, is_fallback)
-            control_command_msg.throttle = throttle
-            control_command_msg.steering = steer
-            control_command_msg.brake = brake
+                except Exception as e:
+                    rospy.logwarn_throttle(1.0, f"Could not perform time compensation: {e}")
+                    compensated_cluster = cluster
+            else:
+                compensated_cluster = cluster
 
-            self.rm_ctrl.tick()
-            self.rm_ctrl.log_throttle(1.0)
-        else:
-            # If not driving or no path, apply brakes and zero throttle/steering
-            control_command_msg.throttle = 0.0
-            control_command_msg.steering = 0.0
-            control_command_msg.brake = 0.5
-        # print(go_signal_msg)
+            # print(color)
+            cam1_pts = self.camera_util.projectToCam(compensated_cluster, self.cam1_transform)
+            cam2_pts = self.camera_util.projectToCam(compensated_cluster, self.cam2_transform)
+
+            if cluster.size > 0:
+                # Transform cluster points to map frame
+                veh_x = self.gps_util.state[0]
+                veh_y = self.gps_util.state[1]
+                veh_yaw = self.gps_util.state[2]  # Assumes radians
+
+                cos_yaw = math.cos(veh_yaw)
+                sin_yaw = math.sin(veh_yaw)
+                rot_matrix = np.array([[cos_yaw, -sin_yaw],
+                                       [sin_yaw,  cos_yaw]])
+                # Prepare a list to store cones with color information
+                cones_with_color = []
+                left, right = [], []
+
+                # Create dictionaries to map LiDAR cluster indices to bounding box indices
+                lidar_to_bbox_map1 = {i: [] for i in range(len(compensated_cluster))}
+                lidar_to_bbox_map2 = {i: [] for i in range(len(compensated_cluster))}
+
+                # Convert projected points to numpy arrays for vectorized operations
+                cam1_pts_np = np.array(cam1_pts) if cam1_pts else np.empty((0, 2))
+                cam2_pts_np = np.array(cam2_pts) if cam2_pts else np.empty((0, 2))
+
+                if left_bbox is not None and len(left_bbox) > 0 and len(cam1_pts_np) > 0:
+                    # Expand dimensions for broadcasting: cam1_pts_np (N, 2), left_bbox (M, 4)
+                    # Check if point_u >= x1, point_u <= x2, point_v >= y1, point_v <= y2
+                    # Resulting masks will be (N, M)
+                    u_in_x_range = (cam1_pts_np[:, 0][:, None] >= left_bbox[:, 0]) & \
+                                   (cam1_pts_np[:, 0][:, None] <= left_bbox[:, 2])
+                    v_in_y_range = (cam1_pts_np[:, 1][:, None] >= left_bbox[:, 1]) & \
+                                   (cam1_pts_np[:, 1][:, None] <= left_bbox[:, 3])
+                    
+                    # Combined mask (N, M) where True means point i is in bbox j
+                    point_in_bbox_mask = u_in_x_range & v_in_y_range
+
+                    # Populate lidar_to_bbox_map1
+                    for i in range(len(compensated_cluster)):
+                        # Find which bounding boxes contain the i-th projected LiDAR point
+                        matching_bboxes_indices = np.where(point_in_bbox_mask[i])[0]
+                        if len(matching_bboxes_indices) > 0:
+                            lidar_to_bbox_map1[i].extend(matching_bboxes_indices.tolist())
+
+                if right_bbox is not None and len(right_bbox) > 0 and len(cam2_pts_np) > 0:
+                    u_in_x_range = (cam2_pts_np[:, 0][:, None] >= right_bbox[:, 0]) & \
+                                   (cam2_pts_np[:, 0][:, None] <= right_bbox[:, 2])
+                    v_in_y_range = (cam2_pts_np[:, 1][:, None] >= right_bbox[:, 1]) & \
+                                   (cam2_pts_np[:, 1][:, None] <= right_bbox[:, 3])
+                    
+                    point_in_bbox_mask = u_in_x_range & v_in_y_range
+
+                    for i in range(len(compensated_cluster)):
+                        matching_bboxes_indices = np.where(point_in_bbox_mask[i])[0]
+                        if len(matching_bboxes_indices) > 0:
+                            lidar_to_bbox_map2[i].extend(matching_bboxes_indices.tolist())
+
+                # Iterate through each 3D cluster point and determine its color
+                for i, cone_3d_veh_frame in enumerate(compensated_cluster):
+                    detected_color = "unknown"
+                    # Algorithm 1: Bbox-based detection
+                    color_from_bbox = "unknown"
+                    if i in lidar_to_bbox_map1 and lidar_to_bbox_map1[i]:
+                        bbox_index = lidar_to_bbox_map1[i][0]
+                        bbox = left_bbox[bbox_index]
+                        color_from_bbox = self.camera_util.detect_color_from_bbox(image1, bbox, debug_image=rendered_img1)
+
+                    if color_from_bbox == "unknown" and i in lidar_to_bbox_map2 and lidar_to_bbox_map2[i]:
+                        bbox_index = lidar_to_bbox_map2[i][0]
+                        bbox = right_bbox[bbox_index]
+                        color_from_bbox = self.camera_util.detect_color_from_bbox(image2, bbox, debug_image=rendered_img2)
+
+                    # Algorithm 2: Point-based detection
+                    color_from_point = "unknown"
+                    if i < len(cam1_pts):
+                        color_from_point = self.camera_util.detectConeColor(cam1_pts[i], image1, debug_image=rendered_img1)
+                    
+                    if color_from_point == "unknown" and i < len(cam2_pts):
+                        color_from_point = self.camera_util.detectConeColor(cam2_pts[i], image2, debug_image=rendered_img2)
+
+                    # Combine results: If either algorithm finds a color, use it.
+                    # Priority is given to bbox-based detection in case of conflict.
+                    if color_from_bbox != "unknown":
+                        detected_color = color_from_bbox
+                    elif color_from_point != "unknown":
+                        detected_color = color_from_point
+                    else:
+                        detected_color = "unknown"
+                    
+                    # --- Color ID assignment ---
+                    color_id = 0  # Default to unknown
+                    if detected_color == "blue":
+                        color_id = 1
+                    elif detected_color == "yellow":
+                        color_id = 2
+                    elif detected_color == "orange":
+                        color_id = 3
+                    
+                    # Transform 3D cone from vehicle frame to map frame
+                    cone_3d_map_frame_xy = np.dot(cone_3d_veh_frame[:2], rot_matrix.T) + np.array([veh_x, veh_y])
+                    cone_3d_map_frame_z = cone_3d_veh_frame[2]
+                    
+                    cones_with_color.append([cone_3d_map_frame_xy[0], cone_3d_map_frame_xy[1], cone_3d_map_frame_z, color_id])
+                    if color_id == 1:
+                        left.append([cone_3d_map_frame_xy[0], cone_3d_map_frame_xy[1]])
+                    elif color_id == 2:
+                        right.append([cone_3d_map_frame_xy[0], cone_3d_map_frame_xy[1]])
+                
+                global_clusters = np.array(cones_with_color)
+            else:
+                global_clusters = np.empty((0, 4)) # Ensure global_clusters is always a 2D array with 4 columns
+
+            # ==================== Map & Path ===================
+            # Update map with new cone observations
+            self.track_map.update(global_clusters, vehicle_state)
+            # print(f"closed loop  = {self.track_map.is_loop_closed}")
+
+            # Plan path using the map
+            path, tri, tri_points, tri_colors, midpoints, is_fallback = self.path_planner.plan_path(self.track_map.get_cones(), vehicle_state)
+            
+            # Visualize Map and Path
+            self.publish_map_cones()
+            self.publish_triangulation(tri, tri_points, tri_colors)
+            self.publish_midpoints(midpoints)
+            if path is not None:
+                self.publish_path(path)
+
+            # =====================================================
+            # Draw LiDAR points on the images that already have bounding boxes
+            img1 = self.camera_util.visualization(cam1_pts, rendered_img1)
+            img2 = self.camera_util.visualization(cam2_pts, rendered_img2)
+
+            if self.enable_visualization:
+                cv2.imshow("image1", img1)
+                cv2.imshow("image2", img2)
+                cv2.waitKey(1)
+            self.lidar_util.publish_point_cloud(cluster)        
+
+            ## GO_SIGNAL
+            if go_signal_msg.mission != "None" and go_signal_msg.mission != "":
+                self.state_machine.inject_go_signal(go_signal_msg.mission, go_signal_msg.track)
+            autonomous_mode.data = self.state_machine.get_current_state_string()
+
+            # filtered_points = LiDARProcessor().filtering_points(np.array([[x,y,z]]), (1.0, 20.0), (-10.0, 10.0), (-0.5, 0.5))
+            # print("Filtered Points:", filtered_points)
+            ## GPS velocity
+            # Control
+            control_command_msg = ControlCommand()
+            if self.state_machine.current_state == AutonomousMode.AS_DRIVING and path is not None and len(path) > 0:
+                # Call the selected controller to compute commands
+                throttle, steer, brake = self.controller.compute_control(vehicle_state, path, is_fallback)
+                control_command_msg.throttle = throttle
+                control_command_msg.steering = steer
+                control_command_msg.brake = brake
+            else:
+                # If not driving or no path, apply brakes and zero throttle/steering
+                control_command_msg.throttle = 0.0
+                control_command_msg.steering = 0.0
+                control_command_msg.brake = 0.5
+            # print(go_signal_msg)
 
 
-        if self.enable_logging:
-            # ==================== Data Logger (Test) ====================
-            self.data_logger.log_entry(
-                autonomous_mode=autonomous_mode.data,
-                control_command=control_command_msg,
-                imu_acc=acc,
-                imu_gyro=gyro,
-                state= vehicle_state,
-                camera1_image=img1,
-                camera2_image=img2,
-                lidar_points=global_clusters,
-                map_cones=self.track_map.get_cones()
-            )
-        # # =========================================================
-        
-        # plt.axis([-50,50,-20,200])
-        # if len(cluster) == 0:
-        #     pass
-        
-        # plt.scatter(x=cluster[:,0] + offset[0] ,y=cluster[:,1]+ offset[1])
-        # plt.pause(0.001)
-        
-        # plt.clf()
-        # # print(go_signal_msg.mission, go_signal_msg.track)
-        self.visualization_frame_counter += 1
+            if self.enable_logging:
+                # ==================== Data Logger (Test) ====================
+                self.data_logger.log_entry(
+                    autonomous_mode=autonomous_mode.data,
+                    control_command=control_command_msg,
+                    imu_acc=acc,
+                    imu_gyro=gyro,
+                    state= vehicle_state,
+                    camera1_image=img1,
+                    camera2_image=img2,
+                    lidar_points=global_clusters,
+                    map_cones=self.track_map.get_cones()
+                )
+            # # =========================================================
+            
+            # plt.axis([-50,50,-20,200])
+            # if len(cluster) == 0:
+            #     pass
+            
+            # plt.scatter(x=cluster[:,0] + offset[0] ,y=cluster[:,1]+ offset[1])
+            # plt.pause(0.001)
+            
+            # plt.clf()
+            # # print(go_signal_msg.mission, go_signal_msg.track)
+            self.visualization_frame_counter += 1
 
-        return True, control_command_msg, autonomous_mode
+            return True, control_command_msg, autonomous_mode
+        except Exception as e:
+            import traceback
+            rospy.logerr(f"Error in main loop: {e}")
+            rospy.logerr(traceback.format_exc())
 
     def publish_map_cones(self):
         if not self.enable_visualization:
@@ -746,9 +582,19 @@ class FormulaAutonomousSystem:
         if len(marker_array.markers) > 0:
             self.path_index_publisher.publish(marker_array)
 
-        # Publish markers for indices
-        marker_array = MarkerArray()
-        header = path_msg.header
+
+        # Add delete markers for old markers that are no longer present
+        for i in range(len(path), self.last_path_index_count):
+            marker = Marker()
+            marker.header = header
+            marker.ns = "path_indices"
+            marker.id = i
+            marker.action = Marker.DELETE
+            marker_array.markers.append(marker)
+
+        self.last_path_index_count = len(path)
+        if len(marker_array.markers) > 0:
+            self.path_index_publisher.publish(marker_array)
 
     def publish_midpoints(self, midpoints):
         if not self.enable_visualization:
@@ -947,7 +793,6 @@ class CameraProcessor:
         self.min_bbox_area = rospy.get_param("/perception/camera_cone_detection/min_bbox_area", 100)
         self.visualize_lidar_on_camera = rospy.get_param("/perception/camera_cone_detection/visualize_lidar_on_camera", False)
 
-
     def cam_matrix(self):
         camera_matrix = [
             [self.fx, 0, self.px],
@@ -1060,6 +905,7 @@ class CameraProcessor:
         mask_orange = cv2.inRange(hsv_roi, self.hsv_orange_min, self.hsv_orange_max)
 
         masks = {"yellow": mask_yellow, "blue": mask_blue, "orange": mask_orange}
+
         for color, mask in masks.items():
             pixel_count = cv2.countNonZero(mask)
             if pixel_count > 0:
@@ -1262,6 +1108,7 @@ class LiDARProcessor:
             (points[:,2] >= z_range[0]) & (points[:,2] <= z_range[1])
         )
         return points[mask]
+    
     def ransac_plane_removal(self, points: np.ndarray, threshold: float = 0.05, max_trials: int = 100) -> np.ndarray:
         """Remove ground plane using RANSAC"""
         if points is None or len(points) < 10: # RANSAC을 위해 최소 포인트 수 확보
@@ -1288,14 +1135,15 @@ class LiDARProcessor:
 
     def cluster_points(self, points: np.ndarray, eps: float = 0.5, min_samples: int = 5) -> np.ndarray:
         """Cluster points using DBSCAN"""
-        if points is None or len(points) == 0:
-            return np.array([])
         base_eps = self.dbscan_eps
         base_min = self.dbscan_points
         n = points.shape[0]
         scale = 0.8 if n < 2000 else (1.0 if n < 8000 else 1.2)
         eps = (eps or base_eps) * scale
         min_samples = int((min_samples or base_min) * scale)
+        if points is None or len(points) == 0:
+            return np.array([])
+        
         db = DBSCAN(eps=eps, min_samples=min_samples).fit(points)
         labels = db.labels_
         unique_labels = set(labels)
@@ -2587,7 +2435,7 @@ class Control:
         # --- Get all parameters for all controllers ---
         # Vehicle
         self.wheelbase = rospy.get_param("/vehicle/wheelbase", 1.54)
-        self.max_steer = rospy.get_param("/vehicle/max_steer_angle", math.radians(40)) # radians
+        self.max_steer = math.radians(rospy.get_param("/vehicle/max_steer_angle", 40.0)) # radians
         self.max_accel = rospy.get_param("/vehicle/max_accel", 0.5) # m/s^2
         self.min_accel = rospy.get_param("/vehicle/min_accel", -0.5) # m/s^2 (braking)
 
@@ -2620,8 +2468,6 @@ class Control:
         # Stanley
         self.k_crosstrack = rospy.get_param("/control/stanley/k_gain", 0.7)
         # MPC
-        self.mpc_horizon = rospy.get_param("/control/MPC/horizon", 3)
-        self.mpc_dt = rospy.get_param("/control/MPC/dt", 0.1)
         self.mpc_weights_pre_lc = rospy.get_param("/control/MPC/pre_loop_closure")
         self.mpc_weights_post_lc = rospy.get_param("/control/MPC/post_loop_closure")
         self.mpc_speed_scaling_factor = rospy.get_param("/control/MPC/mpc_speed_scaling_factor", 1.0) # New parameter
@@ -2791,39 +2637,38 @@ class Control:
 
         # Normalize steering angle to [-1, 1]
         normalized_steer = steer / self.max_steer
-
         return throttle, normalized_steer, brake
 
     def _cost_function(self, u, *args):
-        initial_state, ref_path, target_speed, weights = args
+        initial_state, ref_path, target_speed, weights, horizon, dt = args
         
         # Unpack control inputs
         accels = u[0::2]
         steers = u[1::2]
 
         # Predict states over the horizon
-        predicted_states = np.zeros((self.mpc_horizon + 1, 4))
+        predicted_states = np.zeros((horizon + 1, 4))
         predicted_states[0] = initial_state
-        for i in range(self.mpc_horizon):
+        for i in range(horizon):
             # Kinematic Bicycle Model
             x, y, yaw, v = predicted_states[i]
             a = accels[i]
             delta = steers[i]
             # Update state
-            x += v * math.cos(yaw) * self.mpc_dt
-            y += v * math.sin(yaw) * self.mpc_dt
-            yaw += v / self.wheelbase * math.tan(delta) * self.mpc_dt
-            v += a * self.mpc_dt
+            x += v * math.cos(yaw) * dt
+            y += v * math.sin(yaw) * dt
+            yaw += v / self.wheelbase * math.tan(delta) * dt
+            v += a * dt
             predicted_states[i+1] = [x, y, yaw, v]
         # Calculate cost
         cost = 0.0
         closest_idx = 0
-        search_window = 5  # Search in a window of 5 points
+        search_window = 5  
+        
 
         # Find closest reference path points for each predicted state
-        for i in range(1, self.mpc_horizon + 1):
+        for i in range(1, horizon + 1):
             pred_x, pred_y, pred_yaw, pred_v = predicted_states[i]
-            
             # Find closest point on reference path in a search window
             start_idx = max(0, closest_idx - search_window)
             end_idx = min(len(ref_path), closest_idx + search_window)
@@ -2832,11 +2677,14 @@ class Control:
             distances = np.linalg.norm(search_space - np.array([pred_x, pred_y]), axis=1)
             closest_local_idx = np.argmin(distances)
             closest_idx = start_idx + closest_local_idx
+            # Find closest point on reference path
+            # distances = np.linalg.norm(ref_path - np.array([pred_x, pred_y]), axis=1)
+            # closest_idx = np.argmin(distances)
             
             # Cross-track error
             ref_p1 = ref_path[closest_idx]
             ref_p2 = ref_path[closest_idx + 1] if closest_idx < len(ref_path) - 1 else ref_p1
-            
+
             vec_path = ref_p2 - ref_p1
             vec_path_normalized = vec_path / (np.linalg.norm(vec_path) + 1e-6)
             vec_to_pred = np.array([pred_x, pred_y]) - ref_p1
@@ -2895,6 +2743,9 @@ class Control:
             mpc_target_speed = target_speed_params['target_speed'] / (1.0 + target_speed_params['curvature_speed_factor'] * abs(avg_curvature))
             mpc_target_speed = np.clip(mpc_target_speed, target_speed_params['min_speed'], target_speed_params['target_speed'])
 
+        horizon = weights.get('horizon', 10) # default to 10 if not found
+        dt = weights.get('dt', 0.1) # default to 0.1 if not found
+
         # Apply speed-proportional scaling to MPC weights
         # Normalize current speed by a maximum expected speed for scaling factor
         normalized_speed = current_speed / self.max_speed_for_scaling
@@ -2902,37 +2753,39 @@ class Control:
         speed_scaling_factor = (normalized_speed ** self.mpc_speed_scaling_factor) if self.mpc_speed_scaling_factor != 0 else 1.0
         speed_scaling_factor = np.clip(speed_scaling_factor, 0.1, 2.0) # Clip to reasonable range
 
-        # At higher speeds, we want tighter path following and smoother control inputs.
-        # Increase path deviation penalties and control rate penalties.
-        # Decrease control input penalties to allow for more aggressive corrections.
-        weights['w_cte'] *= (1 + speed_scaling_factor)
-        weights['w_etheta'] *= (1 + speed_scaling_factor)
-        weights['w_accel_rate'] *= (1 + speed_scaling_factor)
-        weights['w_steer_rate'] *= (1 + speed_scaling_factor)
+        # Example: Increase path following weights with speed, decrease control input weights
+        weights['w_cte'] *= speed_scaling_factor
+        weights['w_etheta'] *= speed_scaling_factor
+        weights['w_vel'] *= speed_scaling_factor # Penalize velocity error more at higher speeds
 
-        # Decrease penalties on raw control inputs to allow for stronger actions
-        weights['w_accel'] /= (1 + speed_scaling_factor)
-        weights['w_steer'] /= (1 + speed_scaling_factor)
-        
-        # print(f"MPC Speed Scaling Factor: {speed_scaling_factor}, weights = {weights}")
+        # At higher speeds, generally want tighter path following and smoother control inputs.
+        # So, increase penalties for path deviation and control input changes.
+        weights['w_accel'] *= speed_scaling_factor
+        weights['w_steer'] /= speed_scaling_factor
+        weights['w_accel_rate'] *= speed_scaling_factor
+        weights['w_steer_rate'] *= speed_scaling_factor
 
         # Get reference path for the horizon
-        path_points = np.array(path,dtype = np.float32)
+        path_points = np.array(path, dtype=np.float32)
         distances = np.linalg.norm(path_points - np.array([veh_x, veh_y]), axis=1)
         start_idx = np.argmin(distances)
-        ref_path = path_points[start_idx:start_idx + self.mpc_horizon + 2] # Need one extra point for heading calculation
-        if len(ref_path) < self.mpc_horizon + 2:
+        ref_path = path_points[start_idx:start_idx + horizon + 2] # Need one extra point for heading calculation
+        if len(ref_path) < horizon + 2:
             # Pad the reference path if it's too short
             last_point = ref_path[-1]
-            padding = np.array([last_point] * (self.mpc_horizon + 2 - len(ref_path)))
+            padding = np.array([last_point] * (horizon + 2 - len(ref_path)))
             ref_path = np.vstack([ref_path, padding])
 
-        # Initial guess for control inputs (zeros)
-        u0 = np.zeros(2 * self.mpc_horizon)
+        # Initial guess for control inputs (warm start)
+        if not hasattr(self, "_u_prev") or self._u_prev.shape[0] != 2 * horizon:
+            self._u_prev = np.zeros(2 * horizon)
+        
+        u0 = np.roll(self._u_prev, -2)
+        u0[-2:] = u0[-4:-2]
 
         # Bounds for control inputs
         bounds = []
-        for _ in range(self.mpc_horizon):
+        for _ in range(horizon):
             bounds.append((self.min_accel, self.max_accel))
             bounds.append((-self.max_steer, self.max_steer))
 
@@ -2940,11 +2793,12 @@ class Control:
         solution = minimize(
             self._cost_function,
             u0,
-            args=(initial_state, ref_path, mpc_target_speed, weights),
+            args=(initial_state, ref_path, mpc_target_speed, weights, horizon, dt),
             method='SLSQP',
             bounds=bounds,
-            options={'maxiter' : 2,'ftol' : 1e-5,'disp' :False}
+            options={'maxiter': 2, 'ftol': 1e-3, 'disp': False}
         )
+        self._u_prev = solution.x.copy()
 
         # Get the first optimal control input
         optimal_accel = solution.x[0]
