@@ -22,6 +22,7 @@ from collections import deque, namedtuple
 
 import tf2_ros
 from geometry_msgs.msg import TransformStamped, Point, PoseStamped
+from message_filters import Subscriber, ApproximateTimeSynchronizer
 
 # ROS
 from std_msgs.msg import String, ColorRGBA
@@ -45,6 +46,7 @@ from scipy.optimize import minimize
 # Camera
 import torch
 import torchvision
+torch.backends.cudnn.benchmark = True
 
 # Data Logger
 import os
@@ -74,7 +76,8 @@ class FormulaAutonomousSystem:
         self.dbscan_eps = float()
         self.dbscan_points = 0
         self.prev_x, self.prev_y, self.prev_z = 0,0,0
-        
+        self.bridge = CvBridge()
+
         
         self.tf_broadcaster = tf2_ros.TransformBroadcaster()
 
@@ -98,7 +101,7 @@ class FormulaAutonomousSystem:
         self.last_midpoints_count = 0
         self.visualization_frame_counter = 0
         self.visualization_publish_interval = 5 # Publish visualization every 5 frames
-
+        self.frame_counter = 0
         # System Components
         self.gps_util = GPSIMUProcessor()
         self.state_machine = StateMachine()
@@ -111,6 +114,8 @@ class FormulaAutonomousSystem:
 
         # rospkg를 사용하여 모델 경로 동적으로 찾기
         rospack = rospkg.RosPack()
+
+        
         package_path = rospack.get_path('formula_autonomous_system')
         self.model_path = os.path.join(package_path,'python', 'retina-cone.pt')
         rospy.loginfo(f"Loading model from: {self.model_path}")
@@ -124,6 +129,10 @@ class FormulaAutonomousSystem:
         print(f"Model target device: {self.device}")
         self.model.eval()
         self.get_parameters()
+        cam_mat = self.camera_util.cam_matrix()
+        self.cam1_transform = self.camera_util.transform_matrix(-self.left_tx, -self.left_ty, -self.left_tz, self.left_rr, self.left_rp, self.left_ry)
+        self.cam2_transform = self.camera_util.transform_matrix(-self.right_tx, -self.right_ty, -self.right_tz, self.right_rr, self.right_rp, self.right_ry)
+      
         
     def init(self):
         """Initialize the system"""
@@ -154,6 +163,7 @@ class FormulaAutonomousSystem:
                 - control_command (ControlCommand): 제어 명령
                 - autonomous_mode (String): 자율주행 모드 상태
         """
+        
         if not self.is_initialized:
             rospy.logwarn_throttle(1.0, "FormulaAutonomousSystem: Not initialized")
             return False
@@ -202,22 +212,22 @@ class FormulaAutonomousSystem:
        
         image1 = self.get_camera_image(camera1_msg)
         image2 = self.get_camera_image(camera2_msg)
-        cam_mat = self.camera_util.cam_matrix()
-        cam1_transform = self.camera_util.transform_matrix(-self.left_tx, -self.left_ty, -self.left_tz, self.left_rr, self.left_rp, self.left_ry)
-        cam2_transform = self.camera_util.transform_matrix(-self.right_tx, -self.right_ty, -self.right_tz, self.right_rr, self.right_rp, self.right_ry)
         image1 = self.camera_util.preprocessImage(image1)
         image2 = self.camera_util.preprocessImage(image2)
         
         # Process image1
-        img1_rgb = cv2.cvtColor(image1, cv2.COLOR_BGR2RGB)
-        img1_tensor = torch.from_numpy(img1_rgb).permute(2, 0, 1).float() / 255.0
+        img1_bgr = np.ascontiguousarray(image1)  # ★ 보장
+        img2_bgr = np.ascontiguousarray(image2)
 
+        img1_rgb = cv2.cvtColor(image1, cv2.COLOR_BGR2RGB)
+        img1_tensor = torch.from_numpy(img1_rgb).permute(2,0,1).float().div_(255.0).pin_memory()
+        
         # Process image2
         img2_rgb = cv2.cvtColor(image2, cv2.COLOR_BGR2RGB)
-        img2_tensor = torch.from_numpy(img2_rgb).permute(2, 0, 1).float() / 255.0
+        img2_tensor = torch.from_numpy(img2_rgb).permute(2,0,1).float().div_(255.0).pin_memory()
 
         # Combine into a batch for inference
-        batched_input = [img1_tensor.to(self.device), img2_tensor.to(self.device)]
+        batched_input = [img1_tensor.to(self.device, non_blocking=True), img2_tensor.to(self.device, non_blocking=True)]
         
         # If the model is in FP16, convert input tensors to FP16 as well
         if self.device.type == 'cuda' and next(self.model.parameters()).is_cuda and next(self.model.parameters()).dtype == torch.float16:
@@ -269,8 +279,8 @@ class FormulaAutonomousSystem:
             compensated_cluster = cluster
 
         # print(color)
-        cam1_pts = self.camera_util.projectToCam(compensated_cluster, cam1_transform)
-        cam2_pts = self.camera_util.projectToCam(compensated_cluster, cam2_transform)
+        cam1_pts = self.camera_util.projectToCam(compensated_cluster, self.cam1_transform)
+        cam2_pts = self.camera_util.projectToCam(compensated_cluster, self.cam2_transform)
 
         if cluster.size > 0:
             # Transform cluster points to map frame
@@ -568,39 +578,6 @@ class FormulaAutonomousSystem:
         # Publish markers for indices
         marker_array = MarkerArray()
         header = path_msg.header
-        
-        # Add text markers for each path point
-        for i, point in enumerate(path):
-            marker = Marker()
-            marker.header = header
-            marker.ns = "path_indices"
-            marker.id = i
-            marker.type = Marker.TEXT_VIEW_FACING
-            marker.action = Marker.ADD
-            marker.pose.position.x = point[0]
-            marker.pose.position.y = point[1]
-            marker.pose.position.z = 0.5  # Offset text above the path
-            marker.pose.orientation.w = 1.0
-            marker.scale.z = 0.5  # Text size
-            marker.color.a = 1.0
-            marker.color.r = 1.0
-            marker.color.g = 1.0
-            marker.color.b = 0.0
-            marker.text = str(i)
-            marker_array.markers.append(marker)
-
-        # Add delete markers for old markers that are no longer present
-        for i in range(len(path), self.last_path_index_count):
-            marker = Marker()
-            marker.header = header
-            marker.ns = "path_indices"
-            marker.id = i
-            marker.action = Marker.DELETE
-            marker_array.markers.append(marker)
-
-        self.last_path_index_count = len(path)
-        if len(marker_array.markers) > 0:
-            self.path_index_publisher.publish(marker_array)
 
     def publish_midpoints(self, midpoints):
         if not self.enable_visualization:
@@ -750,8 +727,7 @@ class FormulaAutonomousSystem:
     def get_camera_image(self, msg):
         """Convert ROS Image message to OpenCV Mat"""
         try:
-            bridge = CvBridge()
-            cv_image = bridge.imgmsg_to_cv2(msg, "bgr8")
+            cv_image = self.bridge.imgmsg_to_cv2(msg, "bgr8")
             return cv_image
         except Exception as e:
             rospy.logerr(f"cv_bridge exception: {e}")
@@ -799,6 +775,7 @@ class CameraProcessor:
 
         self.min_bbox_area = rospy.get_param("/perception/camera_cone_detection/min_bbox_area", 100)
         self.visualize_lidar_on_camera = rospy.get_param("/perception/camera_cone_detection/visualize_lidar_on_camera", False)
+
 
     def cam_matrix(self):
         camera_matrix = [
@@ -912,9 +889,6 @@ class CameraProcessor:
         mask_orange = cv2.inRange(hsv_roi, self.hsv_orange_min, self.hsv_orange_max)
 
         masks = {"yellow": mask_yellow, "blue": mask_blue, "orange": mask_orange}
-
-        cv2.imshow("MASKS",mask_yellow)
-
         for color, mask in masks.items():
             pixel_count = cv2.countNonZero(mask)
             if pixel_count > 0:
@@ -1105,15 +1079,18 @@ class LiDARProcessor:
         ]
         return veh_to_LiDAR
 
-    def filtering_points(self, points: np.ndarray, x_range: Tuple[float, float], y_range: Tuple[float, float], z_range: Tuple[float, float]) -> np.ndarray:
-        """Filter points within specified ranges"""
+    def filtering_points(self, points, x_range, y_range, z_range):
+        if points.size == 0: return points
+        n = points.shape[0]
+        if n > 80000: points = points[::8]
+        elif n > 40000: points = points[::6]
+        elif n > 20000: points = points[::4]  # 기존 유지
         mask = (
-            (points[:, 0] >= x_range[0]) & (points[:, 0] <= x_range[1]) &
-            (points[:, 1] >= y_range[0]) & (points[:, 1] <= y_range[1]) &
-            (points[:, 2] >= z_range[0]) & (points[:, 2] <= z_range[1])
+            (points[:,0] >= x_range[0]) & (points[:,0] <= x_range[1]) &
+            (points[:,1] >= y_range[0]) & (points[:,1] <= y_range[1]) &
+            (points[:,2] >= z_range[0]) & (points[:,2] <= z_range[1])
         )
         return points[mask]
-    
     def ransac_plane_removal(self, points: np.ndarray, threshold: float = 0.05, max_trials: int = 100) -> np.ndarray:
         """Remove ground plane using RANSAC"""
         if points is None or len(points) < 10: # RANSAC을 위해 최소 포인트 수 확보
@@ -1142,7 +1119,12 @@ class LiDARProcessor:
         """Cluster points using DBSCAN"""
         if points is None or len(points) == 0:
             return np.array([])
-        
+        base_eps = self.dbscan_eps
+        base_min = self.dbscan_points
+        n = points.shape[0]
+        scale = 0.8 if n < 2000 else (1.0 if n < 8000 else 1.2)
+        eps = (eps or base_eps) * scale
+        min_samples = int((min_samples or base_min) * scale)
         db = DBSCAN(eps=eps, min_samples=min_samples).fit(points)
         labels = db.labels_
         unique_labels = set(labels)
@@ -2756,7 +2738,7 @@ class Control:
         print(f"MPC Speed Scaling Factor: {speed_scaling_factor}, weights = {weights}")
 
         # Get reference path for the horizon
-        path_points = np.array(path)
+        path_points = np.array(path,dtype = np.float32)
         distances = np.linalg.norm(path_points - np.array([veh_x, veh_y]), axis=1)
         start_idx = np.argmin(distances)
         ref_path = path_points[start_idx:start_idx + self.mpc_horizon + 2] # Need one extra point for heading calculation
@@ -2781,7 +2763,8 @@ class Control:
             u0,
             args=(initial_state, ref_path, mpc_target_speed, weights),
             method='SLSQP',
-            bounds=bounds
+            bounds=bounds,
+            options={'maxiter' : 2,'ftol' : 1e-5,'disp' :False}
         )
 
         # Get the first optimal control input
