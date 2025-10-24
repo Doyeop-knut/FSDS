@@ -18,6 +18,7 @@ system:
   logging:
 <<<<<<< HEAD
 <<<<<<< HEAD
+<<<<<<< HEAD
     enable_logging: false # Enable or disable data logging
 >>>>>>> [control] 251020 @Doyeop-knut | MPC 제어기 파라미터 수정 -> 증속 후 파라미터 수정 필요
 =======
@@ -32,6 +33,9 @@ system:
   logging:
     enable_logging: true # Enable or disable data logging
 >>>>>>> [control] 251022 @Doyeop-knut | pytorch 기반  mpc 제어기 추가
+=======
+    enable_logging: true # Enable or disable data logging
+>>>>>>> [control] 251024 @Doyeop-knut | 코드 최적화
 
 perception:
   # ===========================================
@@ -530,6 +534,7 @@ control:
   MPC:
 <<<<<<< HEAD
 <<<<<<< HEAD
+<<<<<<< HEAD
     horizon: 10
     dt: 0.01
 <<<<<<< HEAD
@@ -624,9 +629,26 @@ control:
       w_accel_rate: 1.0
 >>>>>>> [control] 251024 @Doyeop-knut | 최적화 중
       w_vel : 0.55
+=======
+    mpc_speed_scaling_factor: 0.8 # Adjust this value to control the aggressiveness of speed-based weight scaling
+    max_speed_for_scaling: 10.0 # Max speed for normalizing current speed (e.g., loop_closed_target_speed)
+    pre_loop_closure:
+      horizon: 5
+      dt: 0.01
+      w_cte: 30.0
+      w_etheta: 50.0
+      w_accel: 0.5
+      w_steer: 1.6
+      w_steer_rate: 5.0
+      w_accel_rate: 0.5
+      w_vel : 1.0
+>>>>>>> [control] 251024 @Doyeop-knut | 코드 최적화
     post_loop_closure:
       # Aggressive tuning for high-speed tracking. Less aggressive than before to reduce oscillation.
+      horizon: 10
+      dt: 0.05
       w_cte: 60.0
+<<<<<<< HEAD
       w_etheta: 60.0
       w_accel: 2.5
 <<<<<<< HEAD
@@ -638,6 +660,13 @@ control:
       w_steer_rate: 10.0
 >>>>>>> [control] 251024 @Doyeop-knut | 최적화 중
       w_accel_rate: 50.0
+=======
+      w_etheta: 40.0
+      w_accel: 12.5
+      w_steer: 15.0
+      w_steer_rate: 15.0
+      w_accel_rate: 5.0
+>>>>>>> [control] 251024 @Doyeop-knut | 코드 최적화
       w_vel : 0.55
 >>>>>>> [control] 251023 @Doyeop-knut | 롤백 및 파라미터 수정
 
@@ -664,6 +693,7 @@ control:
 <<<<<<< HEAD
 <<<<<<< HEAD
 <<<<<<< HEAD
+<<<<<<< HEAD
       target_speed: 10.0
       min_speed: 6.0 # 코너 최소 속도
       curvature_speed_factor: 15.0 # 곡률에 따른 감속 강도
@@ -679,6 +709,9 @@ control:
 >>>>>>> [control] 251024 @Doyeop-knut | mpc 파라미터 수정
 =======
       target_speed: 7.0
+=======
+      target_speed: 10.0
+>>>>>>> [control] 251024 @Doyeop-knut | 코드 최적화
       min_speed: 5.0 # 코너 최소 속도
       curvature_speed_factor: 20.0 # 곡률에 따른 감속 강도
 >>>>>>> [control] 251024 @Doyeop-knut | 최적화 중
@@ -822,6 +855,7 @@ system:
 
   Vehicle:
     wheel_base: 1.55
+<<<<<<< HEAD
 >>>>>>> [coneDetection] 251021 @Doyeop-knut | 롤백 및 iou 적용,  색상 확률값 연동
 =======
       target_speed: 15.0 # Target speed after loop closure
@@ -859,3 +893,8 @@ system:
     # 저속에서 곡률 튜닝의 영향을 줄이는 속도 계수 (0~1, 1에 가까울수록 속도 영향 큼)
     speed_influence_factor: 0.3
 >>>>>>> [control] 251022 @Doyeop-knut | pytorch 기반  mpc 제어기 추가
+=======
+    min_accel : -20.0 #m/s^2
+    max_accel : 20.0 #m/s^2
+    max_steer : 40.0 #radians
+>>>>>>> [control] 251024 @Doyeop-knut | 코드 최적화
