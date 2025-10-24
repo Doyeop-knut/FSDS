@@ -27,6 +27,7 @@ from collections import deque, namedtuple
 
 import tf2_ros
 from geometry_msgs.msg import TransformStamped, Point, PoseStamped
+<<<<<<< HEAD
 =======
 import threading
 >>>>>>> [ConeDetection] 251008 @Doyeop-knut | Map data 생성 코드 작성
@@ -49,6 +50,9 @@ from geometry_msgs.msg import TransformStamped, Point, PoseStamped
 import tf2_ros
 from geometry_msgs.msg import TransformStamped, Point, PoseStamped
 >>>>>>> [yolo]
+=======
+from message_filters import Subscriber, ApproximateTimeSynchronizer
+>>>>>>> [control] 251024 @Doyeop-knut | 최적화 중
 
 # ROS
 from std_msgs.msg import String, ColorRGBA
@@ -81,6 +85,7 @@ from scipy.optimize import minimize, linear_sum_assignment
 import torch
 import torchvision
 torch.backends.cudnn.benchmark = True
+<<<<<<< HEAD
 
 # Tracking
 from scipy.optimize import linear_sum_assignment
@@ -101,6 +106,8 @@ import open3d as o3d
 # Camera
 <<<<<<< HEAD
 <<<<<<< HEAD
+=======
+>>>>>>> [control] 251024 @Doyeop-knut | 최적화 중
 
 # Data Logger
 import os
@@ -139,9 +146,14 @@ class FormulaAutonomousSystem:
         self.dbscan_eps = float()
         self.dbscan_points = 0
         self.prev_x, self.prev_y, self.prev_z = 0,0,0
+<<<<<<< HEAD
         self.delaunay_max_edge_length = rospy.get_param("/planning/path_planner/max_edge_length", 7.0)
         
 <<<<<<< HEAD
+=======
+        self.bridge = CvBridge()
+
+>>>>>>> [control] 251024 @Doyeop-knut | 최적화 중
         
         self.tf_broadcaster = tf2_ros.TransformBroadcaster()
         self.bridge = CvBridge()
@@ -187,6 +199,7 @@ class FormulaAutonomousSystem:
         self.model_path = os.path.join(package_path,'python', 'retinanet_QAT.pt')
 =======
         self.visualization_publish_interval = 5 # Publish visualization every 5 frames
+<<<<<<< HEAD
 =======
 =======
 import torch
@@ -293,6 +306,9 @@ class FormulaAutonomousSystem:
 <<<<<<< HEAD
 <<<<<<< HEAD
 >>>>>>> [ConeDetection] 251010 @Doyeop-knut | Cone Detection method 개선 및 Mapping 기능 추가
+=======
+        self.frame_counter = 0
+>>>>>>> [control] 251024 @Doyeop-knut | 최적화 중
         # System Components
         self.gps_util = GPSIMUProcessor()
         self.state_machine = StateMachine()
@@ -495,6 +511,8 @@ class FormulaAutonomousSystem:
 >>>>>>> 1
         # rospkg를 사용하여 모델 경로 동적으로 찾기
         rospack = rospkg.RosPack()
+
+        
         package_path = rospack.get_path('formula_autonomous_system')
         self.model_path = os.path.join(package_path,'python', 'retinanet_QAT.pt')
         rospy.loginfo(f"Loading model from: {self.model_path}")
@@ -536,6 +554,7 @@ class FormulaAutonomousSystem:
         rospy.loginfo("Cone Detection GPU Node Initialized.")
 
         self.get_parameters()
+<<<<<<< HEAD
 <<<<<<< HEAD
 >>>>>>> [Cone Detection] 251018 @Doyeop-knut @marigold0916 | RetinaNet 기반 코드
 =======
@@ -599,6 +618,12 @@ class FormulaAutonomousSystem:
 
         self.publish_cones(detected_cone_centroids, msg.header)
 >>>>>>> 1
+=======
+        cam_mat = self.camera_util.cam_matrix()
+        self.cam1_transform = self.camera_util.transform_matrix(-self.left_tx, -self.left_ty, -self.left_tz, self.left_rr, self.left_rp, self.left_ry)
+        self.cam2_transform = self.camera_util.transform_matrix(-self.right_tx, -self.right_ty, -self.right_tz, self.right_rr, self.right_rp, self.right_ry)
+      
+>>>>>>> [control] 251024 @Doyeop-knut | 최적화 중
         
     def init(self):
         """Initialize the system"""
@@ -695,6 +720,7 @@ class FormulaAutonomousSystem:
 <<<<<<< HEAD
 <<<<<<< HEAD
 <<<<<<< HEAD
+<<<<<<< HEAD
 =======
         # print(self.state_machine.state)
 
@@ -740,6 +766,9 @@ class FormulaAutonomousSystem:
          # 시스템 초기화 확인
 =======
 >>>>>>> [Cone Detection] 251018 @Doyeop-knut @marigold0916 | RetinaNet 기반 코드
+=======
+        
+>>>>>>> [control] 251024 @Doyeop-knut | 최적화 중
         if not self.is_initialized:
             rospy.logwarn_throttle(1.0, "FormulaAutonomousSystem: Not initialized")
             return False
@@ -949,24 +978,24 @@ class FormulaAutonomousSystem:
 >>>>>>> [yolo]
         image1 = self.get_camera_image(camera1_msg)
         image2 = self.get_camera_image(camera2_msg)
-        cam_mat = self.camera_util.cam_matrix()
-        cam1_transform = self.camera_util.transform_matrix(-self.left_tx, -self.left_ty, -self.left_tz, self.left_rr, self.left_rp, self.left_ry)
-        cam2_transform = self.camera_util.transform_matrix(-self.right_tx, -self.right_ty, -self.right_tz, self.right_rr, self.right_rp, self.right_ry)
         image1 = self.camera_util.preprocessImage(image1)
         image2 = self.camera_util.preprocessImage(image2)
         
 <<<<<<< HEAD
 =======
         # Process image1
-        img1_rgb = cv2.cvtColor(image1, cv2.COLOR_BGR2RGB)
-        img1_tensor = torch.from_numpy(img1_rgb).permute(2, 0, 1).float() / 255.0
+        img1_bgr = np.ascontiguousarray(image1)  # ★ 보장
+        img2_bgr = np.ascontiguousarray(image2)
 
+        img1_rgb = cv2.cvtColor(image1, cv2.COLOR_BGR2RGB)
+        img1_tensor = torch.from_numpy(img1_rgb).permute(2,0,1).float().div_(255.0).pin_memory()
+        
         # Process image2
         img2_rgb = cv2.cvtColor(image2, cv2.COLOR_BGR2RGB)
-        img2_tensor = torch.from_numpy(img2_rgb).permute(2, 0, 1).float() / 255.0
+        img2_tensor = torch.from_numpy(img2_rgb).permute(2,0,1).float().div_(255.0).pin_memory()
 
         # Combine into a batch for inference
-        batched_input = [img1_tensor.to(self.device), img2_tensor.to(self.device)]
+        batched_input = [img1_tensor.to(self.device, non_blocking=True), img2_tensor.to(self.device, non_blocking=True)]
         
         # If the model is in FP16, convert input tensors to FP16 as well
         if self.device.type == 'cuda' and next(self.model.parameters()).is_cuda and next(self.model.parameters()).dtype == torch.float16:
@@ -1026,8 +1055,8 @@ class FormulaAutonomousSystem:
 <<<<<<< HEAD
 
         # print(color)
-        cam1_pts = self.camera_util.projectToCam(compensated_cluster, cam1_transform)
-        cam2_pts = self.camera_util.projectToCam(compensated_cluster, cam2_transform)
+        cam1_pts = self.camera_util.projectToCam(compensated_cluster, self.cam1_transform)
+        cam2_pts = self.camera_util.projectToCam(compensated_cluster, self.cam2_transform)
 
         if cluster.numel() > 0:
             # Convert compensated_cluster to numpy for OpenCV-based color detection
@@ -1651,6 +1680,7 @@ class FormulaAutonomousSystem:
             self.path_index_publisher.publish(marker_array)
 >>>>>>> 1
 
+<<<<<<< HEAD
         rendered_img1, left_bbox, left_conf = self.camera_util._process_and_draw_detections(image1, raw_predictions1)
         rendered_img2, right_bbox, right_conf = self.camera_util._process_and_draw_detections(image2, raw_predictions2)
         
@@ -1710,6 +1740,11 @@ class FormulaAutonomousSystem:
         self.last_path_index_count = len(path_np)
         if len(marker_array.markers) > 0:
             self.path_index_publisher.publish(marker_array)
+=======
+        # Publish markers for indices
+        marker_array = MarkerArray()
+        header = path_msg.header
+>>>>>>> [control] 251024 @Doyeop-knut | 최적화 중
 
     def publish_midpoints(self, midpoints_np):
 >>>>>>> 1
@@ -9092,11 +9127,22 @@ class PathPlanner:
         return torch.tensor(pointcloud_list, dtype=torch.float32, device=self.device)
 >>>>>>> 1
 
+<<<<<<< HEAD
     def _angle_between_vectors(self, v1, v2):
         """Calculates the angle in radians between two vectors."""
         v1_u = v1 / (np.linalg.norm(v1) + 1e-6)
         v2_u = v2 / (np.linalg.norm(v2) + 1e-6)
         return np.arccos(np.clip(np.dot(v1_u, v2_u), -1.0, 1.0))
+=======
+    def get_camera_image(self, msg):
+        """Convert ROS Image message to OpenCV Mat"""
+        try:
+            cv_image = self.bridge.imgmsg_to_cv2(msg, "bgr8")
+            return cv_image
+        except Exception as e:
+            rospy.logerr(f"cv_bridge exception: {e}")
+            return None
+>>>>>>> [control] 251024 @Doyeop-knut | 최적화 중
 
 <<<<<<< HEAD
     def _generate_fallback_path(self, blue_cones, yellow_cones, car_pos):
@@ -9161,6 +9207,7 @@ class PathPlanner:
         self.visualize_lidar_on_camera = rospy.get_param("/perception/camera_cone_detection/visualize_lidar_on_camera", False)
         self.lidar_cam_iou_threshold = rospy.get_param("/perception/camera_cone_detection/lidar_cam_iou_threshold", 0.5)
         self.color_score_separation_threshold = rospy.get_param("/perception/camera_cone_detection/color_score_separation_threshold", 0.1)
+
 
     def cam_matrix(self):
         camera_matrix = [
@@ -9601,10 +9648,13 @@ class PathPlanner:
         mask_orange = cv2.inRange(hsv_roi, self.hsv_orange_min, self.hsv_orange_max)
 
         masks = {"yellow": mask_yellow, "blue": mask_blue, "orange": mask_orange}
+<<<<<<< HEAD
 
         cv2.imshow("lidar roi", np.concatenate((hsv_roi,roi),axis=1))
         # cv2.imshow("masks", np.concatenate((mask_yellow,mask_blue,mask_orange),axis=1))
 
+=======
+>>>>>>> [control] 251024 @Doyeop-knut | 최적화 중
         for color, mask in masks.items():
             pixel_count = cv2.countNonZero(mask)
             if pixel_count > 0:
@@ -10103,17 +10153,33 @@ class LiDARProcessor:
         if points.numel() == 0:
             return points
 
+<<<<<<< HEAD
+=======
+    def filtering_points(self, points, x_range, y_range, z_range):
+        if points.size == 0: return points
+        n = points.shape[0]
+        if n > 80000: points = points[::8]
+        elif n > 40000: points = points[::6]
+        elif n > 20000: points = points[::4]  # 기존 유지
+>>>>>>> [control] 251024 @Doyeop-knut | 최적화 중
         mask = (
-            (points[:, 0] >= x_range[0]) & (points[:, 0] <= x_range[1]) &
-            (points[:, 1] >= y_range[0]) & (points[:, 1] <= y_range[1]) &
-            (points[:, 2] >= z_range[0]) & (points[:, 2] <= z_range[1])
+            (points[:,0] >= x_range[0]) & (points[:,0] <= x_range[1]) &
+            (points[:,1] >= y_range[0]) & (points[:,1] <= y_range[1]) &
+            (points[:,2] >= z_range[0]) & (points[:,2] <= z_range[1])
         )
         return points[mask]
+<<<<<<< HEAD
     
     def ransac_plane_removal(self, points: torch.Tensor, threshold: float = 0.05, max_trials: int = 100) -> torch.Tensor:
         """Remove ground plane using Open3D's RANSAC"""
         if points.numel() == 0 or points.shape[0] < 3:
             return torch.empty((0, 3), dtype=torch.float32, device=self.device)
+=======
+    def ransac_plane_removal(self, points: np.ndarray, threshold: float = 0.05, max_trials: int = 100) -> np.ndarray:
+        """Remove ground plane using RANSAC"""
+        if points is None or len(points) < 10: # RANSAC을 위해 최소 포인트 수 확보
+            return np.array([])
+>>>>>>> [control] 251024 @Doyeop-knut | 최적화 중
 
         # Convert torch.Tensor to Open3D PointCloud
         pcd = o3d.geometry.PointCloud()
@@ -10122,6 +10188,7 @@ class LiDARProcessor:
         # Perform RANSAC plane segmentation
         plane_model, inliers = pcd.segment_plane(distance_threshold=threshold, ransac_n=3, num_iterations=max_trials)
 
+<<<<<<< HEAD
         # Select the outlier points (non-ground)
         outlier_cloud = pcd.select_by_index(inliers, invert=True)
 
@@ -10144,6 +10211,26 @@ class LiDARProcessor:
         # Get unique labels, excluding noise (-1)
         unique_labels = np.unique(labels)
         cluster_centroids = []
+=======
+    def cluster_points(self, points: np.ndarray, eps: float = 0.5, min_samples: int = 5) -> np.ndarray:
+        """Cluster points using DBSCAN"""
+        if points is None or len(points) == 0:
+            return np.array([])
+        base_eps = self.dbscan_eps
+        base_min = self.dbscan_points
+        n = points.shape[0]
+        scale = 0.8 if n < 2000 else (1.0 if n < 8000 else 1.2)
+        eps = (eps or base_eps) * scale
+        min_samples = int((min_samples or base_min) * scale)
+        db = DBSCAN(eps=eps, min_samples=min_samples).fit(points)
+        labels = db.labels_
+        unique_labels = set(labels)
+        
+        mat=self.vehicle_to_lidar_Transform(self.trans_x,self.trans_y,self.trans_z,self.rot_r,self.rot_p,self.rot_yaw)
+        # rot_mat = self.vehicle_to_lidar_Transform(self.gps_util.state[0], self.gps_util.state[1],0,0,0, self.gps_util.state[2])
+        # print(f"GPS = {self.gps_util.state[0], self.gps_util.state[1]}, yaw = {math.degrees(self.gps_util.state[2])}")
+        # print(f"rotation matrix = {rot_mat}, translation matrix = {mat}")
+>>>>>>> [control] 251024 @Doyeop-knut | 최적화 중
 
         for label in unique_labels:
             if label == -1:
@@ -13234,7 +13321,7 @@ class Control:
         print(f"MPC Speed Scaling Factor: {speed_scaling_factor}, weights = {weights}")
 
         # Get reference path for the horizon
-        path_points = np.array(path)
+        path_points = np.array(path,dtype = np.float32)
         distances = np.linalg.norm(path_points - np.array([veh_x, veh_y]), axis=1)
         start_idx = np.argmin(distances)
         ref_path = path_points[start_idx:start_idx + self.mpc_horizon + 2] # Need one extra point for heading calculation
@@ -13250,6 +13337,7 @@ class Control:
             bounds.append((self.min_accel, self.max_accel))
             bounds.append((-self.max_steer, self.max_steer))
 
+<<<<<<< HEAD
         # Convert inputs to PyTorch tensors
         initial_state_tensor = torch.tensor(initial_state, dtype=torch.float32, device=self.device)
         ref_path_tensor = ref_path
@@ -13295,6 +13383,17 @@ class Control:
             'cte': cte_current.item(),
             'etheta': etheta_current.item()
         }
+=======
+        # --- Solve the optimization problem ---
+        solution = minimize(
+            self._cost_function,
+            u0,
+            args=(initial_state, ref_path, mpc_target_speed, weights),
+            method='SLSQP',
+            bounds=bounds,
+            options={'maxiter' : 2,'ftol' : 1e-5,'disp' :False}
+        )
+>>>>>>> [control] 251024 @Doyeop-knut | 최적화 중
 
         # --- Map acceleration to throttle/brake ---
         throttle = 0.0
