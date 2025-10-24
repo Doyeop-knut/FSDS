@@ -529,6 +529,7 @@ control:
 
   MPC:
 <<<<<<< HEAD
+<<<<<<< HEAD
     horizon: 10
     dt: 0.01
 <<<<<<< HEAD
@@ -545,13 +546,17 @@ control:
     dt: 0.05
     move_blocking_k: 3
 >>>>>>> [control] 251024 @Doyeop-knut | 최적화 중
+=======
+    horizon: 5
+    dt: 0.01
+>>>>>>> [control] 251024 @Doyeop-knut | 수정중
     mpc_speed_scaling_factor: 0.8 # Adjust this value to control the aggressiveness of speed-based weight scaling
     max_speed_for_scaling: 10.0 # Max speed for normalizing current speed (e.g., loop_closed_target_speed)
     pre_loop_closure:
-      w_cte: 15.0
-      w_etheta: 12.0
-      w_accel: 10.0
-      w_steer: 15.0
+      w_cte: 25.0
+      w_etheta: 22.0
+      w_accel: 1.0
+      w_steer: 1.75
       w_steer_rate: 10.0
 <<<<<<< HEAD
 <<<<<<< HEAD

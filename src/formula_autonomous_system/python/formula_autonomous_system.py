@@ -10,6 +10,7 @@
 @copyright Copyright (c) 2025
 """
 
+import threading
 import rospy
 import traceback
 import numpy as np
@@ -125,6 +126,32 @@ class AutonomousEvent(Enum):
     SYSTEM_READY = 1
     GO_SIGNAL = 2
 # ==================== Main System ====================
+import time, rospy
+from std_msgs.msg import Float32
+
+class RateMeter:
+    def __init__(self, name, ema_alpha=0.2):
+        self.name = name
+        self.alpha = float(ema_alpha)
+        self._last_t = None
+        self.hz_ema = 0.0
+        self.hz_inst = 0.0
+        self._last_log_sec = -1
+
+    def tick(self):
+        now = time.perf_counter()
+        if self._last_t is not None:
+            dt = now - self._last_t
+            if dt > 0:
+                self.hz_inst = 1.0 / dt
+                self.hz_ema = (1.0 - self.alpha) * self.hz_ema + self.alpha * self.hz_inst
+        self._last_t = now
+
+    def log_throttle(self, interval_sec=1.0):
+        sec = int(time.time())
+        if sec != self._last_log_sec:
+            self._last_log_sec = sec
+            rospy.loginfo(f"[HZ] {self.name}: inst={self.hz_inst:5.1f} Hz, ema={self.hz_ema:5.1f} Hz")
 
 class FormulaAutonomousSystem:
     def __init__(self):
@@ -182,7 +209,11 @@ class FormulaAutonomousSystem:
         self.triangulation_publisher = rospy.Publisher("/delaunay_triangulation", Marker, queue_size=1)
         self.path_index_publisher = rospy.Publisher("/path_indices", MarkerArray, queue_size=1)
         self.midpoints_publisher = rospy.Publisher("/cone_midpoints", MarkerArray, queue_size=1)
+<<<<<<< HEAD
         self.predicted_path_publisher = rospy.Publisher("/predicted_path", Path, queue_size=1)
+=======
+        self.control_publisher = rospy.Publisher("/fsds/control_command", ControlCommand, queue_size=1)
+>>>>>>> [control] 251024 @Doyeop-knut | 수정중
         self.last_path_index_count = 0
         self.last_midpoints_count = 0
         self.visualization_frame_counter = 0
@@ -308,7 +339,15 @@ class FormulaAutonomousSystem:
 >>>>>>> [ConeDetection] 251010 @Doyeop-knut | Cone Detection method 개선 및 Mapping 기능 추가
 =======
         self.frame_counter = 0
+<<<<<<< HEAD
 >>>>>>> [control] 251024 @Doyeop-knut | 최적화 중
+=======
+
+        self._plan_tick  = 0
+        self._last_path  = None
+
+
+>>>>>>> [control] 251024 @Doyeop-knut | 수정중
         # System Components
         self.gps_util = GPSIMUProcessor()
         self.state_machine = StateMachine()
@@ -320,6 +359,27 @@ class FormulaAutonomousSystem:
         self.midpoint_map = MidpointMap()
         self.path_planner = PathPlanner()
         self.controller = Control(self.path_planner, self.track_map) # Control 클래스에 path_planner와 track_map 인스턴스 전달
+
+        self.rm_ctrl    = RateMeter("control")
+        self.rm_plan    = RateMeter("planner")
+        self.rm_map     = RateMeter("mapping")
+        self.rm_cam     = RateMeter("camera_inference")
+        self.rm_lidar   = RateMeter("lidar_proc")
+
+                # === CTRL: locks & timer (BEGIN) ===
+        self._snap_lock = threading.RLock()          # 최신 스냅
+        self._path_lock = threading.RLock()          # 최신 경로
+        self._snap = None
+        self._u_last = (0.0, 0.0, 0.0)
+
+        self.ctrl_hz = rospy.get_param("~ctrl_hz", 30.0)
+        self.ctrl_budget_ms = 1000.0 / max(1.0, self.ctrl_hz)   # 예: 33.3ms
+        self.perception_budget_ms = rospy.get_param("~perception_budget_ms",
+                                                    self.ctrl_budget_ms * 0.6)
+
+        # 고정 주기 제어 타이머
+        rospy.Timer(rospy.Duration.from_sec(1.0/self.ctrl_hz), self._ctrl_cb, oneshot=False)
+        # === CTRL: locks & timer (END) ===
 
         # rospkg를 사용하여 모델 경로 동적으로 찾기
         self.model_path = os.path.join(package_path,'python', 'retina-cone.pt')
@@ -511,14 +571,25 @@ class FormulaAutonomousSystem:
 >>>>>>> 1
         # rospkg를 사용하여 모델 경로 동적으로 찾기
         rospack = rospkg.RosPack()
-
+        self.last_predictions = None
         
         package_path = rospack.get_path('formula_autonomous_system')
+<<<<<<< HEAD
         self.model_path = os.path.join(package_path,'python', 'retinanet_QAT.pt')
         rospy.loginfo(f"Loading model from: {self.model_path}")
 
         self.model = torch.load(self.model_path, map_location=torch.device('cpu'))
 >>>>>>> [coneDetection] 251019 @Doyeop-knut | cone map update 전
+=======
+        self.model_path = os.path.join(package_path,'python', 'retina-cone.pt')
+        
+        rospy.loginfo(f"Loading model from: {self.model_path}")
+
+        self.model = torch.load(self.model_path, map_location=torch.device('cpu'))
+        torch.backends.cuda.matmul.allow_tf32 = True
+        torch.backends.cudnn.allow_tf32 = True
+        self.model.to(memory_format=torch.channels_last)
+>>>>>>> [control] 251024 @Doyeop-knut | 수정중
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.model.to(self.device)
         if self.device.type == 'cuda':
@@ -622,9 +693,48 @@ class FormulaAutonomousSystem:
         cam_mat = self.camera_util.cam_matrix()
         self.cam1_transform = self.camera_util.transform_matrix(-self.left_tx, -self.left_ty, -self.left_tz, self.left_rr, self.left_rp, self.left_ry)
         self.cam2_transform = self.camera_util.transform_matrix(-self.right_tx, -self.right_ty, -self.right_tz, self.right_rr, self.right_rp, self.right_ry)
+<<<<<<< HEAD
       
 >>>>>>> [control] 251024 @Doyeop-knut | 최적화 중
         
+=======
+        self.rm_ctrl    = RateMeter("control")
+        self.rm_plan    = RateMeter("planner")
+        self.rm_map     = RateMeter("mapping")
+        self.rm_cam     = RateMeter("camera_inference")
+        self.rm_lidar   = RateMeter("lidar_proc")
+
+    def _ctrl_cb(self, _evt):
+        t0 = time.perf_counter()
+        snap = None
+        if self._snap_lock.acquire(blocking=False):     # ← 대기 금지
+            snap = self._snap
+            self._snap_lock.release()
+
+        # 스냅샷 없으면 안전 ZOH
+        if not snap or snap.get("path") is None or len(snap["path"]) == 0 \
+        or self.state_machine.current_state != AutonomousMode.AS_DRIVING:
+            th, st, br = self._u_last
+            cmd = ControlCommand(); cmd.throttle = 0.7*th; cmd.steering = 0.7*st; cmd.brake = max(0.5, 0.7*br)
+            self.control_publisher.publish(cmd)
+            self._u_last = (cmd.throttle, cmd.steering, cmd.brake)
+            self.rm_ctrl.tick(); self.rm_ctrl.log_throttle(1.0)
+            return
+
+        # MPC 계산 (워밍·블로킹·반복2 가정)
+        throttle, steer, brake = self.controller.compute_control(snap["state"], snap["path"], snap.get("is_fallback", False))
+        dt_ms = (time.perf_counter() - t0) * 1000.0
+        if dt_ms > self.ctrl_budget_ms:   # 예산 초과 → 감쇠
+            throttle = 0.7*self._u_last[0] + 0.3*throttle
+            steer    = 0.7*self._u_last[1] + 0.3*steer
+            brake    = max(0.5, 0.7*self._u_last[2] + 0.3*brake)
+
+        cmd = ControlCommand(); cmd.throttle = float(throttle); cmd.steering = float(steer); cmd.brake = float(brake)
+        self.control_publisher.publish(cmd)
+        self._u_last = (cmd.throttle, cmd.steering, cmd.brake)
+        self.rm_ctrl.tick(); self.rm_ctrl.log_throttle(1.0)
+
+>>>>>>> [control] 251024 @Doyeop-knut | 수정중
     def init(self):
         """Initialize the system"""
         self.is_initialized = True
@@ -632,6 +742,7 @@ class FormulaAutonomousSystem:
 
     def get_parameters(self):
         """Get parameters from ROS parameter server"""
+<<<<<<< HEAD
 <<<<<<< HEAD
 <<<<<<< HEAD
 <<<<<<< HEAD
@@ -680,6 +791,11 @@ class FormulaAutonomousSystem:
 >>>>>>> [1]
 =======
 >>>>>>> [yolo]
+=======
+        self.infer_skip_n = rospy.get_param("/perception/inference/skip_n", 3)
+        self.plan_skip_n = rospy.get_param("~plan_skip_n", 2)   # 1=매프레임, 2=격프레임, 3=3프레임마다
+
+>>>>>>> [control] 251024 @Doyeop-knut | 수정중
         self.x_min, self.x_max = rospy.get_param("/perception/lidar_roi_extraction/x_min") , rospy.get_param("/perception/lidar_roi_extraction/x_max")
         self.y_min, self.y_max = rospy.get_param("/perception/lidar_roi_extraction/y_min") , rospy.get_param("/perception/lidar_roi_extraction/y_max")
         self.z_min, self.z_max = rospy.get_param("/perception/lidar_roi_extraction/z_min") , rospy.get_param("/perception/lidar_roi_extraction/z_max")
@@ -694,6 +810,7 @@ class FormulaAutonomousSystem:
 <<<<<<< HEAD
 <<<<<<< HEAD
 <<<<<<< HEAD
+<<<<<<< HEAD
 >>>>>>> [ConeDetection] 251010 @Doyeop-knut | Cone Detection method 개선 및 Mapping 기능 추가
 =======
 >>>>>>> [1]
@@ -705,9 +822,52 @@ class FormulaAutonomousSystem:
 >>>>>>> [coneDetection] 251021 @Doyeop-knut | 롤백 및 iou 적용,  색상 확률값 연동
 =======
 >>>>>>> [control] 251022 @Doyeop-knut | pytorch 기반  mpc 제어기 추가
-        return True
+=======
+        self.tc_dt_min       = rospy.get_param("~tc_dt_min", 0.01)         # 10 ms 미만이면 보정 생략
+        self.tc_yawrate_min  = rospy.get_param("~tc_yawrate_min_deg", 0.3) # 0.5 deg/s 미만이면 회전 생략
+        self.tc_yawrate_min  = np.deg2rad(self.tc_yawrate_min)
+        self.tc_speed_min    = rospy.get_param("~tc_speed_min", 0.1)       # 0.2 m/s 미만이면 병진 생략
 
+>>>>>>> [control] 251024 @Doyeop-knut | 수정중
+        return True
+    
+    def _apply_time_compensation(self, points_xyz, dt, yaw_rate, speed):
+        """
+        points_xyz: (N,3) in {차량 혹은 센서 좌표계}
+        dt: [s], yaw_rate: [rad/s], speed: [m/s] (전진 속도, 간단 근사)
+        """
+        if points_xyz is None or len(points_xyz) == 0:
+            return points_xyz
+
+        # 임계치 기반 스킵
+        if dt < self.tc_dt_min:
+            return points_xyz
+
+        do_rot = abs(yaw_rate) >= self.tc_yawrate_min
+        do_trn = abs(speed)    >= self.tc_speed_min
+        if not do_rot and not do_trn:
+            return points_xyz
+
+        # 회전(요): z축 기준
+        if do_rot:
+            dpsi = yaw_rate * dt
+            c, s = np.cos(dpsi), np.sin(dpsi)
+            R = np.array([[c, -s, 0.0],
+                        [s,  c, 0.0],
+                        [0.0, 0.0, 1.0]], dtype=np.float32)
+            pts = (points_xyz @ R.T)
+        else:
+            pts = points_xyz
+
+        # 병진(전진): 간단히 x축 방향 speed*dt 만큼 평행이동 (차량 좌표 기준)
+        if do_trn:
+            t = np.array([speed*dt, 0.0, 0.0], dtype=np.float32)
+            pts = pts + t
+
+        return pts
+    
     def run(self, lidar_msg, camera1_msg, camera2_msg, imu_msg, gps_msg, go_signal_msg):
+        run_start_time = time.time()
         """Run the autonomous system (Pythonic version)
         
         Returns:
@@ -772,6 +932,7 @@ class FormulaAutonomousSystem:
         if not self.is_initialized:
             rospy.logwarn_throttle(1.0, "FormulaAutonomousSystem: Not initialized")
             return False
+        self.frame_counter += 1
 
 <<<<<<< HEAD
 >>>>>>> [1]
@@ -781,6 +942,7 @@ class FormulaAutonomousSystem:
         autonomous_mode.data = "AS_OFF"
         self.state_machine.inject_system_init()
 
+        sensor_start_time = time.time()
         acc, gyro, orientation = self.get_imu_data(imu_msg)
         imu_data = [acc[0], acc[1], gyro[2]]
         roll,pitch,yaw = self.gps_util.Quat_to_Euler(orientation)
@@ -863,6 +1025,18 @@ class FormulaAutonomousSystem:
         self.gps_util.updateGPS(gps_data,gps_msg.header.stamp.to_sec())
         vehicle_state = self.gps_util.state
 
+        # vehicle_state 계산 직후
+        path_snapshot = None; is_fallback = False
+        if self._path_lock.acquire(blocking=False):
+            path_snapshot = self._last_path
+            is_fallback = getattr(self, "_last_path_is_fallback", False)
+            self._path_lock.release()
+
+        snap = {"state": vehicle_state, "path": path_snapshot, "is_fallback": is_fallback, "t": rospy.Time.now()}
+        if self._snap_lock.acquire(blocking=False):
+            self._snap = snap
+            self._snap_lock.release()
+
         # ==================== TF Publisher ====================
         t = TransformStamped()
         t.header.stamp = rospy.Time.now()
@@ -939,6 +1113,7 @@ class FormulaAutonomousSystem:
 >>>>>>> [ConeDetection] @Doyeop-knut @marigold0916 | YOLOv5 기반 Cone Color Detect 기능 추가
 =======
         rospy.loginfo_throttle(1.0,f"v = {round(math.sqrt(vehicle_state[3]**2 + vehicle_state[4]**2),4)} m/s")
+<<<<<<< HEAD
 >>>>>>> [yolo]
 =======
         # rospy.loginfo_throttle(0.001,f"v = {round(math.sqrt(vehicle_state[3]**2 + vehicle_state[4]**2),4)} m/s")
@@ -949,11 +1124,15 @@ class FormulaAutonomousSystem:
 =======
         # rospy.loginfo_throttle(0.001,f"v = {round(math.sqrt(vehicle_state[3]**2 + vehicle_state[4]**2),4)} m/s")
 >>>>>>> [control] 251022 @Doyeop-knut | pytorch 기반  mpc 제어기 추가
+=======
+        # lidar_start_time = time.time()
+>>>>>>> [control] 251024 @Doyeop-knut | 수정중
         ## LiDAR Processed
         points=self.get_lidar_point_cloud(lidar_msg)
         filtered = self.lidar_util.filtering_points(points, (self.x_min, self.x_max), (self.y_min, self.y_max), (self.z_min, self.z_max))
         removal =  self.lidar_util.ransac_plane_removal(filtered, threshold=self.ransac_distance, max_trials=self.ransac_iter)
         cluster = self.lidar_util.cluster_points(removal, eps=self.dbscan_eps, min_samples=self.dbscan_points)
+<<<<<<< HEAD
 <<<<<<< HEAD
 <<<<<<< HEAD
 <<<<<<< HEAD
@@ -976,40 +1155,66 @@ class FormulaAutonomousSystem:
 =======
        
 >>>>>>> [yolo]
+=======
+        # lidar_duration = time.time() - lidar_start_time
+        # rospy.loginfo(f"lidar_freq = {1/(lidar_duration):.4f} Hzlidar_duration = {lidar_duration:.4f} sec")
+        ## Camera Processed
+>>>>>>> [control] 251024 @Doyeop-knut | 수정중
         image1 = self.get_camera_image(camera1_msg)
         image2 = self.get_camera_image(camera2_msg)
         image1 = self.camera_util.preprocessImage(image1)
         image2 = self.camera_util.preprocessImage(image2)
+<<<<<<< HEAD
         
 <<<<<<< HEAD
 =======
         # Process image1
         img1_bgr = np.ascontiguousarray(image1)  # ★ 보장
         img2_bgr = np.ascontiguousarray(image2)
+=======
+        do_infer = (self.frame_counter % self.infer_skip_n == 0)
+        if do_infer:
+            # Process image1
+            img1_bgr = np.ascontiguousarray(image1)  # ★ 보장
+            img2_bgr = np.ascontiguousarray(image2)
+>>>>>>> [control] 251024 @Doyeop-knut | 수정중
 
-        img1_rgb = cv2.cvtColor(image1, cv2.COLOR_BGR2RGB)
-        img1_tensor = torch.from_numpy(img1_rgb).permute(2,0,1).float().div_(255.0).pin_memory()
-        
-        # Process image2
-        img2_rgb = cv2.cvtColor(image2, cv2.COLOR_BGR2RGB)
-        img2_tensor = torch.from_numpy(img2_rgb).permute(2,0,1).float().div_(255.0).pin_memory()
+            img1_rgb = cv2.cvtColor(img1_bgr, cv2.COLOR_BGR2RGB)
+            img1_tensor = torch.from_numpy(img1_rgb).permute(2,0,1).float().div_(255.0).pin_memory()
 
-        # Combine into a batch for inference
-        batched_input = [img1_tensor.to(self.device, non_blocking=True), img2_tensor.to(self.device, non_blocking=True)]
-        
-        # If the model is in FP16, convert input tensors to FP16 as well
-        if self.device.type == 'cuda' and next(self.model.parameters()).is_cuda and next(self.model.parameters()).dtype == torch.float16:
-            batched_input = [img.half() for img in batched_input]
+            # Process image2
+            img2_rgb = cv2.cvtColor(img2_bgr, cv2.COLOR_BGR2RGB)
+            img2_tensor = torch.from_numpy(img2_rgb).permute(2,0,1).float().div_(255.0).pin_memory()
 
-        # Get predictions from the model
-        with torch.no_grad():
-            raw_predictions = self.model(batched_input)  # Returns List[List[Dict]] for batched input
+            # Combine into a batch for inference
+            batched_input = [img1_tensor.to(self.device, non_blocking=True), img2_tensor.to(self.device, non_blocking=True)]
+            
+            # If the model is in FP16, convert input tensors to FP16 as well
+            if self.device.type == 'cuda' and next(self.model.parameters()).is_cuda and next(self.model.parameters()).dtype == torch.float16:
+                batched_input = [img.half() for img in batched_input]
 
-        raw_predictions1 = [raw_predictions[0]] # Extract predictions for image1
-        raw_predictions2 = [raw_predictions[1]] # Extract predictions for image2
+            # Get predictions from the model
+            with torch.inference_mode():
+                with torch.cuda.amp.autocast(enabled=(self.device.type == 'cuda')):
+                    raw_predictions = self.model(batched_input)  # Returns List[List[Dict]] for batched input
+            self.rm_cam.tick()
+            self.rm_cam.log_throttle(1.0)
+            raw_predictions1 = [raw_predictions[0]] # Extract predictions for image1
+            raw_predictions2 = [raw_predictions[1]] # Extract predictions for image2
+            self.last_predictions = (raw_predictions1, raw_predictions2)
+        else:
+            raw_predictions1, raw_predictions2 = self.last_predictions if self.last_predictions is not None else (None, None)
 
-        rendered_img1, left_bbox, left_conf = self.camera_util._process_and_draw_detections(image1, raw_predictions1)
-        rendered_img2, right_bbox, right_conf = self.camera_util._process_and_draw_detections(image2, raw_predictions2)
+        # 후속 처리 시, None 여부 체크
+        if raw_predictions1 is not None:
+            rendered_img1, left_bbox, left_conf = self.camera_util._process_and_draw_detections(image1, raw_predictions1)
+        else:
+            rendered_img1, left_bbox, left_conf = image1, np.empty((0,4),dtype=np.float32), []
+
+        if raw_predictions2 is not None:
+            rendered_img2, right_bbox, right_conf = self.camera_util._process_and_draw_detections(image2, raw_predictions2)
+        else:
+            rendered_img2, right_bbox, right_conf = image2, np.empty((0,4),dtype=np.float32), []
         
 <<<<<<< HEAD
 >>>>>>> [yolo]
@@ -1018,10 +1223,10 @@ class FormulaAutonomousSystem:
         if cluster.numel() > 0:
 >>>>>>> 1
             try:
-                dt_cam_lidar = camera1_msg.header.stamp.to_sec() - lidar_msg.header.stamp.to_sec()
                 vx = vehicle_state[3] # Longitudinal velocity
                 vy = vehicle_state[4] # Lateral velocity
                 yaw_rate = vehicle_state[5] # Yaw rate
+<<<<<<< HEAD
                 ax = vehicle_state[6] # Longitudinal acceleration
                 ay = vehicle_state[7] # Lateral acceleration
 
@@ -1046,6 +1251,20 @@ class FormulaAutonomousSystem:
                     rotated_y = compensated_cluster[:, 0] * sin_angle + compensated_cluster[:, 1] * cos_angle
                     compensated_cluster[:, 0] = rotated_x
                     compensated_cluster[:, 1] = rotated_y
+=======
+                compensated_cluster = cluster.copy()
+
+                # 치환/감싸기
+                dt_cam_lidar = camera1_msg.header.stamp.to_sec() - lidar_msg.header.stamp.to_sec()
+                yaw_rate = float(yaw_rate) if hasattr(self.gps_util, "yaw_rate") else 0.0
+                speed    = float(math.sqrt(vx**2+vy**2))     if hasattr(self.gps_util, "speed")    else 0.0
+                compensated_cluster = self._apply_time_compensation(
+                    points_xyz=cluster,   # (N,3)
+                    dt=dt_cam_lidar,
+                    yaw_rate=yaw_rate,
+                    speed=speed
+                    )
+>>>>>>> [control] 251024 @Doyeop-knut | 수정중
 
             except Exception as e:
                 rospy.logwarn_throttle(1.0, f"Could not perform time compensation: {e}")
@@ -1297,10 +1516,15 @@ class FormulaAutonomousSystem:
                     for color, prob in point_color_probs1.items():
                         combined_color_probs[color] = max(combined_color_probs[color], prob)
                 
+<<<<<<< HEAD
                 if i < len(cam2_pts):
                     point_color_probs2 = self.camera_util.detectConeColor(cam2_pts[i], image2, distance, debug_image=rendered_img2)
                     for color, prob in point_color_probs2.items():
                         combined_color_probs[color] = max(combined_color_probs[color], prob)
+=======
+                if color_from_point == "unknown" and i < len(cam2_pts):
+                    color_from_point = self.camera_util.detectConeColor(cam2_pts[i], image2, debug_image=rendered_img2)
+>>>>>>> [control] 251024 @Doyeop-knut | 수정중
 
                 # Determine the final detected_color based on highest probability
                 max_prob = 0.0
@@ -1395,6 +1619,7 @@ class FormulaAutonomousSystem:
             global_clusters = torch.tensor(cones_with_color, dtype=torch.float32, device=self.device)
             rospy.loginfo_throttle(1.0, f"FormulaAutonomousSystem: Cones from perception: {len(global_clusters)}")
         else:
+<<<<<<< HEAD
             global_clusters = torch.empty((0, 4), dtype=torch.float32, device=self.device)
 
         # ==================== Map & Path ===================
@@ -1439,6 +1664,30 @@ class FormulaAutonomousSystem:
         # Update midpoint map with new midpoints
         self.midpoint_map.update(midpoints_tensor)
 
+=======
+            global_clusters = np.empty((0, 4)) # Ensure global_clusters is always a 2D array with 4 columns
+        self.rm_lidar.tick()
+        self.rm_lidar.log_throttle(1.0)
+        # ==================== Map & Path ===================
+        # Update map with new cone observations
+        self.track_map.update(global_clusters, vehicle_state)
+        self.rm_map.tick()
+        self.rm_map.log_throttle(1.0)
+        # print(f"closed loop  = {self.track_map.is_loop_closed}")
+
+        # Plan path using the map
+        self._plan_tick += 1
+        do_plan = (self._plan_tick % self.plan_skip_n == 0)
+        if do_plan:
+            path = self.path_planner.plan_path(self.midpoint_map.get_all_midpoints(), vehicle_state)
+            self._last_path = path
+            self.rm_plan.tick()
+            self.rm_plan.log_throttle(1.0)
+        else:
+            path = self._last_path
+
+        path, tri, tri_points, tri_colors, midpoints, is_fallback = self.path_planner.plan_path(self.track_map.get_cones(), vehicle_state)
+>>>>>>> [control] 251024 @Doyeop-knut | 수정중
         # Visualize Map and Path
         self.publish_map_cones()
         self.publish_triangulation(tri, tri_points, tri_colors)
@@ -1451,7 +1700,7 @@ class FormulaAutonomousSystem:
         img1 = self.camera_util.visualization(cam1_pts, rendered_img1)
         img2 = self.camera_util.visualization(cam2_pts, rendered_img2)
 
-        if self.enable_visualization:
+        if self.enable_visualization and (self.visualization_frame_counter % self.visualization_publish_interval == 0):
             cv2.imshow("image1", img1)
             cv2.imshow("image2", img2)
             cv2.waitKey(1)
@@ -1473,6 +1722,9 @@ class FormulaAutonomousSystem:
             control_command_msg.throttle = throttle
             control_command_msg.steering = steer
             control_command_msg.brake = brake
+
+            self.rm_ctrl.tick()
+            self.rm_ctrl.log_throttle(1.0)
         else:
             # If not driving or no path, apply brakes and zero throttle/steering
             throttle, steer, brake, debug_data = 0.0, 0.0, 0.5, {}
@@ -9124,8 +9376,12 @@ class PathPlanner:
         if not pointcloud_list:
             return torch.empty((0, 3), dtype=torch.float32, device=self.device)
             
+<<<<<<< HEAD
         return torch.tensor(pointcloud_list, dtype=torch.float32, device=self.device)
 >>>>>>> 1
+=======
+        return np.array(pointcloud, dtype=np.float32)
+>>>>>>> [control] 251024 @Doyeop-knut | 수정중
 
 <<<<<<< HEAD
     def _angle_between_vectors(self, v1, v2):
@@ -12943,10 +13199,17 @@ class Control:
 
         # --- Get all parameters for all controllers ---
         # Vehicle
+<<<<<<< HEAD
         self.wheelbase = rospy.get_param("/control/Vehicle/wheel_base", 1.55)
         self.max_steer = rospy.get_param("~max_steer_angle", 1.0) # radians
         self.max_accel = rospy.get_param("/control/Vehicle/max_accel", 0.5) # m/s^2
         self.min_accel = rospy.get_param("/control/Vehicle/min_accel", -0.5) # m/s^2 (braking)
+=======
+        self.wheelbase = rospy.get_param("/vehicle/wheelbase", 1.54)
+        self.max_steer = rospy.get_param("/vehicle/max_steer_angle", math.radians(40)) # radians
+        self.max_accel = rospy.get_param("/vehicle/max_accel", 0.5) # m/s^2
+        self.min_accel = rospy.get_param("/vehicle/min_accel", -0.5) # m/s^2 (braking)
+>>>>>>> [control] 251024 @Doyeop-knut | 수정중
 
         # Common
         self.kp_throttle = rospy.get_param("/control/SpeedControl/pid_kp", 0.5)
@@ -13184,16 +13447,33 @@ class Control:
         predicted_states = torch.stack(predicted_states_list)
 
         # Calculate cost
+<<<<<<< HEAD
         cost = torch.tensor(0.0, device=u_tensor.device, dtype=u_tensor.dtype)
+=======
+        cost = 0.0
+        closest_idx = 0
+        search_window = 5  # Search in a window of 5 points
+>>>>>>> [control] 251024 @Doyeop-knut | 수정중
 
         # Find closest reference path points for each predicted state
         for i in range(1, self.mpc_horizon + 1):
             pred_x, pred_y, pred_yaw, pred_v = predicted_states[i]
             
+<<<<<<< HEAD
             # Find closest point on reference path
             # Expand dims for broadcasting: (1, 2) vs (N, 2)
             distances = torch.linalg.norm(ref_path_tensor - torch.stack([pred_x, pred_y]).unsqueeze(0), dim=1)
             closest_idx = torch.argmin(distances)
+=======
+            # Find closest point on reference path in a search window
+            start_idx = max(0, closest_idx - search_window)
+            end_idx = min(len(ref_path), closest_idx + search_window)
+            search_space = ref_path[start_idx:end_idx]
+            
+            distances = np.linalg.norm(search_space - np.array([pred_x, pred_y]), axis=1)
+            closest_local_idx = np.argmin(distances)
+            closest_idx = start_idx + closest_local_idx
+>>>>>>> [control] 251024 @Doyeop-knut | 수정중
             
             # Cross-track error
             ref_p1 = ref_path_tensor[closest_idx]
@@ -13307,18 +13587,19 @@ class Control:
         speed_scaling_factor = (normalized_speed ** self.mpc_speed_scaling_factor) if self.mpc_speed_scaling_factor != 0 else 1.0
         speed_scaling_factor = np.clip(speed_scaling_factor, 0.1, 2.0) # Clip to reasonable range
 
-        # Example: Increase path following weights with speed, decrease control input weights
-        weights['w_cte'] *= speed_scaling_factor
-        weights['w_etheta'] *= speed_scaling_factor
-        weights['w_vel'] *= speed_scaling_factor # Penalize velocity error more at higher speeds
+        # At higher speeds, we want tighter path following and smoother control inputs.
+        # Increase path deviation penalties and control rate penalties.
+        # Decrease control input penalties to allow for more aggressive corrections.
+        weights['w_cte'] *= (1 + speed_scaling_factor)
+        weights['w_etheta'] *= (1 + speed_scaling_factor)
+        weights['w_accel_rate'] *= (1 + speed_scaling_factor)
+        weights['w_steer_rate'] *= (1 + speed_scaling_factor)
 
-        # At higher speeds, generally want tighter path following and smoother control inputs.
-        # So, increase penalties for path deviation and control input changes.
-        weights['w_accel'] *= speed_scaling_factor
-        weights['w_steer'] *= speed_scaling_factor
-        weights['w_accel_rate'] *= speed_scaling_factor
-        weights['w_steer_rate'] *= speed_scaling_factor
-        print(f"MPC Speed Scaling Factor: {speed_scaling_factor}, weights = {weights}")
+        # Decrease penalties on raw control inputs to allow for stronger actions
+        weights['w_accel'] /= (1 + speed_scaling_factor)
+        weights['w_steer'] /= (1 + speed_scaling_factor)
+        
+        # print(f"MPC Speed Scaling Factor: {speed_scaling_factor}, weights = {weights}")
 
         # Get reference path for the horizon
         path_points = np.array(path,dtype = np.float32)
