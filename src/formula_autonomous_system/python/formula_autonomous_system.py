@@ -1314,16 +1314,28 @@ class FormulaAutonomousSystem:
        
         image1 = self.get_camera_image(camera1_msg)
         image2 = self.get_camera_image(camera2_msg)
+<<<<<<< HEAD
         processed_img1 = self.camera_util.preprocessImage(image1)
         processed_img2 = self.camera_util.preprocessImage(image2)
         
         # Process image1
         img1_bgr = np.ascontiguousarray(processed_img1)  # ★ 보장
+=======
+        image1 = self.camera_util.preprocessImage(image1)
+        image2 = self.camera_util.preprocessImage(image2)
+        
+        # Process image1
+        img1_bgr = np.ascontiguousarray(image1)  # ★ 보장
+>>>>>>> f7f97a8... [control] 251025 @Doyeop-knut | 최대한 최적화
         img1_rgb = cv2.cvtColor(img1_bgr, cv2.COLOR_BGR2RGB)
         img1_tensor = torch.from_numpy(img1_rgb).permute(2,0,1).float().div_(255.0).pin_memory()
 
         # Process image2
+<<<<<<< HEAD
         img2_bgr = np.ascontiguousarray(processed_img2)
+=======
+        img2_bgr = np.ascontiguousarray(image2)
+>>>>>>> f7f97a8... [control] 251025 @Doyeop-knut | 최대한 최적화
         img2_rgb = cv2.cvtColor(img2_bgr, cv2.COLOR_BGR2RGB)
         img2_tensor = torch.from_numpy(img2_rgb).permute(2,0,1).float().div_(255.0).pin_memory()
 
@@ -1343,8 +1355,13 @@ class FormulaAutonomousSystem:
         raw_predictions1 = [raw_predictions[0]] # Extract predictions for image1
         raw_predictions2 = [raw_predictions[1]] # Extract predictions for image2
 
+<<<<<<< HEAD
         rendered_img1, left_bbox, left_conf = self.camera_util._process_and_draw_detections(processed_img1, raw_predictions1)
         rendered_img2, right_bbox, right_conf = self.camera_util._process_and_draw_detections(processed_img2, raw_predictions2)
+=======
+        rendered_img1, left_bbox, left_conf = self.camera_util._process_and_draw_detections(image1, raw_predictions1)
+        rendered_img2, right_bbox, right_conf = self.camera_util._process_and_draw_detections(image2, raw_predictions2)
+>>>>>>> f7f97a8... [control] 251025 @Doyeop-knut | 최대한 최적화
         
         if cluster.size > 0:
             try:
@@ -1404,8 +1421,13 @@ class FormulaAutonomousSystem:
 <<<<<<< HEAD
 
         # print(color)
+<<<<<<< HEAD
         cam1_pts, cam1_indices = self.camera_util.projectToCam(compensated_cluster, self.cam1_transform)
         cam2_pts, cam2_indices = self.camera_util.projectToCam(compensated_cluster, self.cam2_transform)
+=======
+        cam1_pts = self.camera_util.projectToCam(compensated_cluster, self.cam1_transform)
+        cam2_pts = self.camera_util.projectToCam(compensated_cluster, self.cam2_transform)
+>>>>>>> f7f97a8... [control] 251025 @Doyeop-knut | 최대한 최적화
 
         if cluster.numel() > 0:
             # Convert compensated_cluster to numpy for OpenCV-based color detection
@@ -1542,6 +1564,10 @@ class FormulaAutonomousSystem:
                                    [sin_yaw,  cos_yaw]])
             # Prepare a list to store cones with color information
             cones_with_color = []
+<<<<<<< HEAD
+=======
+            left, right = [], []
+>>>>>>> f7f97a8... [control] 251025 @Doyeop-knut | 최대한 최적화
 
             # Create dictionaries to map LiDAR cluster indices to bounding box indices
             lidar_to_bbox_map1 = {i: [] for i in range(len(compensated_cluster))}
@@ -1550,13 +1576,22 @@ class FormulaAutonomousSystem:
             # Convert projected points to numpy arrays for vectorized operations
             cam1_pts_np = np.array(cam1_pts) if cam1_pts else np.empty((0, 2))
             cam2_pts_np = np.array(cam2_pts) if cam2_pts else np.empty((0, 2))
+<<<<<<< HEAD
             
             # --- Associate LiDAR points with BBoxes for Camera 1 ---
             if left_bbox is not None and len(left_bbox) > 0 and len(cam1_pts_np) > 0:
+=======
+
+            if left_bbox is not None and len(left_bbox) > 0 and len(cam1_pts_np) > 0:
+                # Expand dimensions for broadcasting: cam1_pts_np (N, 2), left_bbox (M, 4)
+                # Check if point_u >= x1, point_u <= x2, point_v >= y1, point_v <= y2
+                # Resulting masks will be (N, M)
+>>>>>>> f7f97a8... [control] 251025 @Doyeop-knut | 최대한 최적화
                 u_in_x_range = (cam1_pts_np[:, 0][:, None] >= left_bbox[:, 0]) & \
                                (cam1_pts_np[:, 0][:, None] <= left_bbox[:, 2])
                 v_in_y_range = (cam1_pts_np[:, 1][:, None] >= left_bbox[:, 1]) & \
                                (cam1_pts_np[:, 1][:, None] <= left_bbox[:, 3])
+<<<<<<< HEAD
                 point_in_bbox_mask = u_in_x_range & v_in_y_range
 
                 for i_proj, i_orig in enumerate(cam1_indices):
@@ -1565,11 +1600,25 @@ class FormulaAutonomousSystem:
                         lidar_to_bbox_map1[i_orig].extend(matching_bboxes_indices.tolist())
 
             # --- Associate LiDAR points with BBoxes for Camera 2 ---
+=======
+                
+                # Combined mask (N, M) where True means point i is in bbox j
+                point_in_bbox_mask = u_in_x_range & v_in_y_range
+
+                # Populate lidar_to_bbox_map1
+                for i in range(len(compensated_cluster)):
+                    # Find which bounding boxes contain the i-th projected LiDAR point
+                    matching_bboxes_indices = np.where(point_in_bbox_mask[i])[0]
+                    if len(matching_bboxes_indices) > 0:
+                        lidar_to_bbox_map1[i].extend(matching_bboxes_indices.tolist())
+
+>>>>>>> f7f97a8... [control] 251025 @Doyeop-knut | 최대한 최적화
             if right_bbox is not None and len(right_bbox) > 0 and len(cam2_pts_np) > 0:
                 u_in_x_range = (cam2_pts_np[:, 0][:, None] >= right_bbox[:, 0]) & \
                                (cam2_pts_np[:, 0][:, None] <= right_bbox[:, 2])
                 v_in_y_range = (cam2_pts_np[:, 1][:, None] >= right_bbox[:, 1]) & \
                                (cam2_pts_np[:, 1][:, None] <= right_bbox[:, 3])
+<<<<<<< HEAD
                 point_in_bbox_mask_cam2 = u_in_x_range & v_in_y_range
 
                 for i_proj, i_orig in enumerate(cam2_indices):
@@ -1842,7 +1891,74 @@ class FormulaAutonomousSystem:
         self.midpoint_map.update(midpoints_tensor)
 =======
             global_clusters = np.empty((0, 5)) # Ensure 5 columns for [x, y, z, color_id, color_score]
+<<<<<<< HEAD
 >>>>>>> [control] 251026 @Doyeop-knut | 잘 안됨
+=======
+=======
+                
+                point_in_bbox_mask = u_in_x_range & v_in_y_range
+
+                for i in range(len(compensated_cluster)):
+                    matching_bboxes_indices = np.where(point_in_bbox_mask[i])[0]
+                    if len(matching_bboxes_indices) > 0:
+                        lidar_to_bbox_map2[i].extend(matching_bboxes_indices.tolist())
+
+            # Iterate through each 3D cluster point and determine its color
+            for i, cone_3d_veh_frame in enumerate(compensated_cluster):
+                detected_color = "unknown"
+                # Algorithm 1: Bbox-based detection
+                color_from_bbox = "unknown"
+                if i in lidar_to_bbox_map1 and lidar_to_bbox_map1[i]:
+                    bbox_index = lidar_to_bbox_map1[i][0]
+                    bbox = left_bbox[bbox_index]
+                    color_from_bbox = self.camera_util.detect_color_from_bbox(image1, bbox, debug_image=rendered_img1)
+
+                if color_from_bbox == "unknown" and i in lidar_to_bbox_map2 and lidar_to_bbox_map2[i]:
+                    bbox_index = lidar_to_bbox_map2[i][0]
+                    bbox = right_bbox[bbox_index]
+                    color_from_bbox = self.camera_util.detect_color_from_bbox(image2, bbox, debug_image=rendered_img2)
+
+                # Algorithm 2: Point-based detection
+                color_from_point = "unknown"
+                if i < len(cam1_pts):
+                    color_from_point = self.camera_util.detectConeColor(cam1_pts[i], image1, debug_image=rendered_img1)
+                
+                if color_from_point == "unknown" and i < len(cam2_pts):
+                    color_from_point = self.camera_util.detectConeColor(cam2_pts[i], image2, debug_image=rendered_img2)
+
+                # Combine results: If either algorithm finds a color, use it.
+                # Priority is given to bbox-based detection in case of conflict.
+                if color_from_bbox != "unknown":
+                    detected_color = color_from_bbox
+                elif color_from_point != "unknown":
+                    detected_color = color_from_point
+                else:
+                    detected_color = "unknown"
+                
+                # --- Color ID assignment ---
+                color_id = 0  # Default to unknown
+                if detected_color == "blue":
+                    color_id = 1
+                elif detected_color == "yellow":
+                    color_id = 2
+                elif detected_color == "orange":
+                    color_id = 3
+                
+                # Transform 3D cone from vehicle frame to map frame
+                cone_3d_map_frame_xy = np.dot(cone_3d_veh_frame[:2], rot_matrix.T) + np.array([veh_x, veh_y])
+                cone_3d_map_frame_z = cone_3d_veh_frame[2]
+                
+                cones_with_color.append([cone_3d_map_frame_xy[0], cone_3d_map_frame_xy[1], cone_3d_map_frame_z, color_id])
+                if color_id == 1:
+                    left.append([cone_3d_map_frame_xy[0], cone_3d_map_frame_xy[1]])
+                elif color_id == 2:
+                    right.append([cone_3d_map_frame_xy[0], cone_3d_map_frame_xy[1]])
+            
+            global_clusters = np.array(cones_with_color)
+        else:
+            global_clusters = np.empty((0, 4)) # Ensure global_clusters is always a 2D array with 4 columns
+>>>>>>> f7f97a8... [control] 251025 @Doyeop-knut | 최대한 최적화
+>>>>>>> [control] 251025 @Doyeop-knut | 최대한 최적화
 
 =======
             global_clusters = np.empty((0, 4)) # Ensure global_clusters is always a 2D array with 4 columns
@@ -1855,6 +1971,7 @@ class FormulaAutonomousSystem:
         self.rm_map.log_throttle(1.0)
         # print(f"closed loop  = {self.track_map.is_loop_closed}")
 
+<<<<<<< HEAD
 <<<<<<< HEAD
 <<<<<<< HEAD
         # Plan path using the map
@@ -1873,7 +1990,13 @@ class FormulaAutonomousSystem:
         path, tri, tri_points, tri_colors, midpoints, is_fallback = self.path_planner.plan_path(self.track_map.get_cones(), vehicle_state)
 >>>>>>> [control] 251024 @Doyeop-knut | 수정중
 =======
+=======
+>>>>>>> [control] 251025 @Doyeop-knut | 최대한 최적화
         path, tri, tri_points, tri_colors, midpoints, is_fallback = self.path_planner.plan_path(self.track_map.get_cones(), vehicle_state, self.track_map.is_loop_closed)
+=======
+        # Plan path using the map
+        path, tri, tri_points, tri_colors, midpoints, is_fallback = self.path_planner.plan_path(self.track_map.get_cones(), vehicle_state)
+>>>>>>> f7f97a8... [control] 251025 @Doyeop-knut | 최대한 최적화
         
 >>>>>>> [control] 251026 @Doyeop-knut | 잘 안됨
         # Visualize Map and Path
@@ -1976,8 +2099,12 @@ class FormulaAutonomousSystem:
                 camera1_image=img1,
                 camera2_image=img2,
                 lidar_points=global_clusters,
+<<<<<<< HEAD
                 map_cones=self.track_map.get_cones(),
                 provisional_cones=self.track_map.get_provisional_cones()
+=======
+                map_cones=self.track_map.get_cones()
+>>>>>>> f7f97a8... [control] 251025 @Doyeop-knut | 최대한 최적화
             )
         # # =========================================================
         
@@ -12381,6 +12508,7 @@ class PathPlanner:
     def _generate_fallback_path(self, blue_cones, yellow_cones, car_pos, car_yaw):
 <<<<<<< HEAD
 <<<<<<< HEAD
+<<<<<<< HEAD
         """Generates a simple straight path if Delaunay is not possible, handling single cone scenarios."""
         
         effective_blue_cones = blue_cones
@@ -12566,6 +12694,8 @@ class PathPlanner:
         return np.array(path), None, None, None, None, True # Add a flag to indicate it's a fallback path
 >>>>>>> [control] 251020 @Doyeop-knut | MPC 제어기 파라미터 수정 -> 증속 후 파라미터 수정 필요
 =======
+=======
+>>>>>>> [control] 251025 @Doyeop-knut | 최대한 최적화
         """
         Generates a fallback path. If one line of cones is visible, it creates a smooth path
         parallel to them. Otherwise, it generates a simple straight path.
@@ -12585,6 +12715,75 @@ class PathPlanner:
 
             # Sort the visible cones to form a line
             sorted_cones = self._sort_midpoints(np.array([[c['x'], c['y']] for c in side_cones]), car_pos, car_yaw)
+=======
+        """Generates a simple straight path if Delaunay is not possible, handling single cone scenarios."""
+        
+        effective_blue_cones = blue_cones
+        effective_yellow_cones = yellow_cones
+
+        if not blue_cones and effective_yellow_cones:
+            # Only yellow cones, create virtual blue cones
+            effective_blue_cones = []
+            for y_cone in effective_yellow_cones:
+                # Offset perpendicular to the car's current direction
+                # Assuming y_cone is [x, y] in vehicle frame or map frame
+                # If in map frame, offset needs to be relative to car_yaw
+                # For simplicity, let's assume a fixed offset perpendicular to the track
+                effective_blue_cones.append({'x': y_cone['x'] - self.lane_offset * math.sin(car_yaw),
+                                             'y': y_cone['y'] + self.lane_offset * math.cos(car_yaw)})
+            rospy.logwarn_throttle(1.0, "PathPlanner: Only yellow cones, generating virtual blue cones.")
+        elif effective_blue_cones and not effective_yellow_cones:
+            # Only blue cones, create virtual yellow cones
+            effective_yellow_cones = []
+            for b_cone in effective_blue_cones:
+                effective_yellow_cones.append({'x': b_cone['x'] + self.lane_offset * math.sin(car_yaw),
+                                               'y': b_cone['y'] - self.lane_offset * math.cos(car_yaw)})
+            rospy.logwarn_throttle(1.0, "PathPlanner: Only blue cones, generating virtual yellow cones.")
+        elif not effective_blue_cones and not effective_yellow_cones:
+            rospy.logwarn_throttle(1.0, "PathPlanner: No cones for fallback path.")
+            return None, None, None, None, None, True
+
+        rospy.logwarn_throttle(1.0, "PathPlanner: Not enough cones for triangulation, generating fallback path.")
+        
+        avg_blue = np.mean(np.array([[c['x'], c['y']] for c in effective_blue_cones]), axis=0)
+        avg_yellow = np.mean(np.array([[c['x'], c['y']] for c in effective_yellow_cones]), axis=0)
+        
+        midpoint = (avg_blue + avg_yellow) / 2.0
+        
+        # Generate a direction vector from car_pos towards the midpoint, aligned with car_yaw
+        # This ensures the fallback path is somewhat aligned with the car's current heading
+        direction_to_midpoint = midpoint - car_pos
+        
+        # Project direction_to_midpoint onto the car's current heading to get a forward-biased direction
+        car_heading_vec = np.array([math.cos(car_yaw), math.sin(car_yaw)])
+        
+        # Use a weighted average or just the car's heading if the midpoint is too far off
+        # For a simple straight path, let's just extend from car_pos in car_yaw direction
+        
+        # Let's make the fallback path point towards the midpoint, but ensure it's not going backward
+        
+        # Calculate a target direction that blends the car's current heading and the direction to the midpoint
+        # This helps in smoothly transitioning to the fallback path
+        
+        # Option 1: Simple straight path along car's current yaw
+        # direction_vec_normalized = car_heading_vec
+        
+        # Option 2: Path towards the midpoint
+        if np.linalg.norm(direction_to_midpoint) < 1:
+            direction_vec_normalized = car_heading_vec # If midpoint is too close, just go straight
+        else:
+            direction_vec_normalized = direction_to_midpoint / np.linalg.norm(direction_to_midpoint)
+            # Ensure it's generally forward
+            if np.dot(direction_vec_normalized, car_heading_vec) < 0: # If pointing backward
+                direction_vec_normalized = car_heading_vec # Revert to car's heading
+        
+        # Generate path points
+        path = [car_pos + direction_vec_normalized * i * 1.0 for i in range(1, 6)] # 5 points, 1m spacing
+        
+        # Add the midpoint as the first point if it's not too far
+        if np.linalg.norm(midpoint - car_pos) < 10.0: # Only if midpoint is reasonably close
+            path.insert(0, midpoint)
+>>>>>>> f7f97a8... [control] 251025 @Doyeop-knut | 최대한 최적화
             
             if len(sorted_cones) < 2:
                 # Not enough cones to define a line, revert to simple straight path
@@ -14417,10 +14616,13 @@ class Control:
         self.wheelbase = rospy.get_param("/control/Vehicle/wheelbase", 1.54)
         self.max_steer = math.radians(rospy.get_param("/control/Vehicle/max_steer_angle", 10.0)) # radians
 <<<<<<< HEAD
+<<<<<<< HEAD
         self.max_accel = rospy.get_param("/control/Vehicle/max_accel", 0.5) # m/s^2
         self.min_accel = rospy.get_param("/control/Vehicle/min_accel", -0.5) # m/s^2 (braking)
 >>>>>>> [control] 251025 @Doyeop-knut | 최대한 최적화
 =======
+=======
+>>>>>>> [control] 251025 @Doyeop-knut | 최대한 최적화
         self.car_mass = rospy.get_param("/control/Vehicle/car_mass", 255.0)
         self.Iz = rospy.get_param("/control/Vehicle/Iz",150.0)
         self.front_axle_distance = rospy.get_param("/control/Vehicle/front_axle_distance", 0.465)
@@ -14434,7 +14636,14 @@ class Control:
         
         self.lat_stiff_coeff = rospy.get_param("/control/TireParam/lat_stiff_coeff", 48.0)
         self.friction_scale = rospy.get_param("/cotnrol/TireParam/friction_scale", 1.4)
+<<<<<<< HEAD
 >>>>>>> [control] 251025 @Doyeop-knut | 동역학 기반 mpc
+=======
+=======
+        self.max_accel = rospy.get_param("/control/Vehicle/max_accel", 0.5) # m/s^2
+        self.min_accel = rospy.get_param("/control/Vehicle/min_accel", -0.5) # m/s^2 (braking)
+>>>>>>> f7f97a8... [control] 251025 @Doyeop-knut | 최대한 최적화
+>>>>>>> [control] 251025 @Doyeop-knut | 최대한 최적화
 
         # Common
         self.kp_throttle = rospy.get_param("/control/SpeedControl/pid_kp", 0.5)
@@ -14946,6 +15155,7 @@ class Control:
         return throttle, normalized_steer, brake
 
 <<<<<<< HEAD
+<<<<<<< HEAD
     def _cost_function(self, u, *args):
         initial_state, ref_path, target_speed, weights, horizon, dt = args
         
@@ -15073,6 +15283,8 @@ class Control:
         return cost
 =======
 >>>>>>> [control] 251026 @Doyeop-knut | 잘 안됨
+=======
+>>>>>>> [control] 251025 @Doyeop-knut | 최대한 최적화
     
     # _solve_ltv_mpc 내부에서 4상태 → 5상태로 변경
     def _solve_ltv_mpc(self, x0, U_ref, kappa_ref, horizon, dt, is_fallback):
@@ -15080,6 +15292,50 @@ class Control:
 
         Cf, Cr = self._cornering_stiffness(self._ax_prev)
         Ad, Bd, dd = self._ltv_mats_long(U=max(U_ref,0.5), kappa=kappa_ref, Cf=Cf, Cr=Cr, dt=dt)
+=======
+    def _cost_function(self, u, *args):
+        initial_state, ref_path, target_speed, weights, horizon, dt = args
+        
+        # Unpack control inputs
+        accels = u[0::2]
+        steers = u[1::2]
+
+        # Predict states over the horizon
+        predicted_states = np.zeros((horizon + 1, 4))
+        predicted_states[0] = initial_state
+        for i in range(horizon):
+            # Kinematic Bicycle Model
+            x, y, yaw, v = predicted_states[i]
+            a = accels[i]
+            delta = steers[i]
+            # Update state
+            x += v * math.cos(yaw) * dt
+            y += v * math.sin(yaw) * dt
+            yaw += v / self.wheelbase * math.tan(delta) * dt
+            v += a * dt
+            predicted_states[i+1] = [x, y, yaw, v]
+        # Calculate cost
+        cost = 0.0
+        closest_idx = 0
+        search_window = 5  
+        # Find closest reference path points for each predicted state
+        for i in range(1, horizon + 1):
+            pred_x, pred_y, pred_yaw, pred_v = predicted_states[i]
+            # Find closest point on reference path in a search window
+            start_idx = max(0, closest_idx - search_window)
+            end_idx = min(len(ref_path), closest_idx + search_window)
+            search_space = ref_path[start_idx:end_idx]
+            distances = np.linalg.norm(search_space - np.array([pred_x, pred_y]), axis=1)
+            closest_local_idx = np.argmin(distances)
+            closest_idx = start_idx + closest_local_idx
+            # Find closest point on reference path
+            # distances = np.linalg.norm(ref_path - np.array([pred_x, pred_y]), axis=1)
+            # closest_idx = np.argmin(distances)
+            
+            # Cross-track error
+            ref_p1 = ref_path[closest_idx]
+            ref_p2 = ref_path[closest_idx + 1] if closest_idx < len(ref_path) - 1 else ref_p1
+>>>>>>> f7f97a8... [control] 251025 @Doyeop-knut | 최대한 최적화
 
         # Dynamically adjust weights based on speed and curvature
         Wy, Wpsi, Wvy, Wr, Wax, Wde, Wdax, Wdde = self._weight_profile(U_ref, abs(kappa_ref))
@@ -15170,6 +15426,7 @@ class Control:
         ax_lim = self._friction_ellipse_ax_limit(U=max(x0[4], U_ref), kappa=kappa_ref)
         ax0 = float(np.clip(ax0, max(self.ax_min, -ax_lim), min(self.ax_max, ax_lim)))
 
+<<<<<<< HEAD
         # δ 포화/레이트
         ax0, delta0 = self._project_with_rate(ax0, delta0)
 
@@ -15177,6 +15434,14 @@ class Control:
         self.predicted_state_seq = self._rollout_predict(x0, Ad, Bd, dd, Uvec)
 
         return ax0, delta0
+=======
+        # Control rate cost (smoothness)
+        cost += weights['w_accel_rate'] * np.sum((accels[1:] - accels[:-1])**2)
+        cost += weights['w_steer_rate'] * np.sum((steers[1:] - steers[:-1])**2)
+        
+        self._predicted_states = predicted_states # Store for visualization
+        return cost
+>>>>>>> f7f97a8... [control] 251025 @Doyeop-knut | 최대한 최적화
 
     def _compute_mpc(self, vehicle_state, path, is_fallback=False):
         # 1. Unpack vehicle state
@@ -15291,6 +15556,7 @@ class Control:
                 weights = self.mpc_weights_racing
                 base_target_speed = self.post_lc_target_speed
             else:
+<<<<<<< HEAD
                 weights = self.mpc_weights_mapping
                 base_target_speed = self.pre_lc_target_speed
             horizon = self.mpc_horizon
@@ -15533,6 +15799,91 @@ class Control:
         self._delta_prev = delta_cmd
 
         # 6. Convert acceleration to throttle/brake
+=======
+                target_speed_params = {
+                    'target_speed': self.pre_lc_target_speed,
+                    'min_speed': self.pre_lc_min_speed,
+                    'curvature_speed_factor': self.pre_lc_curvature_speed_factor,
+                    'curvature_lookahead': self.pre_lc_curvature_lookahead
+                }
+                weights = self.mpc_weights_pre_lc.copy() # Use a copy to avoid modifying original params
+
+            path_curvatures = self.path_planner._calculate_path_curvature(path, target_speed_params['curvature_lookahead'])
+            lookahead_curvatures = path_curvatures[:5]
+            avg_curvature = np.mean(lookahead_curvatures) if lookahead_curvatures else 0.0
+            
+            mpc_target_speed = target_speed_params['target_speed'] / (1.0 + target_speed_params['curvature_speed_factor'] * abs(avg_curvature))
+            mpc_target_speed = np.clip(mpc_target_speed, target_speed_params['min_speed'], target_speed_params['target_speed'])
+
+        horizon = weights.get('horizon', 10) # default to 10 if not found
+        dt = weights.get('dt', 0.1) # default to 0.1 if not found
+
+        # Apply speed-proportional scaling to MPC weights
+        # Normalize current speed by a maximum expected speed for scaling factor
+        normalized_speed = current_speed / self.max_speed_for_scaling
+        # Use a power function to make scaling more aggressive or less aggressive
+        speed_scaling_factor = (normalized_speed ** self.mpc_speed_scaling_factor) if self.mpc_speed_scaling_factor != 0 else 1.0
+        speed_scaling_factor = np.clip(speed_scaling_factor, 0.1, 2.0) # Clip to reasonable range
+
+        # Example: Increase path following weights with speed, decrease control input weights
+        weights['w_cte'] *= speed_scaling_factor
+        weights['w_etheta'] *= speed_scaling_factor
+        weights['w_vel'] *= speed_scaling_factor # Penalize velocity error more at higher speeds
+
+        # At higher speeds, generally want tighter path following and smoother control inputs.
+        # So, increase penalties for path deviation and control input changes.
+        weights['w_accel'] *= speed_scaling_factor
+        weights['w_steer'] /= speed_scaling_factor
+        weights['w_accel_rate'] *= speed_scaling_factor
+        weights['w_steer_rate'] *= speed_scaling_factor
+
+        # Get reference path for the horizon
+        path_points = np.array(path, dtype=np.float32)
+        distances = np.linalg.norm(path_points - np.array([veh_x, veh_y]), axis=1)
+        start_idx = np.argmin(distances)
+        ref_path = path_points[start_idx:start_idx + horizon + 2] # Need one extra point for heading calculation
+        if len(ref_path) < horizon + 2:
+            # Pad the reference path if it's too short
+            last_point = ref_path[-1]
+            padding = np.array([last_point] * (horizon + 2 - len(ref_path)))
+            ref_path = np.vstack([ref_path, padding])
+
+        # Initial guess for control inputs (warm start)
+        if not hasattr(self, "_u_prev") or self._u_prev.shape[0] != 2 * horizon:
+            self._u_prev = np.zeros(2 * horizon)
+        
+        u0 = np.roll(self._u_prev, -2)
+        u0[-2:] = u0[-4:-2]
+
+        # Bounds for control inputs
+        bounds = []
+        for _ in range(horizon):
+            bounds.append((self.min_accel, self.max_accel))
+            bounds.append((-self.max_steer, self.max_steer))
+
+        # --- Solve the optimization problem ---
+        solution = minimize(
+            self._cost_function,
+            u0,
+            args=(initial_state, ref_path, mpc_target_speed, weights, horizon, dt),
+            method='SLSQP',
+            bounds=bounds,
+            options={'maxiter': 5, 'ftol': 1e-5, 'disp': False}
+        )
+        self._u_prev = solution.x.copy()
+
+        # Get the predicted states for visualization
+        predicted_path = self._predicted_states[:, :2] # Extract x, y coordinates
+
+        # Get the first optimal control input
+        optimal_accel = solution.x[0]
+        optimal_steer = solution.x[1]
+        
+        # print("MPC Optimization Success:", solution.success, "Cost:", solution.fun)
+        # print("Optimal Accel:", optimal_accel, "Optimal Steer:", optimal_steer)
+        # print(self.max_accel, self.min_accel)
+        # --- Map acceleration to throttle/brake ---
+>>>>>>> f7f97a8... [control] 251025 @Doyeop-knut | 최대한 최적화
         throttle = 0.0
         brake = 0.0
         if ax_cmd > 0:
