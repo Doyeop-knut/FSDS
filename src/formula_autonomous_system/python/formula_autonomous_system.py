@@ -11,7 +11,6 @@
 """
 
 import rospy
-import traceback
 import numpy as np
 import cv2
 import math
@@ -81,11 +80,15 @@ import matplotlib.pyplot as plt
 from scipy.spatial.distance import cdist
 from scipy.interpolate import splprep, splev
 from scipy.spatial import Delaunay
+<<<<<<< HEAD
 from scipy.optimize import minimize, linear_sum_assignment
 <<<<<<< HEAD
 >>>>>>> test
 =======
 >>>>>>> [control] 251026 @Doyeop-knut | 잘 안됨
+=======
+from scipy.optimize import minimize
+>>>>>>> [control] 251025 @Doyeop-knut | 최대한 최적화 (롤백)
 
 # Camera
 import torch
@@ -387,8 +390,25 @@ class FormulaAutonomousSystem:
         self.path_planner = PathPlanner(self.device)
         self.controller = Control(self.path_planner, self.track_map, self.device) # Control 클래스에 path_planner와 track_map 인스턴스 전달
 
+<<<<<<< HEAD
         self.pointcloud_sub = rospy.Subscriber("/lidar_pointcloud", PointCloud2, self.pointcloud_callback)
         self.cones_pub = rospy.Publisher("/detected_cones", PointCloud2, queue_size=10) # Example publisher for detected cones
+=======
+    def get_parameters(self):
+        """Get parameters from ROS parameter server"""
+        self.x_min, self.x_max = rospy.get_param("/perception/lidar_roi_extraction/x_min") , rospy.get_param("/perception/lidar_roi_extraction/x_max")
+        self.y_min, self.y_max = rospy.get_param("/perception/lidar_roi_extraction/y_min") , rospy.get_param("/perception/lidar_roi_extraction/y_max")
+        self.z_min, self.z_max = rospy.get_param("/perception/lidar_roi_extraction/z_min") , rospy.get_param("/perception/lidar_roi_extraction/z_max")
+        self.ransac_iter = rospy.get_param("/perception/lidar_ground_removal/ransac_iterations")
+        self.ransac_distance = rospy.get_param("/perception/lidar_ground_removal/ransac_distance_threshold")
+        self.dbscan_eps = rospy.get_param("/perception/lidar_clustering/dbscan_eps")
+        self.dbscan_points = rospy.get_param("/perception/lidar_clustering/dbscan_min_points")
+        self.left_tx, self.left_ty, self.left_tz = rospy.get_param("/perception/camera_extrinsics/translation_x"), rospy.get_param("/perception/camera_extrinsics/translation_y"),rospy.get_param("/perception/camera_extrinsics/translation_z")
+        self.left_rr, self.left_rp, self.left_ry = rospy.get_param("/perception/camera_extrinsics/rotation_roll"), rospy.get_param("/perception/camera_extrinsics/rotation_pitch"), rospy.get_param("/perception/camera_extrinsics/rotation_yaw")
+        self.right_tx, self.right_ty, self.right_tz = rospy.get_param("/perception/camera_right_extrinsics/translation_x"), rospy.get_param("/perception/camera_right_extrinsics/translation_y"),rospy.get_param("/perception/camera_right_extrinsics/translation_z")
+        self.right_rr, self.right_rp, self.right_ry = rospy.get_param("/perception/camera_right_extrinsics/rotation_roll"), rospy.get_param("/perception/camera_right_extrinsics/rotation_pitch"), rospy.get_param("/perception/camera_right_extrinsics/rotation_yaw")
+        return True
+>>>>>>> [control] 251025 @Doyeop-knut | 최대한 최적화 (롤백)
 
         # RANSAC parameters for cone detection
         self.ransac_threshold = 0.05  # Distance threshold for inliers
@@ -418,6 +438,7 @@ class FormulaAutonomousSystem:
         points_np = np.array(points_list, dtype=np.float32)
         points_tensor = torch.from_numpy(points_np).to(self.device)
 
+<<<<<<< HEAD
         # Filter points close to the ground for cone base detection
         # Assuming the ground is around z=0. Adjust if your lidar frame has a different ground level.
         ground_points_mask = torch.abs(points_tensor[:, 2]) < self.ground_plane_z_threshold
@@ -478,6 +499,29 @@ class FormulaAutonomousSystem:
         self.tracker = ConeTracker()
         self.trajectory_planner = TrajectoryPlanner()
         self.controller = StanleyController()
+=======
+        rospy.loginfo_throttle(1.0,f"v = {round(math.sqrt(vehicle_state[3]**2 + vehicle_state[4]**2),4)} m/s")
+        ## LiDAR Processed
+        points=self.get_lidar_point_cloud(lidar_msg)
+        filtered = self.lidar_util.filtering_points(points, (self.x_min, self.x_max), (self.y_min, self.y_max), (self.z_min, self.z_max))
+        removal =  self.lidar_util.ransac_plane_removal(filtered, threshold=self.ransac_distance, max_trials=self.ransac_iter)
+        cluster = self.lidar_util.cluster_points(removal, eps=self.dbscan_eps, min_samples=self.dbscan_points)
+       
+        image1 = self.get_camera_image(camera1_msg)
+        image2 = self.get_camera_image(camera2_msg)
+        image1 = self.camera_util.preprocessImage(image1)
+        image2 = self.camera_util.preprocessImage(image2)
+        
+        # Process image1
+        img1_bgr = np.ascontiguousarray(image1)  # ★ 보장
+        img1_rgb = cv2.cvtColor(img1_bgr, cv2.COLOR_BGR2RGB)
+        img1_tensor = torch.from_numpy(img1_rgb).permute(2,0,1).float().div_(255.0).pin_memory()
+
+        # Process image2
+        img2_bgr = np.ascontiguousarray(image2)
+        img2_rgb = cv2.cvtColor(img2_bgr, cv2.COLOR_BGR2RGB)
+        img2_tensor = torch.from_numpy(img2_rgb).permute(2,0,1).float().div_(255.0).pin_memory()
+>>>>>>> [control] 251025 @Doyeop-knut | 최대한 최적화 (롤백)
 
         rospy.on_shutdown(self.shutdown_hook)
         
@@ -536,6 +580,7 @@ class FormulaAutonomousSystem:
         self.path_planner = PathPlanner()
 
 <<<<<<< HEAD
+<<<<<<< HEAD
         self.model = torch.load('/home/smac/FSDS/yolo5-cone-standalone-cpu.pt', weights_only=False)  # Adjust path as needed
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.model.to(self.device) # Move model to GPU if available
@@ -549,6 +594,10 @@ class FormulaAutonomousSystem:
         # rospkg를 사용하여 모델 경로 동적으로 찾기
         rospack = rospkg.RosPack()
         self.last_predictions = None
+=======
+        rendered_img1, left_bbox, left_conf = self.camera_util._process_and_draw_detections(image1, raw_predictions1)
+        rendered_img2, right_bbox, right_conf = self.camera_util._process_and_draw_detections(image2, raw_predictions2)
+>>>>>>> [control] 251025 @Doyeop-knut | 최대한 최적화 (롤백)
         
         package_path = rospack.get_path('formula_autonomous_system')
 <<<<<<< HEAD
@@ -600,18 +649,34 @@ class FormulaAutonomousSystem:
         self.cone_max_radius = 0.3    # Maximum expected cone base radius (e.g., 30 cm)
         self.ground_plane_z_threshold = 0.1 # Max Z distance from ground to consider for cone base
 
+<<<<<<< HEAD
         # DBSCAN parameters for clustering detected cone points
         self.dbscan_eps = 0.3         # Maximum distance between two samples for one to be considered as in the neighborhood of the other
         self.dbscan_min_samples = 5   # The number of samples (or total weight) in a neighborhood for a point to be considered as a core point. 
+=======
+        # print(color)
+        cam1_pts = self.camera_util.projectToCam(compensated_cluster, self.cam1_transform)
+        cam2_pts = self.camera_util.projectToCam(compensated_cluster, self.cam2_transform)
+>>>>>>> [control] 251025 @Doyeop-knut | 최대한 최적화 (롤백)
 
         rospy.loginfo("Cone Detection GPU Node Initialized.")
 
+<<<<<<< HEAD
         self.get_parameters()
 <<<<<<< HEAD
 <<<<<<< HEAD
 <<<<<<< HEAD
 >>>>>>> [Cone Detection] 251018 @Doyeop-knut @marigold0916 | RetinaNet 기반 코드
 =======
+=======
+            cos_yaw = math.cos(veh_yaw)
+            sin_yaw = math.sin(veh_yaw)
+            rot_matrix = np.array([[cos_yaw, -sin_yaw],
+                                   [sin_yaw,  cos_yaw]])
+            # Prepare a list to store cones with color information
+            cones_with_color = []
+            left, right = [], []
+>>>>>>> [control] 251025 @Doyeop-knut | 최대한 최적화 (롤백)
 
     def pointcloud_callback(self, msg):
         rospy.loginfo("Received point cloud message.")
@@ -622,6 +687,7 @@ class FormulaAutonomousSystem:
             self.publish_cones(torch.tensor([], device=self.device), msg.header) # Publish empty if no cones
             return
 
+<<<<<<< HEAD
         points_np = np.array(points_list, dtype=np.float32)
         points_tensor = torch.from_numpy(points_np).to(self.device)
 
@@ -637,6 +703,23 @@ class FormulaAutonomousSystem:
 
         # Project 3D ground points to 2D (x, y) for circle RANSAC
         points_2d = ground_points[:, :2]
+=======
+            # Convert projected points to numpy arrays for vectorized operations
+            cam1_pts_np = np.array(cam1_pts) if cam1_pts else np.empty((0, 2))
+            cam2_pts_np = np.array(cam2_pts) if cam2_pts else np.empty((0, 2))
+
+            if left_bbox is not None and len(left_bbox) > 0 and len(cam1_pts_np) > 0:
+                # Expand dimensions for broadcasting: cam1_pts_np (N, 2), left_bbox (M, 4)
+                # Check if point_u >= x1, point_u <= x2, point_v >= y1, point_v <= y2
+                # Resulting masks will be (N, M)
+                u_in_x_range = (cam1_pts_np[:, 0][:, None] >= left_bbox[:, 0]) & \
+                               (cam1_pts_np[:, 0][:, None] <= left_bbox[:, 2])
+                v_in_y_range = (cam1_pts_np[:, 1][:, None] >= left_bbox[:, 1]) & \
+                               (cam1_pts_np[:, 1][:, None] <= left_bbox[:, 3])
+                
+                # Combined mask (N, M) where True means point i is in bbox j
+                point_in_bbox_mask = u_in_x_range & v_in_y_range
+>>>>>>> [control] 251025 @Doyeop-knut | 최대한 최적화 (롤백)
 
         # Perform RANSAC for circle detection on GPU
         best_circle_params, best_inliers_2d = self.ransac_gpu(
@@ -644,6 +727,7 @@ class FormulaAutonomousSystem:
             self.cone_min_radius, self.cone_max_radius
         )
 
+<<<<<<< HEAD
         detected_cone_centroids = torch.tensor([], device=self.device)
         if best_circle_params is not None and best_inliers_2d.shape[0] > 0:
             cx, cy, r = best_circle_params
@@ -1613,11 +1697,14 @@ class FormulaAutonomousSystem:
                         lidar_to_bbox_map1[i].extend(matching_bboxes_indices.tolist())
 
 >>>>>>> f7f97a8... [control] 251025 @Doyeop-knut | 최대한 최적화
+=======
+>>>>>>> [control] 251025 @Doyeop-knut | 최대한 최적화 (롤백)
             if right_bbox is not None and len(right_bbox) > 0 and len(cam2_pts_np) > 0:
                 u_in_x_range = (cam2_pts_np[:, 0][:, None] >= right_bbox[:, 0]) & \
                                (cam2_pts_np[:, 0][:, None] <= right_bbox[:, 2])
                 v_in_y_range = (cam2_pts_np[:, 1][:, None] >= right_bbox[:, 1]) & \
                                (cam2_pts_np[:, 1][:, None] <= right_bbox[:, 3])
+<<<<<<< HEAD
 <<<<<<< HEAD
                 point_in_bbox_mask_cam2 = u_in_x_range & v_in_y_range
 
@@ -9711,6 +9798,8 @@ class Control:
 >>>>>>> [yolo]
             if min_dist < self.association_threshold:
                 obs_idx = obs_indices_for_color[best_match_local_idx]
+=======
+>>>>>>> [control] 251025 @Doyeop-knut | 최대한 최적화 (롤백)
                 
                 if obs_idx not in matched_obs_indices:
                     self._update_cone(map_idx, processed_observations[obs_idx])
@@ -9771,16 +9860,34 @@ class Control:
             if not np.any(color_mask):
                 continue
             
+<<<<<<< HEAD
             row = dist_matrix[i, color_mask]
             ref_indices = np.where(color_mask)[0]
+=======
+            global_clusters = np.array(cones_with_color)
+        else:
+            global_clusters = np.empty((0, 4)) # Ensure global_clusters is always a 2D array with 4 columns
+>>>>>>> [control] 251025 @Doyeop-knut | 최대한 최적화 (롤백)
 
             if row.size == 0:
                 continue
 
+<<<<<<< HEAD
             best_ref_local_idx = np.argmin(row)
             if row[best_ref_local_idx] < self.association_threshold:
                 src_pts.append(c_cone[:2])
                 dst_pts.append(reference_cones[ref_indices[best_ref_local_idx]][:2])
+=======
+        # Plan path using the map
+        path, tri, tri_points, tri_colors, midpoints, is_fallback = self.path_planner.plan_path(self.track_map.get_cones(), vehicle_state)
+        
+        # Visualize Map and Path
+        self.publish_map_cones()
+        self.publish_triangulation(tri, tri_points, tri_colors)
+        self.publish_midpoints(midpoints)
+        if path is not None:
+            self.publish_path(path)
+>>>>>>> [control] 251025 @Doyeop-knut | 최대한 최적화 (롤백)
 
         if len(src_pts) < self.lc_min_match_pairs:
             rospy.logwarn_throttle(1.0, f"TrackMap: Found only {len(src_pts)} pairs for LC, need {self.lc_min_match_pairs}.")
@@ -9801,6 +9908,7 @@ class Control:
         src_transformed = cv2.transform(src_pts_np.reshape(-1, 1, 2), transform_matrix).reshape(-1, 2)
         avg_error = np.mean(np.linalg.norm(src_transformed - dst_pts_np, axis=1))
 
+<<<<<<< HEAD
         if avg_error > self.lc_max_transform_error:
             rospy.logwarn(f"TrackMap: Loop closure failed. High transform error: {avg_error:.2f}m")
             return new_observations
@@ -9808,6 +9916,22 @@ class Control:
         # --- 5. Apply Correction ---
         rospy.loginfo(f"*** Loop Closure Successful! *** Error: {avg_error:.2f}m. Correcting observations.")
         self.is_loop_closed = True
+=======
+        if self.enable_logging:
+            # ==================== Data Logger (Test) ====================
+            self.data_logger.log_entry(
+                autonomous_mode=autonomous_mode.data,
+                control_command=control_command_msg,
+                imu_acc=acc,
+                imu_gyro=gyro,
+                state= vehicle_state,
+                camera1_image=img1,
+                camera2_image=img2,
+                lidar_points=global_clusters,
+                map_cones=self.track_map.get_cones()
+            )
+        # # =========================================================
+>>>>>>> [control] 251025 @Doyeop-knut | 최대한 최적화 (롤백)
         
         # Apply the transform to ALL new observations for this timestep
         new_obs_pts = new_observations[:, :2].astype(np.float32)
@@ -10193,6 +10317,7 @@ class PathPlanner:
         return rgb_image
     
 <<<<<<< HEAD
+<<<<<<< HEAD
     def projectToCam(self, points: torch.Tensor, transform: list) -> list:
         if points.numel() == 0:
             return []
@@ -10365,11 +10490,17 @@ class PathPlanner:
     # 경로 오차가 커질수록 속도 상한을 낮춤 (하한 유지)
         ey_thr1, ey_thr2 = 0.4, 0.8
         epsi_thr1, epsi_thr2 = np.deg2rad(8.0), np.deg2rad(15.0)
+=======
+    def projectToCam(self, points, transform):
+        if not points.size: # Handle empty points array
+            return []
+>>>>>>> [control] 251025 @Doyeop-knut | 최대한 최적화 (롤백)
 
         scale_ey = 1.0
         if abs(ey) > ey_thr2:       scale_ey = 0.5
         elif abs(ey) > ey_thr1:     scale_ey = 0.75
 
+<<<<<<< HEAD
         scale_epsi = 1.0
         if abs(epsi) > epsi_thr2:   scale_epsi = 0.5
         elif abs(epsi) > epsi_thr1: scale_epsi = 0.75
@@ -10384,13 +10515,35 @@ class PathPlanner:
         base = 20.0
         k = 0.5
         return float(np.clip(1.0 - k * max(0.0, wpsi_current - base), 0.7, 1.0))
+=======
+        # Apply the transformation to all points at once
+        # points is (N, 3), rotation is (3, 3), translation is (3,)
+        cone_points_in_cam = np.dot(points, rotation.T) + translation
+
+        # Filter points in front of the camera (ROS X-axis points forward)
+        valid_mask = cone_points_in_cam[:, 0] > 0
+        cone_points_in_cam_filtered = cone_points_in_cam[valid_mask]
+
+        if not cone_points_in_cam_filtered.size:
+            return []
+>>>>>>> [control] 251025 @Doyeop-knut | 최대한 최적화 (롤백)
 
     def _apply_speed_policies(self, U_ref_base, kappa_ref, ey, epsi, wpsi_current, r=None, reliability=1.0, is_fallback=False):
         # 곡률 기반
         U_ref = self._cap_speed_by_curvature(self._smooth_vref(U_ref_base), kappa_ref)
 
+<<<<<<< HEAD
         # 경로오차 기반 캡 (앞서 제공한 함수)
         U_ref = self._error_adaptive_speed_cap(U_ref, ey=ey, epsi=epsi, r=r)
+=======
+        # Perform pinhole projection
+        u = self.fx * (x_cv / z_cv) + self.px
+        v = self.fy * (y_cv / z_cv) + self.py
+        
+        # Combine u and v into a list of tuples
+        projected_points = np.vstack((u, v)).T.tolist()
+        return projected_points
+>>>>>>> [control] 251025 @Doyeop-knut | 최대한 최적화 (롤백)
 
 <<<<<<< HEAD
         # w_epsi 연동 스케일
@@ -10429,6 +10582,7 @@ class PathPlanner:
         if x_max <= x_min or y_max <= y_min:
             if debug_image is not None and (0 <= u < rgb_image.shape[1] and 0 <= v < rgb_image.shape[0]):
                 cv2.circle(debug_image, (u, v), 8, (0, 0, 255), -1) # Draw red dot for invalid ROI
+<<<<<<< HEAD
 <<<<<<< HEAD
 <<<<<<< HEAD
             return {"blue": 0.0, "yellow": 0.0, "orange": 0.0} # Return probabilities
@@ -10575,6 +10729,9 @@ class PathPlanner:
 =======
             return "unknown", 0.0
 >>>>>>> [control] 251026 @Doyeop-knut | 잘 안됨
+=======
+            return "unknown"
+>>>>>>> [control] 251025 @Doyeop-knut | 최대한 최적화 (롤백)
 
         # ZOH(안정형 이산화 사용 권장: Tustin)
         Ad, Bd, dd = self._discretize_tustin(A, B, d, dt)
@@ -10607,6 +10764,7 @@ class PathPlanner:
         if roi.size == 0: # Check if ROI is empty
 <<<<<<< HEAD
 <<<<<<< HEAD
+<<<<<<< HEAD
             return {"blue": 0.0, "yellow": 0.0, "orange": 0.0} # Return probabilities
 >>>>>>> [coneDetection] 251021 @Doyeop-knut | 롤백 및 iou 적용,  색상 확률값 연동
 =======
@@ -10615,6 +10773,9 @@ class PathPlanner:
 =======
             return "unknown", 0.0
 >>>>>>> [control] 251026 @Doyeop-knut | 잘 안됨
+=======
+            return "unknown"
+>>>>>>> [control] 251025 @Doyeop-knut | 최대한 최적화 (롤백)
 
     def _compute_pure_pursuit(self, vehicle_state, path, is_fallback=False):
         # Unpack vehicle state
@@ -10656,7 +10817,7 @@ class PathPlanner:
                 
                 # 신뢰도 점수 = 픽셀 수 * (평균 채도 + 평균 명도)
                 # 이렇게 하면 흐릿한 색상의 넓은 영역보다 뚜렷한 색상의 작은 영역이 더 높은 점수를 받을 수 있음
-                color_scores[color] = pixel_count * (avg_saturation + avg_value) /roi.size
+                color_scores[color] = pixel_count * (avg_saturation + avg_value)
                 # print(f"from LiDAR - All score = {color_scores}")
 
 <<<<<<< HEAD
@@ -10725,6 +10886,7 @@ class PathPlanner:
             # 점수 계산에 사용된 픽셀 수가 전체 ROI의 5% 미만이면 노이즈로 간주
             # print(f"LiDAR - count from mask = {cv2.countNonZero(masks[dominant_color])}, limit = {roi.size * 0.05}")
 <<<<<<< HEAD
+<<<<<<< HEAD
             if cv2.countNonZero(masks[dominant_color]) < (roi.size * 0.02):
                  dominant_color = "unknown"
 
@@ -10747,6 +10909,17 @@ class PathPlanner:
             
         return dominant_color, max_score
 >>>>>>> [control] 251026 @Doyeop-knut | 잘 안됨
+=======
+            if cv2.countNonZero(masks[dominant_color]) < (roi.size * 0.04):
+                 dominant_color = "unknown"
+
+        if debug_image is not None and dominant_color != "unknown":
+             # Put text for the detected color
+             cv2.putText(debug_image, dominant_color, (x_min, y_min - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255,255,255), 1)
+            #  print(f"from LiDAR - {color_scores}, color = {dominant_color} \n")
+
+        return dominant_color
+>>>>>>> [control] 251025 @Doyeop-knut | 최대한 최적화 (롤백)
     def _process_and_draw_detections(self, image, raw_predictions, conf_threshold=0.5, iou_threshold=0.45):
         """
         torchvision RetinaNet 출력 처리 및 바운딩 박스 그리기
@@ -10886,14 +11059,14 @@ class PathPlanner:
         y2 = min(image.shape[0], y2)
 
         if x2 <= x1 or y2 <= y1:
-            return "unknown", 0.0
+            return "unknown"
 
         roi = image[y1:y2, x1:x2]
 
         
 
         if roi.size == 0:
-            return "unknown", 0.0
+            return "unknown"
 
         hsv_roi = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
         
@@ -10914,7 +11087,8 @@ class PathPlanner:
                 mean_sv = cv2.mean(hsv_roi, mask=mask)
                 avg_saturation = mean_sv[1] / 255.0
                 avg_value = mean_sv[2] / 255.0
-                color_scores[color] = pixel_count * (avg_saturation + avg_value) / roi.size
+                color_scores[color] = pixel_count * (avg_saturation + avg_value)
+                # print(f"from bbox - All score = {color_scores}")
 
         # 가장 높은 점수를 받은 색상을 선택
         if not color_scores:
@@ -10939,17 +11113,22 @@ class PathPlanner:
         if dominant_color != "unknown":
             # print(f"bbox - count from mask = {cv2.countNonZero(masks[dominant_color])}, limit = {roi.size * 0.05}")
 <<<<<<< HEAD
+<<<<<<< HEAD
             if cv2.countNonZero(masks[dominant_color]) < (roi.size * 0.02):
 =======
             if cv2.countNonZero(masks[dominant_color]) < roi.size * 0.01 or cv2.countNonZero(masks[dominant_color]) > roi.size * 0.95: # Require at least 10 pixels to be confident
 >>>>>>> [control] 251026 @Doyeop-knut | 잘 안됨
+=======
+            if cv2.countNonZero(masks[dominant_color]) < (roi.size * 0.05):
+>>>>>>> [control] 251025 @Doyeop-knut | 최대한 최적화 (롤백)
                  dominant_color = "unknown"
 
         if debug_image is not None and dominant_color != "unknown":
-            cv2.putText(debug_image, f"color = {dominant_color}, score = {max_score:.2f}", (x1, y1 - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+            cv2.putText(debug_image, dominant_color, (x1, y1 - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
             # print(f"from bbox - {color_scores}, color = {dominant_color} \n")
 
     
+<<<<<<< HEAD
 <<<<<<< HEAD
 <<<<<<< HEAD
 <<<<<<< HEAD
@@ -10964,6 +11143,9 @@ class PathPlanner:
 =======
         return dominant_color, max_score
 >>>>>>> [control] 251026 @Doyeop-knut | 잘 안됨
+=======
+        return dominant_color
+>>>>>>> [control] 251025 @Doyeop-knut | 최대한 최적화 (롤백)
         
         return np.array(corrected_path)
 
@@ -11366,8 +11548,19 @@ class LiDARProcessor:
         right_points = points[points[:, 1] <= 0]
         return left_points, right_points
     
+<<<<<<< HEAD
 =======
 >>>>>>> [control] 251026 @Doyeop-knut | 잘 안됨
+=======
+        
+
+    def left_right_split(self, points: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+        """Split points into left and right based on y-coordinate"""
+        left_points = points[points[:, 1] > 0]
+        right_points = points[points[:, 1] <= 0]
+        return left_points, right_points
+    
+>>>>>>> [control] 251025 @Doyeop-knut | 최대한 최적화 (롤백)
     ### For Debugging: Publish Processed Point Cloud ###
     def publish_point_cloud(self, points: torch.Tensor):
         """Publish processed point cloud and their indices as markers"""
@@ -11516,14 +11709,19 @@ class TrackMap:
         self.cones = []
 =======
     def __init__(self):
+<<<<<<< HEAD
         self.cones = [] # Confirmed cones
         self.provisional_cones = [] # Cones that have been seen but not yet confirmed
 >>>>>>> [control] 251026 @Doyeop-knut | 잘 안됨
+=======
+        self.cones = []
+>>>>>>> [control] 251025 @Doyeop-knut | 최대한 최적화 (롤백)
         self.next_cone_id = 0
         self.association_threshold = rospy.get_param("/mapping/association_threshold", 1.5)
         self.smoothing_alpha = rospy.get_param("/mapping/smoothing_alpha", 0.2) # 이전 값과 새 값의 가중치
 >>>>>>> [control] 251022 @Doyeop-knut | pytorch 기반  mpc 제어기 추가
 
+<<<<<<< HEAD
 <<<<<<< HEAD
 <<<<<<< HEAD
         return throttle, normalized_steer, brake, {}
@@ -11534,6 +11732,8 @@ class TrackMap:
         self.provisional_cone_ttl = rospy.get_param("/mapping/provisional_cone/ttl", 10) # Time-to-live in update frames
 
 >>>>>>> [control] 251026 @Doyeop-knut | 잘 안됨
+=======
+>>>>>>> [control] 251025 @Doyeop-knut | 최대한 최적화 (롤백)
         # --- Loop Closure Parameters ---
         self.is_loop_closed = False
         self.min_cones_for_lc = rospy.get_param("/mapping/lc/min_cones", 20) # Temporarily set to a very high value to disable loop closure
@@ -11554,11 +11754,15 @@ class TrackMap:
 >>>>>>> 1
         """
 <<<<<<< HEAD
+<<<<<<< HEAD
         Computes control commands using the Stanley method.
 =======
         Updates the map with new cone observations using a provisional cone system
         to reject outliers and improve map quality.
 >>>>>>> [control] 251026 @Doyeop-knut | 잘 안됨
+=======
+        Updates the map with new cone observations, and attempts loop closure.
+>>>>>>> [control] 251025 @Doyeop-knut | 최대한 최적화 (롤백)
         """
 <<<<<<< HEAD
         # Unpack vehicle state
@@ -11568,12 +11772,18 @@ class TrackMap:
         self.update_count += 1
 
 <<<<<<< HEAD
+<<<<<<< HEAD
         # 1. Find start line if not already found
         if self.start_line_center is None and new_cones_observations.numel() > 1:
+=======
+        # 1. Find start line if not already found
+        if self.start_line_center is None and len(new_cones_observations) > 1:
+>>>>>>> [control] 251025 @Doyeop-knut | 최대한 최적화 (롤백)
             self._find_start_line(new_cones_observations)
 
         # 2. Attempt loop closure and get corrected observations
         # This will return transformed observations if LC is successful
+<<<<<<< HEAD
         processed_observations = self._detect_and_correct_loop_closure(new_cones_observations, vehicle_state)
 >>>>>>> 1
 
@@ -11690,131 +11900,62 @@ class TrackMap:
 =======
         # --- Step 0: Pre-process observations ---
         # Loop closure correction should happen before any association
+=======
+>>>>>>> [control] 251025 @Doyeop-knut | 최대한 최적화 (롤백)
         processed_observations = self._detect_and_correct_loop_closure(new_cones_observations, vehicle_state)
-        
-        # Keep track of which provisional cones get updated in this cycle
-        updated_prov_indices = set()
-         # --- NEW: Contextual Color Refinement (콘텍스트 기반 색상 보정) ---
-         # 새로운 관측치와 기존 지도 콘이 모두 있을 때만 실행
-        if processed_observations.size > 0 and self.cones:
-            map_cone_positions = np.array([[c['x'], c['y']] for c in self.cones])
-            map_cone_colors = np.array([c['color_id'] for c in self.cones]) # 1: Blue, 2: Yellow, 3: Orange
 
-            for i, obs_cone in enumerate(processed_observations):
-                obs_pos = obs_cone[:2] # 관측된 콘의 (x, y) 위치
-                obs_color_id = int(obs_cone[3]) # 카메라가 분류한 색상 ID
-                obs_color_score = obs_cone[4] # 카메라 분류의 신뢰도 점수
+        # 3. Continue with original update logic
+        if not self.cones:
+            for cone_obs in processed_observations:
+                self._add_new_cone(cone_obs)
+            return
 
-                # 주변 지도 콘 찾기 (association_threshold보다 약간 넓은 반경)
-                distances = np.linalg.norm(map_cone_positions - obs_pos, axis=1)
-                nearby_map_cone_indices = np.where(distances < self.association_threshold * 1.5)[0]
-
-                if len(nearby_map_cone_indices) > 0:
-                    nearby_colors = map_cone_colors[nearby_map_cone_indices]
-
-                    # 주변에 파란색(1)과 노란색(2) 콘이 몇 개 있는지 세기
-                    num_blue_neighbors = np.sum(nearby_colors == 1)
-                    num_yellow_neighbors = np.sum(nearby_colors == 2)
-                    num_orange_neighbors = np.sum(nearby_colors == 3) # 오렌지 콘도 고려
-
-                    # --- 콘텍스트 기반 색상 결정 로직 ---
-                    # 1. 주변에 압도적인 다수의 색상이 있을 경우
-                    if num_blue_neighbors > num_yellow_neighbors + num_orange_neighbors and num_blue_neighbors > 0:
-                        # 주변에 파란색 콘이 많고, 현재 관측치가 파란색이 아니거나 신뢰도가 낮을 경우 파란색으로 보정
-                        if obs_color_id != 1 and obs_color_score < 0.7: # 너무 강하게 다른 색으로 분류된 경우는 제외
-                            processed_observations[i][3] = 1 # 파란색으로 할당
-                            processed_observations[i][4] = max(obs_color_score, 0.1) # 신뢰도 점수 보정 (최소 0.3)
-                            rospy.logdebug(f"Contextual: Cone {i} changed to Blue due to neighbors.")
-                    elif num_yellow_neighbors > num_blue_neighbors + num_orange_neighbors and num_yellow_neighbors > 0:
-                        # 주변에 노란색 콘이 많고, 현재 관측치가 노란색이 아니거나 신뢰도가 낮을 경우 노란색으로 보정
-                        if obs_color_id != 2 and obs_color_score < 0.7:
-                            processed_observations[i][3] = 2 # 노란색으로 할당
-                            processed_observations[i][4] = max(obs_color_score, 0.1)
-                            rospy.logdebug(f"Contextual: Cone {i} changed to Yellow due to neighbors.")
-                    elif num_orange_neighbors > num_blue_neighbors + num_yellow_neighbors and num_orange_neighbors > 0:
-                        # 주변에 오렌지 콘이 많고, 현재 관측치가 오렌지색이 아니거나 신뢰도가 낮을 경우 오렌지색으로 보정
-                        if obs_color_id != 3 and obs_color_score < 0.7:
-                            processed_observations[i][3] = 3 # 오렌지색으로 할당
-                            processed_observations[i][4] = max(obs_color_score, 0.1)
-                            rospy.logdebug(f"Contextual: Cone {i} changed to Orange due to neighbors.")
-
-                    # 2. 카메라가 "unknown" (0)으로 분류했지만 주변에 확실한 색상이 있을 경우
-                    elif obs_color_id == 0:
-                        if num_blue_neighbors > 0 and num_yellow_neighbors == 0 and num_orange_neighbors == 0:
-                            processed_observations[i][3] = 1 # 파란색으로 할당
-                            processed_observations[i][4] = max(obs_color_score, 0.2) # 낮은 신뢰도로 할당
-                            rospy.logdebug(f"Contextual: Cone {i} (unknown) assigned Blue due to neighbors.")
-                        elif num_yellow_neighbors > 0 and num_blue_neighbors == 0 and num_orange_neighbors == 0:
-                            processed_observations[i][3] = 2 # 노란색으로 할당
-                            processed_observations[i][4] = max(obs_color_score, 0.2)
-                            rospy.logdebug(f"Contextual: Cone {i} (unknown) assigned Yellow due to neighbors.")
-                        elif num_orange_neighbors > 0 and num_blue_neighbors == 0 and num_yellow_neighbors == 0:
-                            processed_observations[i][3] = 3 # 오렌지색으로 할당
-                            processed_observations[i][4] = max(obs_color_score, 0.2)
-                            rospy.logdebug(f"Contextual: Cone {i} (unknown) assigned Orange due to neighbors.")
         if processed_observations.size == 0:
-            # If no observations, just decrement TTL for all provisional cones
-            for prov_cone in self.provisional_cones:
-                prov_cone['ttl'] -= 1
-        else:
-            # --- Step 1: Associate new observations with CONFIRMED map cones ---
-            unmatched_obs_mask = np.ones(len(processed_observations), dtype=bool)
-            if self.cones:
-                map_cone_positions = np.array([[c['x'], c['y']] for c in self.cones])
-                obs_cone_positions = processed_observations[:, :2]
-                distance_matrix = cdist(map_cone_positions, obs_cone_positions)
+            return
 
-                # Use linear_sum_assignment for optimal matching
-                row_ind, col_ind = linear_sum_assignment(distance_matrix)
+        map_cone_positions = np.array([[c['x'], c['y']] for c in self.cones])
+        obs_cone_positions = processed_observations[:, :2]
+        distance_matrix = cdist(map_cone_positions, obs_cone_positions)
+
+        matched_obs_indices = set()
+        matched_map_indices = set()
+
+        # 1단계: 위치와 색상이 모두 일치하는 경우 먼저 매칭 (가장 신뢰도 높은 매칭)
+        for map_idx, map_cone in enumerate(self.cones):
+            if map_idx in matched_map_indices:
+                continue
+
+            possible_matches_mask = (processed_observations[:, 3] == map_cone['color_id'])
+            if np.any(possible_matches_mask):
+                distances_to_map_cone = distance_matrix[map_idx, possible_matches_mask]
+                obs_indices_for_color = np.where(possible_matches_mask)[0]
                 
-                for map_idx, obs_idx in zip(row_ind, col_ind):
-                    if distance_matrix[map_idx, obs_idx] < self.association_threshold:
-                        self._update_cone(map_idx, processed_observations[obs_idx])
-                        unmatched_obs_mask[obs_idx] = False
+                if distances_to_map_cone.size > 0:
+                    best_match_local_idx = np.argmin(distances_to_map_cone)
+                    min_dist = distances_to_map_cone[best_match_local_idx]
 
-            # --- Step 2: Associate remaining observations with PROVISIONAL cones ---
-            remaining_obs = processed_observations[unmatched_obs_mask]
-            unmatched_prov_obs_mask = np.ones(len(remaining_obs), dtype=bool)
+                    if min_dist < self.association_threshold:
+                        obs_idx = obs_indices_for_color[best_match_local_idx]
+                        if obs_idx not in matched_obs_indices:
+                            self._update_cone(map_idx, processed_observations[obs_idx])
+                            matched_obs_indices.add(obs_idx)
+                            matched_map_indices.add(map_idx)
 
-            if self.provisional_cones and remaining_obs.size > 0:
-                prov_cone_positions = np.array([[c['x'], c['y']] for c in self.provisional_cones])
-                rem_obs_positions = remaining_obs[:, :2]
-                distance_matrix_prov = cdist(prov_cone_positions, rem_obs_positions)
+        # 2단계: 색상이 다르더라도 위치가 매우 가까운 경우, 색상 정보를 업데이트 (오탐지 교정)
+        for map_idx, map_cone in enumerate(self.cones):
+            if map_idx in matched_map_indices: continue
 
-                row_ind_prov, col_ind_prov = linear_sum_assignment(distance_matrix_prov)
+            # 아직 매칭되지 않은 관측값들 중에서 가장 가까운 것을 찾음
+            unmatched_obs_indices = [i for i in range(len(processed_observations)) if i not in matched_obs_indices]
+            if not unmatched_obs_indices: break
 
-                for prov_idx, obs_idx in zip(row_ind_prov, col_ind_prov):
-                    if distance_matrix_prov[prov_idx, obs_idx] < self.association_threshold:
-                        prov_cone = self.provisional_cones[prov_idx]
-                        prov_cone['observations'] += 1
-                        
-                        n = prov_cone['observations']
-                        alpha = 1.0 / n
-                        prov_cone['x'] = (1 - alpha) * prov_cone['x'] + alpha * remaining_obs[obs_idx][0]
-                        prov_cone['y'] = (1 - alpha) * prov_cone['y'] + alpha * remaining_obs[obs_idx][1]
-                        prov_cone['z'] = remaining_obs[obs_idx][2]
-                        prov_cone['color_id'] = int(remaining_obs[obs_idx][3])
-                        prov_cone['ttl'] = self.provisional_cone_ttl # Reset TTL
+            distances_to_unmatched = distance_matrix[map_idx, unmatched_obs_indices]
+            if distances_to_unmatched.size == 0:
+                continue
+            best_match_local_idx = np.argmin(distances_to_unmatched)
+            min_dist = distances_to_unmatched[best_match_local_idx]
 
-                        updated_prov_indices.add(prov_idx)
-                        unmatched_prov_obs_mask[obs_idx] = False
-
-                        # Check for promotion to confirmed cone
-                        if prov_cone['observations'] >= self.cone_confirmation_threshold:
-                            self._add_new_cone(np.array([prov_cone['x'], prov_cone['y'], prov_cone['z'], prov_cone['color_id'], prov_cone.get('color_score', 0)]))
-                            prov_cone['ttl'] = -1 # Mark for deletion
-
-            # --- Step 3: Create new provisional cones from remaining observations ---
-            new_prov_obs = remaining_obs[unmatched_prov_obs_mask]
-            for obs in new_prov_obs:
-                new_prov_cone = {
-                    'x': obs[0], 'y': obs[1], 'z': obs[2],
-                    'color_id': int(obs[3]),
-                    'observations': 1,
-                    'ttl': self.provisional_cone_ttl
-                }
-                self.provisional_cones.append(new_prov_cone)
-
+<<<<<<< HEAD
             # --- Step 4: Manage TTL and prune provisional cones ---
             for i, prov_cone in enumerate(self.provisional_cones):
                 if i not in updated_prov_indices:
@@ -11823,6 +11964,27 @@ class TrackMap:
         # Remove cones that have been promoted (ttl=-1) or timed out (ttl<0)
         self.provisional_cones = [pc for pc in self.provisional_cones if pc['ttl'] > 0]
 >>>>>>> [control] 251026 @Doyeop-knut | 잘 안됨
+=======
+            if min_dist < self.association_threshold:
+                obs_idx = unmatched_obs_indices[best_match_local_idx]
+                if obs_idx not in matched_obs_indices:
+                    new_color_id = int(processed_observations[obs_idx][3])
+                    # 알려진 색상(0이 아님)을 알 수 없는 색상(0)으로 덮어쓰지 않도록 합니다.
+                    # 기존 색상이 '알 수 없음'이거나 새로운 색상이 '알 수 없음'이 아닌 경우에만 색상을 업데이트합니다.
+                    if new_color_id != 0 or map_cone['color_id'] == 0:
+                        rospy.logdebug(f"Correcting color of cone {map_cone['id']} from {map_cone['color_id']} to {new_color_id}")
+                        self._update_cone(map_idx, processed_observations[obs_idx], update_color=True)
+                    else:
+                        # 그렇지 않으면 기존 색상을 유지하고 위치만 업데이트합니다.
+                        self._update_cone(map_idx, processed_observations[obs_idx], update_color=False)
+                    
+                    matched_obs_indices.add(obs_idx)
+                    matched_map_indices.add(map_idx)
+
+        for obs_idx, cone_obs in enumerate(processed_observations):
+            if obs_idx not in matched_obs_indices:
+                self._add_new_cone(cone_obs)
+>>>>>>> [control] 251025 @Doyeop-knut | 최대한 최적화 (롤백)
 
 <<<<<<< HEAD
         # 3. Calculate heading error (theta_e)
@@ -11866,11 +12028,15 @@ class TrackMap:
 >>>>>>> 1
 
 <<<<<<< HEAD
+<<<<<<< HEAD
         # 6. Throttle control (PID controller)
         current_time = rospy.Time.now().to_sec()
         dt = current_time - self.last_control_time
 =======
         if dist_to_start < self.lc_trigger_distance:
+=======
+        if dist_to_start > self.lc_trigger_distance:
+>>>>>>> [control] 251025 @Doyeop-knut | 최대한 최적화 (롤백)
             return new_observations
 >>>>>>> [control] 251026 @Doyeop-knut | 코드 추가 (미완)
 
@@ -12167,28 +12333,27 @@ class MidpointMap:
         H_reg = H + eps * np.eye(H.shape[0])
 =======
     def _add_new_cone(self, cone_obs):
-        # cone_obs is [x, y, z, color_id, color_score]
         new_cone = {
             'id': self.next_cone_id,
             'x': cone_obs[0],
             'y': cone_obs[1],
             'z': cone_obs[2],
             'color_id': int(cone_obs[3]),
-            'color_score': cone_obs[4],
-            'observations': 1,
+            'observations': 1, # 관측 횟수 추가
             'covariance': np.eye(2) * 0.5
         }
         self.cones.append(new_cone)
         self.next_cone_id += 1
 
-    def _update_cone(self, map_idx, cone_obs):
-        # cone_obs is [x, y, z, color_id, color_score]
-        # Update position with moving average
+    def _update_cone(self, map_idx, cone_obs, update_color=False):
+        # --- 관측 횟수에 기반한 가중 평균으로 업데이트 로직 개선 ---
+        # 관측 횟수가 많을수록 기존 맵의 신뢰도를 높게, 새로운 관측의 영향은 적게
         self.cones[map_idx]['observations'] += 1
         n = self.cones[map_idx]['observations']
-        alpha = 1.0 / n
+        alpha = 1.0 / n  # 새로운 관측에 대한 가중치
         self.cones[map_idx]['x'] = (1 - alpha) * self.cones[map_idx]['x'] + alpha * cone_obs[0]
         self.cones[map_idx]['y'] = (1 - alpha) * self.cones[map_idx]['y'] + alpha * cone_obs[1]
+<<<<<<< HEAD
         
         # Update color and score
         new_color_id = int(cone_obs[3])
@@ -12203,6 +12368,10 @@ class MidpointMap:
                 self.cones[map_idx]['color_score'] = max(self.cones[map_idx].get('color_score', 0), new_color_score)
             self.cones[map_idx]['color_id'] = new_color_id
 >>>>>>> [control] 251026 @Doyeop-knut | 잘 안됨
+=======
+        if update_color:
+            self.cones[map_idx]['color_id'] = int(cone_obs[3])
+>>>>>>> [control] 251025 @Doyeop-knut | 최대한 최적화 (롤백)
 
         # 4) 선형 시스템 풀이: H_reg * Uvec = -f --------------------------------------
         try:
@@ -12213,12 +12382,15 @@ class MidpointMap:
         self.Uvec = Uvec
 
 <<<<<<< HEAD
+<<<<<<< HEAD
         # 첫 스텝 입력
         ax0, delta0 = float(Uvec[0]), float(Uvec[1])
 =======
     def get_provisional_cones(self):
         return self.provisional_cones
 
+=======
+>>>>>>> [control] 251025 @Doyeop-knut | 최대한 최적화 (롤백)
 class MidpointMap:
     def __init__(self):
         self.midpoints = []
@@ -12437,44 +12609,6 @@ class PathPlanner:
         self.path_smoothing_kernel_size = rospy.get_param("/planning/path_planner/path_smoothing_kernel_size", 5)
         self.path_smoothing_sigma = rospy.get_param("/planning/path_planner/path_smoothing_sigma", 1.0)
 
-        # --- 레이싱 라인 파라미터 ---
-        self.racing_line_tension = rospy.get_param("/planning/path_planner/racing_line_tension", 0.7) # 0=중심, 1=완전 안쪽
-
-        self._fallback_last_path = None
-        self._fallback_hold_until = 0.0
-        self.fallback_hold_s = rospy.get_param("/planning/path_planner/fallback/hold_s", 0.8)
-        self.fallback_extend_m = rospy.get_param("/planning/path_planner/fallback/extend_m", 3.0)
-
-
-    def _generate_racing_line(self, path, curvatures, tension=0.7):
-        """
-        Shifts the path inwards based on curvature to create a racing line.
-        This is a simplified implementation for demonstration.
-        """
-        if len(path) < 3 or len(path) != len(curvatures):
-            return path
-
-        racing_path = np.copy(path.astype(np.float64))
-        for i in range(1, len(path) - 1):
-            # Get path direction and perpendicular vector
-            p_prev = path[i-1]
-            p_next = path[i+1]
-            path_dir = (p_next - p_prev) / (np.linalg.norm(p_next - p_prev) + 1e-6)
-            perp_dir = np.array([-path_dir[1], path_dir[0]])
-
-            # Calculate offset based on curvature.
-            # A positive kappa is a left turn, so we want to offset to the right (negative perp_dir).
-            # The offset is scaled by a heuristic involving lane_offset.
-            kappa = curvatures[i]
-            offset = -tension * kappa * (self.lane_offset ** 1.5)
-            
-            # Clamp the offset to a maximum of half the lane width to be safe
-            max_offset = self.lane_offset / 2.0
-            offset = np.clip(offset, -max_offset, max_offset)
-
-            racing_path[i] += perp_dir * offset
-            
-        return racing_path
 
     def _normalize_angle(self, angle):
         """Normalize an angle to [-pi, pi]."""
@@ -12506,6 +12640,7 @@ class PathPlanner:
             bounds.append((-self.max_steer, self.max_steer))
 =======
     def _generate_fallback_path(self, blue_cones, yellow_cones, car_pos, car_yaw):
+<<<<<<< HEAD
 <<<<<<< HEAD
 <<<<<<< HEAD
 <<<<<<< HEAD
@@ -12716,6 +12851,8 @@ class PathPlanner:
             # Sort the visible cones to form a line
             sorted_cones = self._sort_midpoints(np.array([[c['x'], c['y']] for c in side_cones]), car_pos, car_yaw)
 =======
+=======
+>>>>>>> [control] 251025 @Doyeop-knut | 최대한 최적화 (롤백)
         """Generates a simple straight path if Delaunay is not possible, handling single cone scenarios."""
         
         effective_blue_cones = blue_cones
@@ -12783,8 +12920,8 @@ class PathPlanner:
         # Add the midpoint as the first point if it's not too far
         if np.linalg.norm(midpoint - car_pos) < 10.0: # Only if midpoint is reasonably close
             path.insert(0, midpoint)
->>>>>>> f7f97a8... [control] 251025 @Doyeop-knut | 최대한 최적화
             
+<<<<<<< HEAD
             if len(sorted_cones) < 2:
                 # Not enough cones to define a line, revert to simple straight path
                 direction_vec = np.array([math.cos(car_yaw), math.sin(car_yaw)])
@@ -12839,6 +12976,9 @@ class PathPlanner:
         """
         car_pos_tensor = torch.tensor(car_pos, dtype=torch.float32, device=self.device)
         car_heading_vec = torch.tensor([math.cos(car_yaw), math.sin(car_yaw)], dtype=torch.float32, device=self.device)
+=======
+        return np.array(path), None, None, None, None, True # Add a flag to indicate it's a fallback path
+>>>>>>> [control] 251025 @Doyeop-knut | 최대한 최적화 (롤백)
 
         rospy.logwarn_throttle(1.0, "PathPlanner: Generating straight fallback path.")
         point_distance = self.fallback_path_length / self.fallback_path_points
@@ -13266,8 +13406,6 @@ class StanleyController:
 =======
         return np.array(ordered_path)
 
-
-
     def _correct_path_detours(self, path, car_yaw):
         if len(path) < 2:
 >>>>>>> [control] 251026 @Doyeop-knut | 잘 안됨
@@ -13284,6 +13422,7 @@ class StanleyController:
             segment_vec = p2 - p1
             
 <<<<<<< HEAD
+<<<<<<< HEAD
             # Check if the segment is going backward relative to the car's yaw
             angle_to_car_yaw = self._normalize_angle(torch.atan2(segment_vec[1], segment_vec[0]) - car_yaw)
             
@@ -13294,6 +13433,13 @@ class StanleyController:
             
             if abs(angle_to_car_yaw) > (math.pi / 2.0):
 >>>>>>> [control] 251026 @Doyeop-knut | 잘 안됨
+=======
+            # Check if the segment is going backward relative to the car's yaw
+            angle_to_car_yaw = self._normalize_angle(math.atan2(segment_vec[1], segment_vec[0]) - car_yaw)
+            
+            if abs(angle_to_car_yaw) > (math.pi / 2.0): # If segment is pointing more than 90 degrees away from car_yaw
+                # This segment is going backward or sharply sideways. Ignore this point.
+>>>>>>> [control] 251025 @Doyeop-knut | 최대한 최적화 (롤백)
                 continue
             else:
                 corrected_path.append(p2)
@@ -13364,7 +13510,9 @@ class KalmanConeTracker:
         """
         p1 = all_points[p1_idx]
         p2 = all_points[p2_idx]
+        # color1 = colors[p1_idx] # No longer needed
 
+        # p1에서 p2로 향하는 벡터
         line_vec = p2 - p1
         line_len_sq = torch.dot(line_vec, line_vec)
 
@@ -13372,10 +13520,11 @@ class KalmanConeTracker:
             return False
 
         for i in range(len(all_points)):
-            if i == p1_idx or i == p2_idx:
+            if i == p1_idx or i == p2_idx: # Check all other cones, regardless of color
                 continue
             
             p3 = all_points[i]
+<<<<<<< HEAD
 <<<<<<< HEAD
             # p3가 p1-p2 선분 위에 있는지 확인 (투영(projection) 사용)
             dot_product = torch.dot(p3 - p1, line_vec)
@@ -13385,12 +13534,21 @@ class KalmanConeTracker:
                 if dist_to_line < self.path_obstacle_threshold:  # 임계값보다 가까우면 방해물로 간주
                     return False # 유효하지 않은 쌍
 =======
+=======
+            # p3가 p1-p2 선분 위에 있는지 확인 (투영(projection) 사용)
+>>>>>>> [control] 251025 @Doyeop-knut | 최대한 최적화 (롤백)
             dot_product = np.dot(p3 - p1, line_vec)
-            if 0 < dot_product < line_len_sq:
+            if 0 < dot_product < line_len_sq: # p3가 p1과 p2 사이에 투영되는 경우
+                # 선분과의 거리 계산
                 dist_to_line = np.linalg.norm(np.cross(line_vec, p1 - p3)) / np.linalg.norm(line_vec)
+<<<<<<< HEAD
                 if dist_to_line < self.path_obstacle_threshold:
                     return False
 >>>>>>> [control] 251026 @Doyeop-knut | 잘 안됨
+=======
+                if dist_to_line < self.path_obstacle_threshold:  # 임계값보다 가까우면 방해물로 간주
+                    return False # 유효하지 않은 쌍
+>>>>>>> [control] 251025 @Doyeop-knut | 최대한 최적화 (롤백)
         return True
     def _filter_cones_for_planning(self, cones, vehicle_state):
         """
@@ -13398,7 +13556,7 @@ class KalmanConeTracker:
         """
         car_pos = torch.tensor(vehicle_state[:2], dtype=torch.float32, device=self.device)
         car_yaw = vehicle_state[2]
-
+        
         filtered_cones = []
         for cone in cones:
             cone_pos = torch.tensor([cone['x'], cone['y']], dtype=torch.float32, device=self.device)
@@ -13408,8 +13566,11 @@ class KalmanConeTracker:
             dist = torch.linalg.norm(cone_pos - car_pos)
 =======
             dist = np.linalg.norm(cone_pos - car_pos)
+<<<<<<< HEAD
 
 >>>>>>> [control] 251026 @Doyeop-knut | 잘 안됨
+=======
+>>>>>>> [control] 251025 @Doyeop-knut | 최대한 최적화 (롤백)
             if dist > self.planner_roi_distance:
                 continue
                 
@@ -13450,6 +13611,7 @@ class KalmanConeTracker:
         return smoothed_path_transposed.squeeze(0).T
 
 <<<<<<< HEAD
+<<<<<<< HEAD
     def plan_path(self, cones, vehicle_state):
         """
         Generates a driving path based on the detected cones.
@@ -13459,6 +13621,14 @@ class KalmanConeTracker:
         current_car_pos = torch.tensor(vehicle_state[:2], dtype=torch.float32, device=self.device)
 =======
     def plan_path(self, cones, vehicle_state, is_loop_closed=False):
+=======
+    def plan_path(self, cones, vehicle_state):
+        """
+        Generates a driving path based on the detected cones.
+        Uses Delaunay triangulation and a robust sorting algorithm.
+        Falls back to a simple path if not enough cones are available.
+        """
+>>>>>>> [control] 251025 @Doyeop-knut | 최대한 최적화 (롤백)
         current_car_pos = vehicle_state[:2]
 >>>>>>> [control] 251026 @Doyeop-knut | 잘 안됨
         vehicle_yaw = vehicle_state[2]
@@ -13468,6 +13638,7 @@ class KalmanConeTracker:
         rospy.loginfo_throttle(1.0, f"PathPlanner: Cones after ROI filter: {len(local_cones)}")
 
         # --- 클러스터링 단계 추가 ---
+<<<<<<< HEAD
 <<<<<<< HEAD
         if len(local_cones) > 5: # 최소 5개 이상의 콘이 있을 때만 클러스터링 수행
             cone_points_np = np.array([[c['x'], c['y']] for c in local_cones])
@@ -13481,19 +13652,26 @@ class KalmanConeTracker:
             labels = np.array(pcd.cluster_dbscan(eps=self.planner_clustering_eps, min_points=3, print_progress=False))
 =======
         if len(local_cones) > 5:
+=======
+        if len(local_cones) > 5: # 최소 5개 이상의 콘이 있을 때만 클러스터링 수행
+>>>>>>> [control] 251025 @Doyeop-knut | 최대한 최적화 (롤백)
             cone_points = np.array([[c['x'], c['y']] for c in local_cones])
+            
+            # DBSCAN을 사용하여 콘 그룹 찾기
             db = DBSCAN(eps=self.planner_clustering_eps, min_samples=3).fit(cone_points)
             labels = db.labels_
 >>>>>>> [control] 251026 @Doyeop-knut | 잘 안됨
             
             unique_labels = set(labels)
-            if -1 in unique_labels:
+            if -1 in unique_labels: # 노이즈 레이블 제거
                 unique_labels.remove(-1)
 
+            # 두 개 이상의 클러스터가 감지된 경우
             if len(unique_labels) > 1:
                 closest_cluster_idx = -1
                 min_dist_to_cluster = float('inf')
                 
+                # 차량에서 가장 가까운 클러스터 찾기
                 for label in unique_labels:
                     cluster_mask = (labels == label)
                     cluster_points = cone_points_np[cluster_mask]
@@ -13504,6 +13682,7 @@ class KalmanConeTracker:
                         min_dist_to_cluster = dist_to_car
                         closest_cluster_idx = label
                 
+                # 가장 가까운 클러스터에 속한 콘만 사용하도록 필터링
                 if closest_cluster_idx != -1:
                     closest_cluster_mask = (labels == closest_cluster_idx)
                     local_cones = [cone for i, cone in enumerate(local_cones) if closest_cluster_mask[i]]
@@ -13564,6 +13743,7 @@ class KalmanConeTracker:
         except Exception as e:
             rospy.logwarn(f"Delaunay triangulation failed: {e}")
 <<<<<<< HEAD
+<<<<<<< HEAD
             return None, None, None, None, None, True # Indicate fallback
 >>>>>>> [control] 251020 @Doyeop-knut | MPC 제어기 파라미터 수정 -> 증속 후 파라미터 수정 필요
 
@@ -13576,6 +13756,9 @@ class KalmanConeTracker:
 =======
 =======
             return None, None, None, None, None, True
+=======
+            return None, None, None, None, None, True # Indicate fallback
+>>>>>>> [control] 251025 @Doyeop-knut | 최대한 최적화 (롤백)
 
 >>>>>>> [control] 251026 @Doyeop-knut | 잘 안됨
         # 3. Find centerline midpoints
@@ -13586,11 +13769,12 @@ class KalmanConeTracker:
 <<<<<<< HEAD
 =======
         for simplex in tri.simplices:
-            indices = sorted(simplex)
+            indices = sorted(simplex) # 순서를 고정하여 중복 방지
             for i in range(3):
                 p1_idx = indices[i]
                 p2_idx = indices[(i + 1) % 3]
 
+                # 색이 다른 두 콘을 연결하되, 유효한 쌍인지 검사
                 if colors[p1_idx] != colors[p2_idx]:
                     if self._is_valid_cone_pair(p1_idx, p2_idx, all_points, colors) and \
                        self._is_valid_cone_pair(p2_idx, p1_idx, all_points, colors):
@@ -13637,6 +13821,7 @@ class KalmanConeTracker:
 <<<<<<< HEAD
 <<<<<<< HEAD
 <<<<<<< HEAD
+<<<<<<< HEAD
             return None, tri, all_points, colors, None
 >>>>>>> [coneDetection] 251019 @Doyeop-knut | cone map update 전
 
@@ -13665,10 +13850,14 @@ class ConeTracker:
 =======
             return None, tri, all_points, colors, None, True
 >>>>>>> [control] 251026 @Doyeop-knut | 잘 안됨
+=======
+            return None, tri, all_points, colors, None, True # Indicate fallback
+>>>>>>> [control] 251025 @Doyeop-knut | 최대한 최적화 (롤백)
 
         # 4. Sort midpoints to form a continuous path
         unique_midpoints = np.unique(np.array(midpoints), axis=0)
         if len(unique_midpoints) < 2:
+<<<<<<< HEAD
 <<<<<<< HEAD
             rospy.logwarn_throttle(1.0, f"PathPlanner: Fallback reason: Not enough unique midpoints ({len(unique_midpoints)}).")
             return None, tri, all_points, colors, unique_midpoints, True, len(blue_cones), len(yellow_cones), 0 # Indicate fallback
@@ -13712,13 +13901,21 @@ class ConeTracker:
         # Correct any detours in the path
 =======
             return None, tri, all_points, colors, unique_midpoints, True
+=======
+            return None, tri, all_points, colors, unique_midpoints, True # Indicate fallback
+>>>>>>> [control] 251025 @Doyeop-knut | 최대한 최적화 (롤백)
 
         ordered_midpoints = self._sort_midpoints(unique_midpoints, current_car_pos, vehicle_yaw)
         if ordered_midpoints is None or len(ordered_midpoints) < 2:
-            return None, tri, all_points, colors, unique_midpoints, True
+            return None, tri, all_points, colors, unique_midpoints, True # Indicate fallback
 
+<<<<<<< HEAD
         self.path_direction_history.clear()
 >>>>>>> [control] 251026 @Doyeop-knut | 잘 안됨
+=======
+        self.path_direction_history.clear() # 새로운 계획 시작 시 방향 기록 초기화
+        # Correct any detours in the path
+>>>>>>> [control] 251025 @Doyeop-knut | 최대한 최적화 (롤백)
         corrected_path = self._correct_path_detours(ordered_midpoints, vehicle_yaw)
 >>>>>>> [coneDetection] 251019 @Doyeop-knut | cone map update 전
 
@@ -13867,6 +14064,7 @@ class ConeTracker:
 
         filtered_path = torch.stack(filtered_path_list)
 
+<<<<<<< HEAD
         # Smooth the path with GPU-based method
         path_tensor = self._smooth_path_gpu(filtered_path)
         path = path_tensor.cpu().numpy()
@@ -13874,44 +14072,56 @@ class ConeTracker:
         return path, None, None, None, midpoints, False, len(blue_cones), len(yellow_cones), len(midpoints)
 >>>>>>> 1
 =======
+=======
+        # Filter path to include only points within max_path_distance from the car
+>>>>>>> [control] 251025 @Doyeop-knut | 최대한 최적화 (롤백)
         filtered_path = []
         for p in corrected_path:
             if np.linalg.norm(p - current_car_pos) < self.max_path_distance:
                 filtered_path.append(p)
-        raw_curvatures = self._calculate_path_curvature(filtered_path, lookahead=5)
-
-        # --- Conditional Racing Line ---
-        if is_loop_closed:
-            rospy.loginfo_throttle(1.0, "PathPlanner: Loop is closed, generating racing line.")
-            final_path_points = self._generate_racing_line(np.array(filtered_path), raw_curvatures, self.racing_line_tension)
-        else:
-            final_path_points = filtered_path
+        
+        # Handle cases with very few points
+        if len(filtered_path) == 0:
+            return None, tri, all_points, colors, unique_midpoints, True # Indicate fallback
+        elif len(filtered_path) == 1:
+            # If only one point, create a path from current car position to that point
+            path = np.array([current_car_pos, filtered_path[0]])
+            rospy.logwarn_throttle(1.0, "PathPlanner: Only 1 point for path, generating straight line to it.")
+            return path, tri, all_points, colors, unique_midpoints, True # Indicate fallback
 
         # 5. Smooth the path with a spline
-        if len(final_path_points) < 3:
-            if len(final_path_points) == 2:
-                path = np.array(final_path_points)
+        if len(filtered_path) < 3:
+            if len(filtered_path) == 2: # If only two points, draw a straight line between them
+                path = np.array(filtered_path)
                 rospy.logwarn_throttle(1.0, "PathPlanner: Only 2 points for spline, generating straight path.")
-            elif len(final_path_points) == 1:
-                path = np.array([current_car_pos, final_path_points[0]])
-                rospy.logwarn_throttle(1.0, "PathPlanner: Only 1 point for path, generating straight line to it.")
-            else:
-                return None, tri, all_points, colors, unique_midpoints, True
-            return path, tri, all_points, colors, unique_midpoints, True
+            else: # This case should ideally not be reached if previous checks are correct
+                fallback_path, _, _, _, _, is_fallback = self._generate_fallback_path(blue_cones, yellow_cones, current_car_pos, vehicle_yaw)
+                return fallback_path, tri, all_points, colors, unique_midpoints, is_fallback
 
         try:
-            k = min(2, len(final_path_points) - 1)
-            tck, u = splprep([np.array(final_path_points)[:, 0], np.array(final_path_points)[:, 1]], s=self.spline_smoothing_factor, k=k)
-            u_new = np.linspace(u.min(), u.max(), 20)
-            x_new, y_new = splev(u_new, tck)
-            path = np.vstack((x_new, y_new)).T
+            if len(filtered_path) >= 3: # Only attempt spline if 3 or more points
+                k = min(2, len(filtered_path) - 1)
+                tck, u = splprep([np.array(filtered_path)[:, 0], np.array(filtered_path)[:, 1]], s=self.spline_smoothing_factor, k=k)
+                u_new = np.linspace(u.min(), u.max(), 50)
+                x_new, y_new = splev(u_new, tck)
+                path = np.vstack((x_new, y_new)).T
+            # If len(filtered_path) was 1 or 2, path is already set to a straight line
         except Exception as e:
-            rospy.logwarn(f"Spline generation failed: {e}. Returning raw points.")
-            path = np.array(final_path_points)
-            return path, tri, all_points, colors, unique_midpoints, True
+            rospy.logwarn(f"Spline generation failed: {e}. Returning raw midpoints or straight path.")
+            if len(filtered_path) >= 1:
+                # If spline fails, and we have at least one point, return the raw filtered path
+                path = np.array(filtered_path) 
+            else:
+                # This case should ideally not be reached if previous checks are correct
+                return None, tri, all_points, colors, unique_midpoints, True # Indicate fallback
+            return path, tri, all_points, colors, unique_midpoints, True # Indicate fallback
 
+<<<<<<< HEAD
         return path, tri, all_points, colors, unique_midpoints, False
 >>>>>>> [control] 251026 @Doyeop-knut | 잘 안됨
+=======
+        return path, tri, all_points, colors, unique_midpoints, False # Not a fallback path
+>>>>>>> [control] 251025 @Doyeop-knut | 최대한 최적화 (롤백)
 
     def _calculate_path_curvature(self, path, lookahead=5):
         """경로의 각 지점에서 곡률을 계산합니다."""
@@ -13936,6 +14146,7 @@ class ConeTracker:
             area = 0.5 * abs((p_prev[0]*(p_curr[1]-p_next[1]) + p_curr[0]*(p_next[1]-p_prev[1]) + p_next[0]*(p_prev[1]-p_curr[1])))
             curvatures[i] = (4 * area) / (np.linalg.norm(p_prev-p_curr) * np.linalg.norm(p_curr-p_next) * np.linalg.norm(p_next-p_prev) + 1e-6)
         return curvatures
+<<<<<<< HEAD
     # 곡률 상한(3점 곡률 근사)
     def curvature3(self,A,B,C):
         a = np.linalg.norm(B-A); b=np.linalg.norm(C-B); c=np.linalg.norm(C-A)
@@ -13988,6 +14199,8 @@ class ConeTracker:
         return P
 
 >>>>>>> [control] 251026 @Doyeop-knut | 잘 안됨
+=======
+>>>>>>> [control] 251025 @Doyeop-knut | 최대한 최적화 (롤백)
 # ==================== Utility Classes ====================
 
 class GPSIMUProcessor:
@@ -14160,8 +14373,6 @@ class DataLogger:
         self.map_cones_csv_path = None
         self.map_cones_csv_file = None
         self.map_cones_csv_writer = None
-        self.prov_cones_csv_file = None
-        self.prov_cones_csv_writer = None
         self.frame_count = 0
         self.max_path_points = max_path_points
         self.path_csv_file = None
@@ -14178,9 +14389,13 @@ class DataLogger:
         # 1. 메타데이터 CSV 설정
         self.csv_path = os.path.join(self.session_path, "log.csv")
 <<<<<<< HEAD
+<<<<<<< HEAD
         # 헤더에 제어 튜닝용 데이터 추가
 =======
 >>>>>>> [control] 251026 @Doyeop-knut | 잘 안됨
+=======
+        # 헤더에 'lidar_point_count' 필드 추가
+>>>>>>> [control] 251025 @Doyeop-knut | 최대한 최적화 (롤백)
         self.csv_header = [
             'timestamp', 'frame_id', 'autonomous_mode',
             'control_steering', 'control_throttle', 'control_brake',
@@ -14188,6 +14403,7 @@ class DataLogger:
             'imu_gyro_x', 'imu_gyro_y', 'imu_gyro_z',
             'gps_latitude', 'gps_longitude',
             'yaw', 'vehicle_vx', "vehicle_vy", 'vehicle_yawrate', 'vehicle_ax', 'vehicle_ay',
+<<<<<<< HEAD
 <<<<<<< HEAD
             'lidar_point_count',
             # Control Debug Data
@@ -14199,6 +14415,9 @@ class DataLogger:
 =======
             'lidar_point_count'
 >>>>>>> [control] 251026 @Doyeop-knut | 잘 안됨
+=======
+            'lidar_point_count'  # <--- 추가된 필드
+>>>>>>> [control] 251025 @Doyeop-knut | 최대한 최적화 (롤백)
         ]
         self.metadata_csv_file = open(self.csv_path, 'w', newline='')
         self.metadata_csv_writer = csv.DictWriter(self.metadata_csv_file, fieldnames=self.csv_header)
@@ -14210,7 +14429,7 @@ class DataLogger:
         self.video_fps = video_fps
         self.fourcc = cv2.VideoWriter_fourcc(*'XVID')
 
-        # 3. LiDAR CSV 설정
+        # 3. LiDAR CSV 설정 (고정 너비 방식)
         self.max_lidar_points = max_lidar_points
         self.lidar_csv_path = os.path.join(self.session_path, "lidar.csv")
         self.lidar_csv_file = open(self.lidar_csv_path, 'w', newline='')
@@ -14220,19 +14439,11 @@ class DataLogger:
             lidar_header.extend([f'p{i}_x', f'p{i}_y'])
         self.lidar_csv_writer.writerow(lidar_header)
 
-        # 4. Map Cones CSV 설정 (Confirmed Cones)
+        # 4. Map Cones CSV 설정
         self.map_cones_csv_path = os.path.join(self.session_path, "map_cones.csv")
         self.map_cones_csv_file = open(self.map_cones_csv_path, 'w', newline='')
         self.map_cones_csv_writer = csv.writer(self.map_cones_csv_file)
-        self.map_cones_csv_writer.writerow(['frame_id', 'cone_id', 'color_id', 'x', 'y', 'z', 'color_score', 'observations'])
-
-        # 5. Provisional Cones CSV 설정
-        self.prov_cones_csv_path = os.path.join(self.session_path, "provisional_cones.csv")
-        self.prov_cones_csv_file = open(self.prov_cones_csv_path, 'w', newline='')
-        self.prov_cones_csv_writer = csv.writer(self.prov_cones_csv_file)
-        self.prov_cones_csv_writer.writerow(['frame_id', 'x', 'y', 'z', 'color_id', 'color_score', 'observations', 'ttl'])
-
-        rospy.loginfo(f"DataLogger initialized. Saving logs to: {self.session_path}")
+        self.map_cones_csv_writer.writerow(['frame_id', 'cone_id', 'color_id', 'x', 'y', 'z'])
 
         # 5. Path CSV 설정
         self.path_csv_path = os.path.join(self.session_path, "path.csv")
@@ -14251,8 +14462,12 @@ class DataLogger:
     def log_entry(self, autonomous_mode: str, control_command: ControlCommand,
                   imu_acc: list, imu_gyro: list, state: list,
                   camera1_image: np.ndarray, camera2_image: np.ndarray, lidar_points: np.ndarray,
+<<<<<<< HEAD
                   map_cones: list, provisional_cones: list):
 >>>>>>> [control] 251026 @Doyeop-knut | 잘 안됨
+=======
+                  map_cones: list):
+>>>>>>> [control] 251025 @Doyeop-knut | 최대한 최적화 (롤백)
         if not self.enable_logging:
             return
 
@@ -14260,11 +14475,18 @@ class DataLogger:
         point_count = len(lidar_points) if lidar_points is not None else 0
 
 <<<<<<< HEAD
+<<<<<<< HEAD
 =======
         point_count = len(lidar_points) if lidar_points is not None else 0
 
         # Log metadata
 >>>>>>> [control] 251026 @Doyeop-knut | 잘 안됨
+=======
+        # 각 프레임의 실제 LiDAR 포인트 개수 계산
+        point_count = len(lidar_points) if lidar_points is not None else 0  # <--- 실제 포인트 개수 계산
+
+        # 메타데이터 로깅 (point_count 포함)
+>>>>>>> [control] 251025 @Doyeop-knut | 최대한 최적화 (롤백)
         log_row = {
             'timestamp': timestamp, 'frame_id': self.frame_count, 'autonomous_mode': autonomous_mode,
             'control_steering': control_command.steering, 'control_throttle': control_command.throttle, 'control_brake': control_command.brake,
@@ -14272,7 +14494,7 @@ class DataLogger:
             'imu_gyro_x': imu_gyro[0], 'imu_gyro_y': imu_gyro[1], 'imu_gyro_z': imu_gyro[2],
             'gps_latitude': state[0], 'gps_longitude': state[1],
             'yaw' : state[2], 'vehicle_vx' : state[3], 'vehicle_vy' : state[4], 'vehicle_yawrate' : state[5], 'vehicle_ax' : state[6], 'vehicle_ay' : state[7],
-            'lidar_point_count': point_count
+            'lidar_point_count': point_count  # <--- 포인트 개수 추가
         }
 <<<<<<< HEAD
         
@@ -14333,7 +14555,7 @@ class DataLogger:
 =======
         self.metadata_csv_writer.writerow(log_row)
 
-        # Log camera data
+        # 카메라 데이터 로깅
         images = {'cam1': camera1_image, 'cam2': camera2_image}
         for cam_id, img in images.items():
             if img is None: continue
@@ -14342,27 +14564,32 @@ class DataLogger:
                 self.video_writers[cam_id] = cv2.VideoWriter(self.video_paths[cam_id], self.fourcc, self.video_fps, (w, h))
             self.video_writers[cam_id].write(img)
 
-        # Log LiDAR data
+        # LiDAR 데이터 로깅 (고정 너비 + 패딩)
         lidar_row = [self.frame_count]
         if point_count > 0:
             points_flat = lidar_points[:self.max_lidar_points, :2].flatten().tolist()
             lidar_row.extend(points_flat)
         
-        padding_len = (1 + self.max_lidar_points * 2) - len(lidar_row)
+        expected_len = 1 + self.max_lidar_points * 2
+        padding_len = expected_len - len(lidar_row)
         if padding_len > 0:
             lidar_row.extend([''] * padding_len)
         self.lidar_csv_writer.writerow(lidar_row)
 
-        # Log confirmed map cones
+        # Map Cones 데이터 로깅
         if map_cones:
             for cone in map_cones:
                 cone_row = [
-                    self.frame_count, cone['id'], cone['color_id'],
-                    cone['x'], cone['y'], cone['z'],
-                    cone.get('color_score', 0.0), cone['observations']
+                    self.frame_count,
+                    cone['id'],
+                    cone['color_id'],
+                    cone['x'],
+                    cone['y'],
+                    cone['z']
                 ]
                 self.map_cones_csv_writer.writerow(cone_row)
 
+<<<<<<< HEAD
         # Log provisional cones
         if provisional_cones:
             for cone in provisional_cones:
@@ -14374,6 +14601,8 @@ class DataLogger:
                 self.prov_cones_csv_writer.writerow(cone_row)
 
 >>>>>>> [control] 251026 @Doyeop-knut | 잘 안됨
+=======
+>>>>>>> [control] 251025 @Doyeop-knut | 최대한 최적화 (롤백)
         self.frame_count += 1
         if camera1_image is not None:
             if self.video_writers['cam1'] is None:
@@ -14393,7 +14622,7 @@ class DataLogger:
         if not self.enable_logging:
             return
         
-        if self.metadata_csv_file:
+        if self.metadata_csv_file: # Check if file was opened
             self.metadata_csv_file.close()
             rospy.loginfo(f"Successfully saved metadata to {self.csv_path}")
 
@@ -14402,14 +14631,15 @@ class DataLogger:
                 writer.release()
                 rospy.loginfo(f"Successfully saved video to {self.video_paths[cam_id]}")
 
-        if self.lidar_csv_file:
+        if self.lidar_csv_file: # Check if file was opened
             self.lidar_csv_file.close()
             rospy.loginfo(f"Successfully saved LiDAR data to {self.lidar_csv_path}")
 
-        if self.map_cones_csv_file:
+        if self.map_cones_csv_file: # Check if file was opened
             self.map_cones_csv_file.close()
             rospy.loginfo(f"Successfully saved map cone data to {self.map_cones_csv_path}")
 
+<<<<<<< HEAD
 <<<<<<< HEAD
         if self.path_csv_file:
             self.path_csv_file.close()
@@ -14420,6 +14650,8 @@ class DataLogger:
             rospy.loginfo(f"Successfully saved provisional cone data to {self.prov_cones_csv_path}")
 >>>>>>> [control] 251026 @Doyeop-knut | 잘 안됨
 
+=======
+>>>>>>> [control] 251025 @Doyeop-knut | 최대한 최적화 (롤백)
 StateTransitionResult = namedtuple(
     'StateTransitionResult', 
     [
@@ -14586,8 +14818,11 @@ class Control:
         self.device = device # Store the device (cpu or cuda)
 =======
     def __init__(self, path_planner, track_map):
+<<<<<<< HEAD
 
 >>>>>>> [control] 251026 @Doyeop-knut | 잘 안됨
+=======
+>>>>>>> [control] 251025 @Doyeop-knut | 최대한 최적화 (롤백)
         # --- Controller Selection ---
         try:
             self.path_planner = path_planner # PathPlanner 인스턴스를 멤버 변수로 저장
@@ -14596,7 +14831,6 @@ class Control:
         except (rospy.ROSException, KeyError):
             self.controller_type = "PurePursuit"
             rospy.logwarn("Control: '/control/controller_type' parameter not found. Defaulting to 'PurePursuit'.")
-        self.start_time = rospy.Time.now()
 
         # --- Get all parameters for all controllers ---
         # Vehicle
@@ -14615,6 +14849,7 @@ class Control:
 =======
         self.wheelbase = rospy.get_param("/control/Vehicle/wheelbase", 1.54)
         self.max_steer = math.radians(rospy.get_param("/control/Vehicle/max_steer_angle", 10.0)) # radians
+<<<<<<< HEAD
 <<<<<<< HEAD
 <<<<<<< HEAD
         self.max_accel = rospy.get_param("/control/Vehicle/max_accel", 0.5) # m/s^2
@@ -14644,9 +14879,14 @@ class Control:
         self.min_accel = rospy.get_param("/control/Vehicle/min_accel", -0.5) # m/s^2 (braking)
 >>>>>>> f7f97a8... [control] 251025 @Doyeop-knut | 최대한 최적화
 >>>>>>> [control] 251025 @Doyeop-knut | 최대한 최적화
+=======
+        self.max_accel = rospy.get_param("/control/Vehicle/max_accel", 0.5) # m/s^2
+        self.min_accel = rospy.get_param("/control/Vehicle/min_accel", -0.5) # m/s^2 (braking)
+>>>>>>> [control] 251025 @Doyeop-knut | 최대한 최적화 (롤백)
 
         # Common
         self.kp_throttle = rospy.get_param("/control/SpeedControl/pid_kp", 0.5)
+<<<<<<< HEAD
 <<<<<<< HEAD
         
         # --- Curvature-based speed control parameters ---
@@ -14660,6 +14900,9 @@ class Control:
         self.post_lc_curvature_lookahead = rospy.get_param("/control/SpeedControl/post_loop_closure/curvature_lookahead", 2)
 =======
 
+=======
+        
+>>>>>>> [control] 251025 @Doyeop-knut | 최대한 최적화 (롤백)
         # --- 곡률 기반 속도 제어 파라미터 ---
         self.max_speed = rospy.get_param("/control/SpeedControl/target_speed", 5.0)
         self.loop_closed_target_speed = rospy.get_param("/control/SpeedControl/loop_closed_target_speed", 10.0)
@@ -14679,6 +14922,7 @@ class Control:
         self.post_lc_curvature_lookahead = rospy.get_param("/control/SpeedControl/post_loop_closure/curvature_lookahead", self.curvature_lookahead) # 루프 클로저 후 곡률 계산 시 참고할 포인트 거리
 >>>>>>> [control] 251025 @Doyeop-knut | 동역학 기반 mpc
 
+
         # Pure Pursuit
         self.lookahead_dist = rospy.get_param("/control/PurePursuit/lookahead_distance", 2.5)
         
@@ -14688,6 +14932,7 @@ class Control:
         # MPC
 <<<<<<< HEAD
 <<<<<<< HEAD
+<<<<<<< HEAD
         self.mpc_horizon = rospy.get_param("/control/MPC/horizon", 5)
         self.mpc_dt = rospy.get_param("/control/MPC/dt", 0.01)
         self.mpc_first_lap_weights = rospy.get_param("/control/MPC/first_lap_weights", {})
@@ -14695,10 +14940,13 @@ class Control:
         self.mpc_fallback_weights = rospy.get_param("/control/MPC/fallback_weights", {})
 
 =======
+=======
+>>>>>>> [control] 251025 @Doyeop-knut | 최대한 최적화 (롤백)
         self.mpc_weights_pre_lc = rospy.get_param("/control/MPC/pre_loop_closure")
         self.mpc_weights_post_lc = rospy.get_param("/control/MPC/post_loop_closure")
         self.mpc_speed_scaling_factor = rospy.get_param("/control/MPC/mpc_speed_scaling_factor", 1.0) # New parameter
         self.max_speed_for_scaling = rospy.get_param("/control/SpeedControl/max_speed_for_scaling", 10.0) # Use max target speed for normalization
+<<<<<<< HEAD
 >>>>>>> [control] 251024 @Doyeop-knut | 코드 최적화
 =======
         # Load two sets of weights: one for stable mapping, one for racing
@@ -14754,6 +15002,8 @@ class Control:
         self.rel_min_scale  = rospy.get_param("/control/SpeedControl/reliability/min_scale", 0.5)
         self.rel_alpha      = rospy.get_param("/control/SpeedControl/reliability/lpf_alpha", 0.3)
         self._rel_scale_flt = None
+=======
+>>>>>>> [control] 251025 @Doyeop-knut | 최대한 최적화 (롤백)
 
 <<<<<<< HEAD
 >>>>>>> [control] 251025 @Doyeop-knut | 동역학 기반 mpc
@@ -14772,60 +15022,6 @@ class Control:
             self.compute_control = self._compute_pure_pursuit
             
         rospy.loginfo(f"Control: Using {self.controller_type} controller.")
-    def _reliability_scale(self, reliability):
-        """
-        reliability in [0,1] (예: 최근 1s 카메라 검출 성공률, 경로 지속률 등)
-        낮을수록 속도 스케일 다운.
-        """
-        if not self.rel_enable or reliability is None:
-            return 1.0
-        scale_raw = float(np.clip(reliability, self.rel_min_scale, 1.0))
-        a = float(np.clip(self.rel_alpha, 0.0, 1.0))
-        if self._rel_scale_flt is None: self._rel_scale_flt = scale_raw
-        self._rel_scale_flt = (1-a)*self._rel_scale_flt + a*scale_raw
-        return float(np.clip(self._rel_scale_flt, self.rel_min_scale, 1.0))
-    
-    def _error_adaptive_speed_cap(self, U_ref, ey, epsi, r=None):
-    # 경로 오차가 커질수록 속도 상한을 낮춤 (하한 유지)
-        ey_thr1, ey_thr2 = 0.4, 0.8
-        epsi_thr1, epsi_thr2 = np.deg2rad(8.0), np.deg2rad(15.0)
-
-        scale_ey = 1.0
-        if abs(ey) > ey_thr2:       scale_ey = 0.5
-        elif abs(ey) > ey_thr1:     scale_ey = 0.75
-
-        scale_epsi = 1.0
-        if abs(epsi) > epsi_thr2:   scale_epsi = 0.5
-        elif abs(epsi) > epsi_thr1: scale_epsi = 0.75
-
-        scale = min(scale_ey, scale_epsi)
-        return max(self.min_speed, U_ref * scale)
-
-    def _wpsi_speed_scale(self, wpsi_current):
-        # 헤딩 오차 가중치가 크면(정밀 추종 강조) 속도를 조금 보수적으로
-        # (wpsi가 20일 때 약 0.8배로 제한 → 필요시 조정)
-        base = 20.0
-        k = 0.01
-        return float(np.clip(1.0 - k * max(0.0, wpsi_current - base), 0.7, 1.0))
-
-    def _apply_speed_policies(self, U_ref_base, kappa_ref, ey, epsi, wpsi_current, r=None, reliability=1.0, is_fallback=False):
-        # 곡률 기반
-        U_ref = self._cap_speed_by_curvature(self._smooth_vref(U_ref_base), kappa_ref)
-
-        # 경로오차 기반 캡 (앞서 제공한 함수)
-        U_ref = self._error_adaptive_speed_cap(U_ref, ey=ey, epsi=epsi, r=r)
-
-        # w_epsi 연동 스케일
-        U_ref *= self._wpsi_speed_scale(wpsi_current)
-
-        # 신뢰도 스케일
-        U_ref *= self._reliability_scale(reliability)
-
-        # fallback 상한
-        if is_fallback:
-            U_ref = min(U_ref, 3.5)
-        return U_ref
-
 
     def normalize_angle(self, angle):
         """Normalize an angle to [-pi, pi]."""
@@ -14844,6 +15040,7 @@ class Control:
         while angle < -math.pi:
             angle += 2.0 * math.pi
         return angle
+<<<<<<< HEAD
     
     def _project_with_rate(self, u0_ax, u0_delta):
         ax = float(np.clip(u0_ax, self.ax_min, self.ax_max))
@@ -14981,6 +15178,8 @@ class Control:
         return min(U_cmd, U_cap)
     # === [DYN MPC] curvature-based v_ref cap END ===
 >>>>>>> [control] 251025 @Doyeop-knut | 동역학 기반 mpc
+=======
+>>>>>>> [control] 251025 @Doyeop-knut | 최대한 최적화 (롤백)
 
     def _compute_pure_pursuit(self, vehicle_state, path, is_fallback=False):
         # Unpack vehicle state
@@ -15000,8 +15199,11 @@ class Control:
 >>>>>>> [control] 251025 @Doyeop-knut | 동역학 기반 mpc
 =======
             target_speed = 5.0 # Set speed to 5.0 for fallback paths
+<<<<<<< HEAD
 
 >>>>>>> [control] 251026 @Doyeop-knut | 잘 안됨
+=======
+>>>>>>> [control] 251025 @Doyeop-knut | 최대한 최적화 (롤백)
         else:
             path_curvatures = self.path_planner._calculate_path_curvature(path_tensor, self.pre_lc_curvature_lookahead)
             # 전방 경로의 평균 곡률 계산 (예: 앞 10개 포인트)
@@ -15071,7 +15273,6 @@ class Control:
         if is_fallback:
             target_speed = 4.0 # Set speed to 5.0 for fallback paths
         else:
-            # print(self.track_map.is_loop_closed)
             if self.track_map.is_loop_closed:
                 target_speed_params = {
                     'target_speed': self.post_lc_target_speed,
@@ -15154,6 +15355,7 @@ class Control:
 =======
         return throttle, normalized_steer, brake
 
+<<<<<<< HEAD
 <<<<<<< HEAD
 <<<<<<< HEAD
     def _cost_function(self, u, *args):
@@ -15293,6 +15495,8 @@ class Control:
         Cf, Cr = self._cornering_stiffness(self._ax_prev)
         Ad, Bd, dd = self._ltv_mats_long(U=max(U_ref,0.5), kappa=kappa_ref, Cf=Cf, Cr=Cr, dt=dt)
 =======
+=======
+>>>>>>> [control] 251025 @Doyeop-knut | 최대한 최적화 (롤백)
     def _cost_function(self, u, *args):
         initial_state, ref_path, target_speed, weights, horizon, dt = args
         
@@ -15335,121 +15539,38 @@ class Control:
             # Cross-track error
             ref_p1 = ref_path[closest_idx]
             ref_p2 = ref_path[closest_idx + 1] if closest_idx < len(ref_path) - 1 else ref_p1
->>>>>>> f7f97a8... [control] 251025 @Doyeop-knut | 최대한 최적화
 
-        # Dynamically adjust weights based on speed and curvature
-        Wy, Wpsi, Wvy, Wr, Wax, Wde, Wdax, Wdde = self._weight_profile(U_ref, abs(kappa_ref))
-        Wv = self.w_v # w_v is not part of the profile function, get it directly
+            vec_path = ref_p2 - ref_p1
+            vec_path_normalized = vec_path / (np.linalg.norm(vec_path) + 1e-6)
+            vec_to_pred = np.array([pred_x, pred_y]) - ref_p1
+            cte = np.cross(vec_path_normalized, vec_to_pred)
 
-        if is_fallback:
-            Wv = 0.8 * Wv
+            # Heading error
+            ref_yaw = math.atan2(ref_p2[1] - ref_p1[1], ref_p2[0] - ref_p1[0])
+            etheta = self.normalize_angle(pred_yaw - ref_yaw)
 
-        # 시작 램프(기존 로직 재사용)
-        t_since = (rospy.Time.now() - self.start_time).to_sec()
-        if t_since < self.start_ramp_sec:
-            fac = 0.2 + 0.8*(t_since/self.start_ramp_sec)
-            Wy *= self.start_w_cte_gain; Wpsi *= self.start_w_heading_gain
-            Wdde *= 1.5; Wdax *= 1.5
-            U_ref *= fac
+            cost += weights['w_cte'] * cte**2
+            cost += weights['w_etheta'] * etheta**2
+            cost += weights['w_vel'] * (target_speed - pred_v)**2
 
-        # Xref: ey=0, epsi=0, vy=0, r=0, v=U_ref
-        x_ref = np.array([0.0, 0.0, 0.0, 0.0, U_ref])
+        # Control input cost
+        cost += weights['w_accel'] * np.sum(accels**2)
+        cost += weights['w_steer'] * np.sum(steers**2)
 
-        # 호라이즌 전개(블록 행렬 구성: 5상태/2입력)
-        nx, nu = 5, 2
-        Sx = np.zeros((nx*N, nx)); Su = np.zeros((nx*N, nu*N)); Sd = np.zeros((nx*N,))
-
-        # Construct MPC prediction matrices
-        A_pow = np.eye(nx)
-        for i in range(N):
-            # Sx: Effect of x0 on x_{i+1}
-            A_pow = A_pow @ Ad
-            Sx[i * nx:(i + 1) * nx, :] = A_pow
-
-            # Sd: Effect of drift dd on x_{i+1}
-            if i > 0:
-                Sd[i * nx:(i + 1) * nx] = Sd[(i - 1) * nx:i * nx] @ Ad + dd
-            else: # i == 0
-                Sd[i * nx:(i + 1) * nx] = dd
-
-            # Su: Effect of input U on state X (convolution)
-            for j in range(i + 1):
-                Su[i * nx:(i + 1) * nx, j * nu:(j + 1) * nu] = np.linalg.matrix_power(Ad, i - j) @ Bd
-        # 1) Q, R (대각 블록으로만 구성) ---------------------------------------------
-        Qblk = np.zeros((nx*N, nx*N))
-        Rblk = np.zeros((nu*N, nu*N))
-
-        for k in range(N):
-            # 상태 가중치: [vy, r, ey, epsi, v]
-            qi = np.diag([Wvy, Wr, Wy, Wpsi, Wv])
-            Qblk[k*nx:(k+1)*nx, k*nx:(k+1)*nx] = qi
-            # 입력 가중치: [ax, delta]
-            ri = np.diag([Wax, Wde])
-            Rblk[k*nu:(k+1)*nu, k*nu:(k+1)*nu] = ri
-
-        # 2) 레이트(Δu) 행렬 D와 가중치 Wd -------------------------------------------
-        # D: 1차 차분 (유향: k-1 → k), 크기 ((N-1)*nu) x (N*nu)
-        rows = (N-1)*nu; cols = N*nu
-        D = np.zeros((rows, cols))
-        for k in range(1, N):
-            # 블록 인덱스
-            D[(k-1)*nu:k*nu, k*nu:(k+1)*nu]     =  np.eye(nu)
-            D[(k-1)*nu:k*nu, (k-1)*nu:k*nu]     = -np.eye(nu)
-        # Wd: 대각 행렬 (ax, delta 각각 다른 가중)
-        Wd = np.zeros((rows, rows))
-        for k in range(N-1):
-            Wd[k*nu + 0, k*nu + 0] = Wdax   # Δax
-            Wd[k*nu + 1, k*nu + 1] = Wdde   # Δδ
-
-        # 3) H, f 구성 -----------------------------------------------------------------
-        Q = Qblk; R = Rblk  # 가독성
-        Xref = np.tile(x_ref, N)
-        H = Su.T @ Q @ Su + R + D.T @ Wd @ D
-        f = Su.T @ Q @ (Sx @ x0 + Sd - Xref)
-
-        # 수치 안정화를 위한 작은 정규화(필수 권장)
-        eps = 1e-6
-        H_reg = H + eps * np.eye(H.shape[0])
-
-        # 4) 선형 시스템 풀이: H_reg * Uvec = -f --------------------------------------
-        try:
-            Uvec = np.linalg.solve(H_reg, -f)
-        except np.linalg.LinAlgError:
-            # 특이/조건수 나쁠 때 폴백
-            Uvec, *_ = np.linalg.lstsq(H_reg, -f, rcond=None)
-        self.Uvec = Uvec
-
-        # 첫 스텝 입력
-        ax0, delta0 = float(Uvec[0]), float(Uvec[1])
-
-        # 마찰 타원 기반 종가속 상한과 기존 제약을 함께 적용
-        ax_lim = self._friction_ellipse_ax_limit(U=max(x0[4], U_ref), kappa=kappa_ref)
-        ax0 = float(np.clip(ax0, max(self.ax_min, -ax_lim), min(self.ax_max, ax_lim)))
-
-<<<<<<< HEAD
-        # δ 포화/레이트
-        ax0, delta0 = self._project_with_rate(ax0, delta0)
-
-        # (선택) 예측 상태 시퀀스 저장
-        self.predicted_state_seq = self._rollout_predict(x0, Ad, Bd, dd, Uvec)
-
-        return ax0, delta0
-=======
         # Control rate cost (smoothness)
         cost += weights['w_accel_rate'] * np.sum((accels[1:] - accels[:-1])**2)
         cost += weights['w_steer_rate'] * np.sum((steers[1:] - steers[:-1])**2)
         
         self._predicted_states = predicted_states # Store for visualization
         return cost
->>>>>>> f7f97a8... [control] 251025 @Doyeop-knut | 최대한 최적화
 
     def _compute_mpc(self, vehicle_state, path, is_fallback=False):
-        # 1. Unpack vehicle state
+        # Unpack vehicle state
         veh_x, veh_y, veh_yaw = vehicle_state[0], vehicle_state[1], vehicle_state[2]
         current_speed = math.sqrt(vehicle_state[3]**2 + vehicle_state[4]**2)
-        imu_r = vehicle_state[5]  # yawrate
-        imu_ay = vehicle_state[7] # ay
+        initial_state = [veh_x, veh_y, veh_yaw, current_speed]
 
+<<<<<<< HEAD
 <<<<<<< HEAD
 <<<<<<< HEAD
         # --- For Logging: Calculate current errors ---
@@ -15542,20 +15663,23 @@ class Control:
         path = self.path_planner._resample_path(path, ds=0.25, kappa_max=0.5)
         # 3. Select weights and parameters based on mode
         saved_ddot = self.delta_dot_max
+=======
+        # --- 곡률 기반 목표 속도 계산 ---
+>>>>>>> [control] 251025 @Doyeop-knut | 최대한 최적화 (롤백)
         if is_fallback:
-            weights = self.mpc_weights_fallback
-            horizon = 10
-            dt = 0.05
-            base_target_speed = min(self.pre_lc_target_speed, 6.0)
-            self.delta_dot_max = min(self.delta_dot_max, np.deg2rad(100.0))
-            self.ax_max = 10.0
-            self.ax_min = -10.0
-            self.a_lat_max = 10.0
+            mpc_target_speed = (self.pre_lc_target_speed + self.pre_lc_min_speed)/2 # Set speed to 5.0 for fallback paths
+            weights = self.mpc_weights_pre_lc.copy() # Use pre-LC weights for fallback
         else:
             if self.track_map.is_loop_closed:
-                weights = self.mpc_weights_racing
-                base_target_speed = self.post_lc_target_speed
+                target_speed_params = {
+                    'target_speed': self.post_lc_target_speed,
+                    'min_speed': self.post_lc_min_speed,
+                    'curvature_speed_factor': self.post_lc_curvature_speed_factor,
+                    'curvature_lookahead': self.post_lc_curvature_lookahead
+                }
+                weights = self.mpc_weights_post_lc.copy() # Use a copy to avoid modifying original params
             else:
+<<<<<<< HEAD
 <<<<<<< HEAD
                 weights = self.mpc_weights_mapping
                 base_target_speed = self.pre_lc_target_speed
@@ -15800,6 +15924,8 @@ class Control:
 
         # 6. Convert acceleration to throttle/brake
 =======
+=======
+>>>>>>> [control] 251025 @Doyeop-knut | 최대한 최적화 (롤백)
                 target_speed_params = {
                     'target_speed': self.pre_lc_target_speed,
                     'min_speed': self.pre_lc_min_speed,
@@ -15883,12 +16009,13 @@ class Control:
         # print("Optimal Accel:", optimal_accel, "Optimal Steer:", optimal_steer)
         # print(self.max_accel, self.min_accel)
         # --- Map acceleration to throttle/brake ---
->>>>>>> f7f97a8... [control] 251025 @Doyeop-knut | 최대한 최적화
         throttle = 0.0
         brake = 0.0
-        if ax_cmd > 0:
-            throttle = np.clip(ax_cmd / self.ax_max, 0.0, 1.0)
+        if optimal_accel > 0:
+            # Simple mapping: scale accel to [0,1] throttle
+            throttle = np.clip(optimal_accel / self.max_accel, 0.0, 1.0)
         else:
+<<<<<<< HEAD
             brake = np.clip(-ax_cmd / abs(self.ax_min), 0.0, 1.0)
         normalized_steer = np.clip(-delta_cmd / self.max_steer, -1.0, 1.0)
         
@@ -15909,6 +16036,13 @@ class Control:
                     y += v * math.sin(yaw) * dt_vis
                     predicted_path.append([x, y])
 >>>>>>> [control] 251025 @Doyeop-knut | 동역학 기반 mpc
+=======
+            # Simple mapping: scale decel to [0,1] brake
+            brake = np.clip(-optimal_accel / abs(self.min_accel), 0.0, 1.0)
+
+        # Normalize steering angle to [-1, 1]
+        normalized_steer = np.clip(-optimal_steer / self.max_steer, -1.0, 1.0)
+>>>>>>> [control] 251025 @Doyeop-knut | 최대한 최적화 (롤백)
 
 <<<<<<< HEAD
 <<<<<<< HEAD

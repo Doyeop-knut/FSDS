@@ -1,5 +1,8 @@
 <<<<<<< HEAD
 <<<<<<< HEAD
+<<<<<<< HEAD
+=======
+>>>>>>> [control] 251025 @Doyeop-knut | 최대한 최적화 (롤백)
 # Formula Autonomous System Configuration
 # Combined configuration file for all subsystems
 # Author: Jiwon Seok (jiwonseok@hanyang.ac.kr)
@@ -8,15 +11,19 @@
 system:
 <<<<<<< HEAD
 <<<<<<< HEAD
+<<<<<<< HEAD
   visualization:
     enable_visualization: true # Enable or disable all ROS and OpenCV visualizations
   logging:
     enable_logging: true # Enable or disable data logging
 =======
+=======
+>>>>>>> [control] 251025 @Doyeop-knut | 최대한 최적화 (롤백)
   main_loop_rate: 1000.0 # [Hz]
   visualization:
     enable_visualization: true # Enable or disable all ROS and OpenCV visualizations
   logging:
+<<<<<<< HEAD
 <<<<<<< HEAD
 <<<<<<< HEAD
 <<<<<<< HEAD
@@ -332,6 +339,11 @@ perception:
 >>>>>>> [control] 251026 @Doyeop-knut | 잘 안됨
 =======
 =======
+=======
+    enable_logging: true # Enable or disable data logging
+
+perception:
+>>>>>>> [control] 251025 @Doyeop-knut | 최대한 최적화 (롤백)
   # ===========================================
   # LiDAR Perception Parameters
   # ===========================================
@@ -367,11 +379,14 @@ perception:
     translation_y: 0.0
     translation_z: 0.1
     rotation_roll: 0.0
+<<<<<<< HEAD
 >>>>>>> f7f97a8... [control] 251025 @Doyeop-knut | 최대한 최적화
 >>>>>>> [control] 251025 @Doyeop-knut | 최대한 최적화
+=======
+>>>>>>> [control] 251025 @Doyeop-knut | 최대한 최적화 (롤백)
     rotation_pitch: 0.0
-    rotation_roll: 0.0
     rotation_yaw: 0.0
+<<<<<<< HEAD
     translation_x: -0.43
     translation_y: -0.15
     translation_z: 0.82
@@ -413,18 +428,36 @@ perception:
     enable_preprocessing: true
     gaussian_blur_sigma: 1.0
 >>>>>>> [control] 251026 @Doyeop-knut | 잘 안됨
+=======
+
+  # ===========================================
+  # Camera Parameters
+  # ===========================================
+
+>>>>>>> [control] 251025 @Doyeop-knut | 최대한 최적화 (롤백)
   camera_intrinsics:
+    # Camera intrinsic parameters (pixels)
+    # 640x480, horizontal FOV: 90 deg: focal length = 320.0
     focal_length_x: 320.0
     focal_length_y: 320.0
     principal_point_x: 320.0
     principal_point_y: 240.0
-  camera_right_extrinsics:
-    rotation_pitch: 0.0
+
+  camera_extrinsics:
+    # Camera position relative to vehicle base (meters, degrees)
+    translation_x: -0.43
+    translation_y: -0.15
+    translation_z: 0.82
     rotation_roll: 0.0
+    rotation_pitch: 0.0
     rotation_yaw: 0.0
+
+  camera_right_extrinsics:
+    # Camera position relative to vehicle base (meters, degrees)
     translation_x: -0.43
     translation_y: 0.15
     translation_z: 0.82
+<<<<<<< HEAD
   lidar_clustering:
 <<<<<<< HEAD
     dbscan_eps: 1.0
@@ -439,8 +472,12 @@ perception:
     cone_min_radius: 0.0
   lidar_extrinsics:
     rotation_pitch: 0.0
+=======
+>>>>>>> [control] 251025 @Doyeop-knut | 최대한 최적화 (롤백)
     rotation_roll: 0.0
+    rotation_pitch: 0.0
     rotation_yaw: 0.0
+<<<<<<< HEAD
 <<<<<<< HEAD
 <<<<<<< HEAD
 <<<<<<< HEAD
@@ -1216,6 +1253,8 @@ system:
 >>>>>>> [control] 251026 @Doyeop-knut | 코드 추가 (미완)
 =======
 =======
+=======
+>>>>>>> [control] 251025 @Doyeop-knut | 최대한 최적화 (롤백)
 
   camera_image_processing:
     # Image preprocessing settings
@@ -1373,5 +1412,8 @@ control:
     min_accel : -20.0 #m/s^2
     max_accel : 20.0 #m/s^2
     max_steer_angle : 40.0 #radians
+<<<<<<< HEAD
 >>>>>>> f7f97a8... [control] 251025 @Doyeop-knut | 최대한 최적화
 >>>>>>> [control] 251025 @Doyeop-knut | 최대한 최적화
+=======
+>>>>>>> [control] 251025 @Doyeop-knut | 최대한 최적화 (롤백)
