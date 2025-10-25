@@ -399,7 +399,6 @@ class FormulaAutonomousSystem:
         self.track_map.update(global_clusters, vehicle_state)
         # print(f"closed loop  = {self.track_map.is_loop_closed}")
 
-        # Plan path using the map
         path, tri, tri_points, tri_colors, midpoints, is_fallback = self.path_planner.plan_path(self.track_map.get_cones(), vehicle_state)
         
         # Visualize Map and Path
@@ -2423,13 +2422,24 @@ class Control:
         # Vehicle
         self.wheelbase = rospy.get_param("/control/Vehicle/wheelbase", 1.54)
         self.max_steer = math.radians(rospy.get_param("/control/Vehicle/max_steer_angle", 10.0)) # radians
-        self.max_accel = rospy.get_param("/control/Vehicle/max_accel", 0.5) # m/s^2
-        self.min_accel = rospy.get_param("/control/Vehicle/min_accel", -0.5) # m/s^2 (braking)
+        self.car_mass = rospy.get_param("/control/Vehicle/car_mass", 255.0)
+        self.Iz = rospy.get_param("/control/Vehicle/Iz",150.0)
+        self.front_axle_distance = rospy.get_param("/control/Vehicle/front_axle_distance", 0.465)
+        self.rear_axle_distance = self.wheelbase-self.front_axle_distance
+        self.h_cg = rospy.get_param("/control/Vehicle/h_cg", 0.25)
+        self.a_lat_max = rospy.get_param("/control/Vehicle/a_lat_max", 16.0)
+        self.ax_min = rospy.get_param("/control/Vehicle/ax_min", -16.0)
+        self.ax_max = rospy.get_param("/control/Vehicle/ax_max", 12.0)
+        self.delta_dot_max = rospy.get_param("/control/Vehicle/delta_dot_max", np.deg2rad(400.0))
+        self.delta_max = rospy.get_param("/control/Vehicle/delta_max", np.deg2rad(25.0))
+        
+        self.lat_stiff_coeff = rospy.get_param("/control/TireParam/lat_stiff_coeff", 48.0)
+        self.friction_scale = rospy.get_param("/cotnrol/TireParam/friction_scale", 1.4)
 
         # Common
         self.target_speed = rospy.get_param("/control/SpeedControl/target_speed", 5.0) # m/s
         self.kp_throttle = rospy.get_param("/control/SpeedControl/pid_kp", 0.5)
-        
+
         # --- 곡률 기반 속도 제어 파라미터 ---
         self.max_speed = rospy.get_param("/control/SpeedControl/target_speed", 5.0)
         self.loop_closed_target_speed = rospy.get_param("/control/SpeedControl/loop_closed_target_speed", 10.0)
@@ -2448,17 +2458,49 @@ class Control:
         self.pre_lc_curvature_lookahead = rospy.get_param("/control/SpeedControl/pre_loop_closure/curvature_lookahead", self.curvature_lookahead) # 루프 클로저 전 곡률 계산 시 참고할 포인트 거리
         self.post_lc_curvature_lookahead = rospy.get_param("/control/SpeedControl/post_loop_closure/curvature_lookahead", self.curvature_lookahead) # 루프 클로저 후 곡률 계산 시 참고할 포인트 거리
 
-
         # Pure Pursuit
         self.lookahead_dist = rospy.get_param("/control/pure_pursuit/lookahead_distance", 2.5)
         
         # Stanley
         self.k_crosstrack = rospy.get_param("/control/stanley/k_gain", 0.7)
         # MPC
-        self.mpc_weights_pre_lc = rospy.get_param("/control/MPC/pre_loop_closure")
-        self.mpc_weights_post_lc = rospy.get_param("/control/MPC/post_loop_closure")
-        self.mpc_speed_scaling_factor = rospy.get_param("/control/MPC/mpc_speed_scaling_factor", 1.0) # New parameter
-        self.max_speed_for_scaling = rospy.get_param("/control/SpeedControl/max_speed_for_scaling", 10.0) # Use max target speed for normalization
+        # Load two sets of weights: one for stable mapping, one for racing
+        default_mapping_weights = {
+            'w_ey': 8.0, 'w_epsi': 10.0, 'w_vy': 1.0, 'w_r': 1.0, 'w_v': 20.0,
+            'w_ax': 0.5, 'w_delta': 5.0, 'w_dax': 1.0, 'w_ddelta': 5.0
+        }
+        default_racing_weights = {
+            'w_ey': 15.0, 'w_epsi': 20.0, 'w_vy': 1.0, 'w_r': 1.0, 'w_v': 10.0,
+            'w_ax': 0.2, 'w_delta': 2.0, 'w_dax': 2.0, 'w_ddelta': 10.0
+        }
+        self.mpc_weights_mapping = rospy.get_param("/control/MPC/mapping_mode", default_mapping_weights)
+        self.mpc_weights_racing = rospy.get_param("/control/MPC/racing_mode", default_racing_weights)
+        
+        # General MPC parameters
+        self.mpc_horizon = rospy.get_param("/control/MPC/horizon", 10)
+        self.dt_ctrl = rospy.get_param("/control/MPC/dt", 0.1)
+
+        # Vehicle physics for MPC model
+        self.rho_air = rospy.get_param("/control/Vehicle/rho_air", 1.2)
+        self.Cd = rospy.get_param("/control/Vehicle/Cd", 0.3)
+        self.Af = rospy.get_param("/control/Vehicle/frontal_area", 1.2)
+        self.Crr = rospy.get_param("/control/Vehicle/Crr", 1.4)
+
+        # MPC state variables
+        self._vy = 0
+        self._r = 0
+        self.start_time = rospy.Time.now()
+        self._ax_prev = 0.0
+        self._delta_prev = 0.0
+        self._vref_filt = None
+        self._kappa_buf = []
+        self.kappa_ma_N = 5
+
+        self.start_ramp_sec        = rospy.get_param("~start_ramp_sec", 2.5)
+        self.start_rate_scale      = rospy.get_param("~start_rate_scale", 0.8)
+        self.start_w_cte_gain      = rospy.get_param("~start_w_cte_gain", 15)
+        self.start_w_heading_gain  = rospy.get_param("~start_w_heading_gain", 15)
+
 
         # --- Assign the compute function based on selected type ---
         if self.controller_type == "PurePursuit":
@@ -2480,6 +2522,141 @@ class Control:
         while angle < -math.pi:
             angle += 2.0 * math.pi
         return angle
+    
+    def _project_with_rate(self, u0_ax, u0_delta):
+        ax = float(np.clip(u0_ax, self.ax_min, self.ax_max))
+        delta = float(np.clip(u0_delta, -self.delta_max, +self.delta_max))
+        t_since = (rospy.Time.now() - self.start_time).to_sec()
+        rate_scale = self.start_rate_scale if t_since < self.start_ramp_sec else 1.0
+        ddel_max = self.delta_dot_max * self.dt_ctrl * rate_scale
+        delta = float(np.clip(delta, self._delta_prev - ddel_max, self._delta_prev + ddel_max))
+        return ax, delta
+    
+    def _rollout_predict(self, x0, Ad, Bd, dd, Uvec):
+        nx, nu, N = 5, 2, int(self.mpc_horizon)
+        xs, xk = [x0.copy()], x0.copy()
+        for k in range(N):
+            uk = Uvec[k*nu:(k+1)*nu] if len(Uvec) >= (k+1)*nu else np.zeros(nu)
+            xk = Ad @ xk + Bd @ uk + dd
+            xs.append(xk.copy())
+        return np.array(xs)
+
+    def _smooth_kappa(self, kappa):
+        self._kappa_buf.append(kappa)
+        if len(self._kappa_buf) > self.kappa_ma_N:
+            self._kappa_buf.pop(0)
+        return float(np.mean(self._kappa_buf))
+    
+    def _smooth_vref(self, vref):
+        alpha = 0.1
+        if self._vref_filt is None: self._vref_filt = vref
+        self._vref_filt = (1-alpha)*self._vref_filt + alpha*vref
+        return self._vref_filt
+    
+    def _friction_ellipse_ax_limit(self, U, kappa):
+        # 횡가속 사용량에 따른 종가속 여유
+        a_lat = abs(U * U * kappa)
+        a_max = max(0.1, self.a_lat_max)  # 수치 안전
+        if a_lat >= a_max:
+            return 0.0
+        # 단순 타원: (a_x/a_max)^2 + (a_lat/a_max)^2 <= 1
+        ax_lim = a_max * math.sqrt(1.0 - (a_lat/a_max)**2)
+        # 물리적 상한(엔진/제동)도 함께 고려
+        ax_lim = min(ax_lim, self.ax_max)
+        return ax_lim
+    def _discretize_tustin(self, A, B, d, dt):
+        I = np.eye(A.shape[0])
+        M1 = I - 0.5*dt*A
+        M2 = I + 0.5*dt*A
+        Minv = np.linalg.inv(M1)
+        Ad = Minv @ M2
+        Bd = Minv @ (dt * B)
+        dd = Minv @ (dt * d)
+        return Ad, Bd, dd
+
+    def _weight_profile(self, U_ref, kappa_abs):
+        Wy, Wpsi, Wvy, Wr = self.w_ey, self.w_epsi, self.w_vy, self.w_r
+        Wax, Wde, Wdax, Wdde = self.w_ax, self.w_delta, self.w_dax, self.w_ddelta
+        if U_ref > 12.0 and kappa_abs < 0.02:  # 고속 직선: 입력/레이트 더 억제
+            Wde *= 1.5; Wdde *= 1.5; Wdax *= 1.3
+        if kappa_abs > 0.08:                   # 급코너: 상태 오차 더 강하게
+            Wy  *= 1.3; Wpsi *= 1.3
+        return Wy, Wpsi, Wvy, Wr, Wax, Wde, Wdax, Wdde
+
+    def _cornering_stiffness(self, ax_cmd=0.0):
+        """ax_cmd: 현재/직전 예측 종가속(없으면 0).
+        반환: Cf, Cr [N/rad] (액슬 기준) """
+        g = 9.81; m=self.car_mass; a=self.front_axle_distance; b=self.rear_axle_distance; L=self.wheelbase
+        # 단순 종방향 하중이동 모델 (횡하중 이동은 1차 무시 또는 비용/제약으로 흡수)
+        Fzf = (b/L)*m*g - (self.h_cg/L)*m*ax_cmd
+        Fzr = (a/L)*m*g + (self.h_cg/L)*m*ax_cmd
+        # kN로 변환, 하한(과소하중 방지)
+        Wf = max(0.5, Fzf/1000.0)
+        Wr = max(0.5, Fzr/1000.0)
+        Cf = self.lat_stiff_coeff * Wf * 1000.0  # [N/rad]
+        Cr = self.lat_stiff_coeff * Wr * 1000.0  # [N/rad]
+        return Cf, Cr
+    
+    # (기존 _ltv_mats는 그대로 두고, 5상태 버전 추가)
+    def _ltv_mats_long(self, U, kappa, Cf, Cr, dt):
+        """
+        상태 x=[vy, r, ey, epsi, v], 입력 u=[ax, delta]
+        v_dot = ax - kv2*v*|v| - arr*sign(v)
+        """
+        m=self.car_mass; Iz=self.Iz; a=self.front_axle_distance; b=self.rear_axle_distance
+        if U < 0.5: U = 0.5
+        nx, nu = 5, 2
+        A = np.zeros((nx, nx)); B = np.zeros((nx, nu)); d = np.zeros(nx)
+
+        # 1) 횡-요(선형 자전거; vy,r)  [위치/헤딩 오차 동일]
+        A[0,0] = -(Cf+Cr)/(m*U)
+        A[0,1] = (-a*Cf + b*Cr)/(m*U) - U
+        B[0,1] =  (Cf/m)
+
+        A[1,0] = (-a*Cf + b*Cr)/(Iz*U)
+        A[1,1] = -(a*a*Cf + b*b*Cr)/(Iz*U)
+        B[1,1] =  (a*Cf/Iz)
+
+        A[2,0] = 1.0
+        A[2,3] = U
+        A[3,1] = 1.0
+        d[3]   = -U*kappa
+
+        # 2) 속도 동역학: v_dot = ax - kv2*v*|v| - arr*sign(v)
+        kv2 = 0.5*self.rho_air*self.Cd*self.Af / m    # [1/m]
+        arr = self.Crr*9.81                            # [m/s^2]
+        # ∂/∂v 선형화: d/dv (kv2*v*|v|) ≈ 2*kv2*|v|/2? → v≈U 근사로 2*kv2*U/2 = kv2*2|U|? 정확히는 d(v|v|)/dv = 2|v| (v≠0)
+        dv_term = 2.0*kv2*abs(U)
+        A[4,4] = -dv_term
+        B[4,0] = 1.0
+        # d(상수항): -arr*sign(v)  (U 기준 부호)
+        d[4]   = -arr * (1.0 if U >= 0 else -1.0)
+
+        # ZOH(안정형 이산화 사용 권장: Tustin)
+        Ad, Bd, dd = self._discretize_tustin(A, B, d, dt)
+        # rospy.loginfo(f"Ad = {Ad}, Bd = {Bd}, dd = {dd}")
+        return Ad, Bd, dd
+
+
+    def _observe_states(self, imu_yaw_rate=None, imu_ay=None, U=0.0):
+        """간단 LKF/저역통과 대체: r은 IMU 우선, v_y는 ay - U*r 적분/필터"""
+        # 요레이트
+        if imu_yaw_rate is not None:
+            self._r = float(imu_yaw_rate)
+
+        # v_y 추정: a_y ≈ v_y_dot + U*r → v_y_dot ≈ a_y - U*r
+        if imu_ay is not None:
+            vy_dot = float(imu_ay) - U * self._r
+            alpha = 0.4  # 1차 LPF 계수(튜닝)
+            self._vy = (1-alpha)*self._vy + alpha*(self._vy + vy_dot*self.dt_ctrl)
+
+        return self._vy, self._r
+    # === [DYN MPC] curvature-based v_ref cap BEGIN ===
+    def _cap_speed_by_curvature(self, U_cmd, kappa):
+        eps = 1e-4
+        U_cap = math.sqrt(max(self.a_lat_max, 0.0)/max(abs(kappa), eps))
+        return min(U_cmd, U_cap)
+    # === [DYN MPC] curvature-based v_ref cap END ===
 
     def _compute_pure_pursuit(self, vehicle_state, path, is_fallback=False):
         # Unpack vehicle state
@@ -2488,7 +2665,7 @@ class Control:
 
         # --- 곡률 기반 목표 속도 계산 ---
         if is_fallback:
-            target_speed = 5.0 # Set speed to 5.0 for fallback paths
+            target_speed = 8.0 # Set speed to 5.0 for fallback paths
         else:
             path_curvatures = self.path_planner._calculate_path_curvature(path, self.curvature_lookahead)
             # 전방 경로의 평균 곡률 계산 (예: 앞 10개 포인트)
@@ -2556,6 +2733,7 @@ class Control:
         if is_fallback:
             target_speed = 5.0 # Set speed to 5.0 for fallback paths
         else:
+            # print(self.track_map.is_loop_closed)
             if self.track_map.is_loop_closed:
                 target_speed_params = {
                     'target_speed': self.post_lc_target_speed,
@@ -2692,120 +2870,202 @@ class Control:
         
         self._predicted_states = predicted_states # Store for visualization
         return cost
+    
+    # _solve_ltv_mpc 내부에서 4상태 → 5상태로 변경
+    def _solve_ltv_mpc(self, x0, U_ref, kappa_ref):
+        N = int(self.mpc_horizon); dt = self.dt_ctrl
+
+        Cf, Cr = self._cornering_stiffness(self._ax_prev)
+        Ad, Bd, dd = self._ltv_mats_long(U=max(U_ref,0.5), kappa=kappa_ref, Cf=Cf, Cr=Cr, dt=dt)
+
+        # Dynamically adjust weights based on speed and curvature
+        Wy, Wpsi, Wvy, Wr, Wax, Wde, Wdax, Wdde = self._weight_profile(U_ref, abs(kappa_ref))
+        Wv = self.w_v # w_v is not part of the profile function, get it directly
+
+
+        # 시작 램프(기존 로직 재사용)
+        t_since = (rospy.Time.now() - self.start_time).to_sec()
+        if t_since < self.start_ramp_sec:
+            fac = 0.2 + 0.8*(t_since/self.start_ramp_sec)
+            Wy *= self.start_w_cte_gain; Wpsi *= self.start_w_heading_gain
+            Wdde *= 1.2; Wdax *= 1.1
+            U_ref *= fac
+
+        # Xref: ey=0, epsi=0, vy=0, r=0, v=U_ref
+        x_ref = np.array([0.0, 0.0, 0.0, 0.0, U_ref])
+
+        # 호라이즌 전개(블록 행렬 구성: 5상태/2입력)
+        nx, nu = 5, 2
+        Sx = np.zeros((nx*N, nx)); Su = np.zeros((nx*N, nu*N)); Sd = np.zeros((nx*N,))
+
+        # Construct MPC prediction matrices
+        A_pow = np.eye(nx)
+        for i in range(N):
+            # Sx: Effect of x0 on x_{i+1}
+            A_pow = A_pow @ Ad
+            Sx[i * nx:(i + 1) * nx, :] = A_pow
+
+            # Sd: Effect of drift dd on x_{i+1}
+            if i > 0:
+                Sd[i * nx:(i + 1) * nx] = Sd[(i - 1) * nx:i * nx] @ Ad + dd
+            else: # i == 0
+                Sd[i * nx:(i + 1) * nx] = dd
+
+            # Su: Effect of input U on state X (convolution)
+            for j in range(i + 1):
+                Su[i * nx:(i + 1) * nx, j * nu:(j + 1) * nu] = np.linalg.matrix_power(Ad, i - j) @ Bd
+        # 1) Q, R (대각 블록으로만 구성) ---------------------------------------------
+        Qblk = np.zeros((nx*N, nx*N))
+        Rblk = np.zeros((nu*N, nu*N))
+
+        for k in range(N):
+            # 상태 가중치: [vy, r, ey, epsi, v]
+            qi = np.diag([Wvy, Wr, Wy, Wpsi, Wv])
+            Qblk[k*nx:(k+1)*nx, k*nx:(k+1)*nx] = qi
+            # 입력 가중치: [ax, delta]
+            ri = np.diag([Wax, Wde])
+            Rblk[k*nu:(k+1)*nu, k*nu:(k+1)*nu] = ri
+
+        # 2) 레이트(Δu) 행렬 D와 가중치 Wd -------------------------------------------
+        # D: 1차 차분 (유향: k-1 → k), 크기 ((N-1)*nu) x (N*nu)
+        rows = (N-1)*nu; cols = N*nu
+        D = np.zeros((rows, cols))
+        for k in range(1, N):
+            # 블록 인덱스
+            D[(k-1)*nu:k*nu, k*nu:(k+1)*nu]     =  np.eye(nu)
+            D[(k-1)*nu:k*nu, (k-1)*nu:k*nu]     = -np.eye(nu)
+        # Wd: 대각 행렬 (ax, delta 각각 다른 가중)
+        Wd = np.zeros((rows, rows))
+        for k in range(N-1):
+            Wd[k*nu + 0, k*nu + 0] = Wdax   # Δax
+            Wd[k*nu + 1, k*nu + 1] = Wdde   # Δδ
+
+        # 3) H, f 구성 -----------------------------------------------------------------
+        Q = Qblk; R = Rblk  # 가독성
+        Xref = np.tile(x_ref, N)
+        H = Su.T @ Q @ Su + R + D.T @ Wd @ D
+        f = Su.T @ Q @ (Sx @ x0 + Sd - Xref)
+
+        # 수치 안정화를 위한 작은 정규화(필수 권장)
+        eps = 1e-6
+        H_reg = H + eps * np.eye(H.shape[0])
+
+        # 4) 선형 시스템 풀이: H_reg * Uvec = -f --------------------------------------
+        try:
+            Uvec = np.linalg.solve(H_reg, -f)
+        except np.linalg.LinAlgError:
+            # 특이/조건수 나쁠 때 폴백
+            Uvec, *_ = np.linalg.lstsq(H_reg, -f, rcond=None)
+        self.Uvec = Uvec
+
+        # 첫 스텝 입력
+        ax0, delta0 = float(Uvec[0]), float(Uvec[1])
+
+        # 마찰 타원 기반 종가속 상한과 기존 제약을 함께 적용
+        ax_lim = self._friction_ellipse_ax_limit(U=max(x0[4], U_ref), kappa=kappa_ref)
+        ax0 = float(np.clip(ax0, max(self.ax_min, -ax_lim), min(self.ax_max, ax_lim)))
+
+        # δ 포화/레이트
+        ax0, delta0 = self._project_with_rate(ax0, delta0)
+
+        # (선택) 예측 상태 시퀀스 저장
+        self.predicted_state_seq = self._rollout_predict(x0, Ad, Bd, dd, Uvec)
+
+        return ax0, delta0
 
     def _compute_mpc(self, vehicle_state, path, is_fallback=False):
-        # Unpack vehicle state
+        # 1. Unpack vehicle state
         veh_x, veh_y, veh_yaw = vehicle_state[0], vehicle_state[1], vehicle_state[2]
         current_speed = math.sqrt(vehicle_state[3]**2 + vehicle_state[4]**2)
-        initial_state = [veh_x, veh_y, veh_yaw, current_speed]
+        imu_r = vehicle_state[5]  # yawrate
+        imu_ay = vehicle_state[7] # ay
 
-        # --- 곡률 기반 목표 속도 계산 ---
+        # 2. Find path errors
+        path_points = np.array(path)
+        distances = np.linalg.norm(path_points - np.array([veh_x, veh_y]), axis=1)
+        closest_idx = np.argmin(distances)
+
+        if closest_idx < len(path_points) - 1:
+            p1 = path_points[closest_idx]
+            p2 = path_points[closest_idx + 1]
+            path_yaw = math.atan2(p2[1] - p1[1], p2[0] - p1[0])
+        else:
+            p1 = path_points[closest_idx - 1]
+            p2 = path_points[closest_idx]
+            path_yaw = math.atan2(p2[1] - p1[1], p2[0] - p1[0])
+
+        vec_path_to_veh = np.array([veh_x, veh_y]) - p1
+        path_vec = p2 - p1
+        path_vec_normalized = path_vec / (np.linalg.norm(path_vec) + 1e-6)
+        ey = np.cross(path_vec_normalized, vec_path_to_veh)
+        epsi = self.normalize_angle(veh_yaw - path_yaw)
+        
+        path_curvatures = self.path_planner._calculate_path_curvature(path, 5) # 5 is curvature_lookahead
+        kappa_ref = path_curvatures[closest_idx] if path_curvatures and closest_idx < len(path_curvatures) else 0.0
+
+        # 3. Select and set MPC base weights for the current mode
+        if is_fallback or not self.track_map.is_loop_closed:
+            weights = self.mpc_weights_mapping
+        else:
+            weights = self.mpc_weights_racing
+        
+        self.w_ey = weights['w_ey']
+        self.w_epsi = weights['w_epsi']
+        self.w_vy = weights['w_vy']
+        self.w_r = weights['w_r']
+        self.w_v = weights['w_v']
+        self.w_ax = weights['w_ax']
+        self.w_delta = weights['w_delta']
+        self.w_dax = weights['w_dax']
+        self.w_ddelta = weights['w_ddelta']
+
+        # 4. Prepare inputs for the MPC solver
+        vy_hat, r_hat = self._observe_states(imu_r, imu_ay, current_speed)
+        x0 = np.array([vy_hat, r_hat, ey, epsi, current_speed], dtype=np.float64)
+        
         if is_fallback:
-            mpc_target_speed = (self.pre_lc_target_speed + self.pre_lc_min_speed)/2 # Set speed to 5.0 for fallback paths
-            weights = self.mpc_weights_pre_lc.copy() # Use pre-LC weights for fallback
+            vref_base = 5.0
         else:
             if self.track_map.is_loop_closed:
-                target_speed_params = {
-                    'target_speed': self.post_lc_target_speed,
-                    'min_speed': self.post_lc_min_speed,
-                    'curvature_speed_factor': self.post_lc_curvature_speed_factor,
-                    'curvature_lookahead': self.post_lc_curvature_lookahead
-                }
-                weights = self.mpc_weights_post_lc.copy() # Use a copy to avoid modifying original params
+                base_target_speed = self.post_lc_target_speed
             else:
-                target_speed_params = {
-                    'target_speed': self.pre_lc_target_speed,
-                    'min_speed': self.pre_lc_min_speed,
-                    'curvature_speed_factor': self.pre_lc_curvature_speed_factor,
-                    'curvature_lookahead': self.pre_lc_curvature_lookahead
-                }
-                weights = self.mpc_weights_pre_lc.copy() # Use a copy to avoid modifying original params
-
-            path_curvatures = self.path_planner._calculate_path_curvature(path, target_speed_params['curvature_lookahead'])
-            lookahead_curvatures = path_curvatures[:5]
-            avg_curvature = np.mean(lookahead_curvatures) if lookahead_curvatures else 0.0
-            
-            mpc_target_speed = target_speed_params['target_speed'] / (1.0 + target_speed_params['curvature_speed_factor'] * abs(avg_curvature))
-            mpc_target_speed = np.clip(mpc_target_speed, target_speed_params['min_speed'], target_speed_params['target_speed'])
-
-        horizon = weights.get('horizon', 10) # default to 10 if not found
-        dt = weights.get('dt', 0.1) # default to 0.1 if not found
-
-        # Apply speed-proportional scaling to MPC weights
-        # Normalize current speed by a maximum expected speed for scaling factor
-        normalized_speed = current_speed / self.max_speed_for_scaling
-        # Use a power function to make scaling more aggressive or less aggressive
-        speed_scaling_factor = (normalized_speed ** self.mpc_speed_scaling_factor) if self.mpc_speed_scaling_factor != 0 else 1.0
-        speed_scaling_factor = np.clip(speed_scaling_factor, 0.1, 2.0) # Clip to reasonable range
-
-        # Example: Increase path following weights with speed, decrease control input weights
-        weights['w_cte'] *= speed_scaling_factor
-        weights['w_etheta'] *= speed_scaling_factor
-        weights['w_vel'] *= speed_scaling_factor # Penalize velocity error more at higher speeds
-
-        # At higher speeds, generally want tighter path following and smoother control inputs.
-        # So, increase penalties for path deviation and control input changes.
-        weights['w_accel'] *= speed_scaling_factor
-        weights['w_steer'] /= speed_scaling_factor
-        weights['w_accel_rate'] *= speed_scaling_factor
-        weights['w_steer_rate'] *= speed_scaling_factor
-
-        # Get reference path for the horizon
-        path_points = np.array(path, dtype=np.float32)
-        distances = np.linalg.norm(path_points - np.array([veh_x, veh_y]), axis=1)
-        start_idx = np.argmin(distances)
-        ref_path = path_points[start_idx:start_idx + horizon + 2] # Need one extra point for heading calculation
-        if len(ref_path) < horizon + 2:
-            # Pad the reference path if it's too short
-            last_point = ref_path[-1]
-            padding = np.array([last_point] * (horizon + 2 - len(ref_path)))
-            ref_path = np.vstack([ref_path, padding])
-
-        # Initial guess for control inputs (warm start)
-        if not hasattr(self, "_u_prev") or self._u_prev.shape[0] != 2 * horizon:
-            self._u_prev = np.zeros(2 * horizon)
+                base_target_speed = self.pre_lc_target_speed
+            vref_base = base_target_speed / (1.0 + self.curvature_speed_factor * abs(kappa_ref))
+            vref_base = np.clip(vref_base, self.min_speed, base_target_speed)
         
-        u0 = np.roll(self._u_prev, -2)
-        u0[-2:] = u0[-4:-2]
+        kappa_ref_s = self._smooth_kappa(kappa_ref)
+        U_ref = self._cap_speed_by_curvature(self._smooth_vref(vref_base), kappa_ref_s)
+        # print(f"U_ref = {U_ref}", self._smooth_vref(vref_base), kappa_ref_s)
 
-        # Bounds for control inputs
-        bounds = []
-        for _ in range(horizon):
-            bounds.append((self.min_accel, self.max_accel))
-            bounds.append((-self.max_steer, self.max_steer))
+        # 5. Solve MPC and get control commands
+        ax_cmd, delta_cmd = self._solve_ltv_mpc(x0, U_ref, kappa_ref_s)
+        self._ax_prev = ax_cmd
+        self._delta_prev = delta_cmd
 
-        # --- Solve the optimization problem ---
-        solution = minimize(
-            self._cost_function,
-            u0,
-            args=(initial_state, ref_path, mpc_target_speed, weights, horizon, dt),
-            method='SLSQP',
-            bounds=bounds,
-            options={'maxiter': 5, 'ftol': 1e-5, 'disp': False}
-        )
-        self._u_prev = solution.x.copy()
-
-        # Get the predicted states for visualization
-        predicted_path = self._predicted_states[:, :2] # Extract x, y coordinates
-
-        # Get the first optimal control input
-        optimal_accel = solution.x[0]
-        optimal_steer = solution.x[1]
-        
-        # print("MPC Optimization Success:", solution.success, "Cost:", solution.fun)
-        # print("Optimal Accel:", optimal_accel, "Optimal Steer:", optimal_steer)
-        # print(self.max_accel, self.min_accel)
-        # --- Map acceleration to throttle/brake ---
+        # 6. Convert acceleration to throttle/brake
         throttle = 0.0
         brake = 0.0
-        if optimal_accel > 0:
-            # Simple mapping: scale accel to [0,1] throttle
-            throttle = np.clip(optimal_accel / self.max_accel, 0.0, 1.0)
+        if ax_cmd > 0:
+            throttle = np.clip(ax_cmd / self.ax_max, 0.0, 1.0)
         else:
-            # Simple mapping: scale decel to [0,1] brake
-            brake = np.clip(-optimal_accel / abs(self.min_accel), 0.0, 1.0)
-
-        # Normalize steering angle to [-1, 1]
-        normalized_steer = np.clip(-optimal_steer / self.max_steer, -1.0, 1.0)
+            brake = np.clip(-ax_cmd / abs(self.ax_min), 0.0, 1.0)
+        normalized_steer = np.clip(-delta_cmd / self.max_steer, -1.0, 1.0)
+        
+        # 7. Generate predicted path for visualization
+        predicted_path = []
+        if hasattr(self, 'Uvec'):
+            x, y, yaw, v = veh_x, veh_y, veh_yaw, current_speed
+            dt = self.dt_ctrl
+            N = int(self.mpc_horizon)
+            for k in range(N):
+                if (k * 2 + 1) < len(self.Uvec):
+                    ax_k = self.Uvec[k*2]
+                    delta_k = self.Uvec[k*2 + 1]
+                    
+                    yaw += (v / self.wheelbase) * math.tan(delta_k) * dt
+                    v += ax_k * dt
+                    x += v * math.cos(yaw) * dt
+                    y += v * math.sin(yaw) * dt
+                    predicted_path.append([x, y])
 
         return throttle, normalized_steer, brake, predicted_path
