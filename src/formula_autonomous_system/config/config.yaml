@@ -1,124 +1,16 @@
-behavior_planning:
-  default: {}
-control:
-  ControllerSelection:
-    lateral_controller_type: MPC
-  MPC:
-    dt: 0.05
-    fallback_mode:
-      w_ax: 5.0
-      w_dax: 8.0
-      w_ddelta: 10.0
-      w_delta: 20.0
-      w_epsi: 7.0
-      w_ey: 10.0
-      w_r: 6.0
-      w_v: 15.0
-      w_vy: 10.0
-    horizon: 15
-    mapping_mode:
-      w_ax: 4.0
-      w_dax: 15.0
-      w_ddelta: 30.0
-      w_delta: 10.0
-      w_epsi: 8.0
-      w_ey: 20.0
-      w_r: 6.7
-      w_v: 12.0
-      w_vy: 10.0
-    racing_mode:
-      w_ax: 0.2
-      w_dax: 2.0
-      w_ddelta: 10.0
-      w_delta: 2.0
-      w_epsi: 20.0
-      w_ey: 15.0
-      w_r: 1.0
-      w_v: 10.0
-      w_vy: 1.0
-  PurePursuit:
-    lookahead_distance: 1.0
-    max_steer_angle: 1.0
-  SpeedControl:
-    max_throttle: 1.0
-    pid_kd: 0.005
-    pid_ki: 0.05
-    pid_kp: 0.5
-    post_loop_closure:
-      curvature_lookahead: 10
-      curvature_speed_factor: 0.3
-      min_speed: 5.0
-      target_speed: 15.0
-    pre_loop_closure:
-      curvature_lookahead: 3
-      curvature_speed_factor: 30
-      min_speed: 5.0
-      target_speed: 10.0
-  Stanley:
-    k_gain: 1.1
-  Vehicle:
-    Cd: 0.3
-    Crr: 0.014
-    Iz: 1500000.0
-    a_lat_max: 16.0
-    ax_max: 12.0
-    ax_min: -12.0
-    car_mass: 255.0
-    delta_dot_max: 350.0
-    delta_max: 40.0
-    friction_scale: 1.4
-    front_axle_distance: 0.45
-    frontal_area: 1.2
-    h_cg: 0.25
-    lat_stiff_coeff: 40.0
-    max_steer_angle: 25.0
-    rho_air: 1.2
-    wheel_base: 1.55
-local_planning:
-  trajectory:
-    default_speed: 5.0
-    lane_offset: 1.5
-    lookahead_distance: 5.0
-    max_accumulated_midpoints: 150
-    max_cone_distance: 3.0
-    max_x_diff_for_pairing: 5.0
-    num_waypoints: 20
-    planner_clustering_eps: 6.0
-    planner_roi_angle: 180.0
-    planner_roi_distance: 10.0
-    poly_degree: 3
-    safety_margin: 0.5
-    spline_smoothing_factor: 0.5
-    waypoint_spacing: 2.0
-localization:
-  localization:
-    alpha_velocity: 0.1
-    ref_wgs84_altitude: 0.0
-    ref_wgs84_latitude: 47.641467991978416
-    ref_wgs84_longitude: -122.14016501105924
-    use_user_defined_ref_wgs84_position: true
-    yaw_filter_alpha: 0.5
-mapping:
-  association_threshold: 1.5
-  lc:
-    cooldown_updates: 100
-    max_error: 0.75
-    min_cones: 20
-    min_pairs: 5
-    search_radius: 15.0
-    trigger_distance: 8.0
-  provisional cone:
-    confirmation_threshold: 2
-    ttl: 5
+# Formula Autonomous System Configuration
+# Combined configuration file for all subsystems
+# Author: Jiwon Seok (jiwonseok@hanyang.ac.kr)
+# Date: 2025-07-25
+
+system:
+  main_loop_rate: 1000.0 # [Hz]
+  visualization:
+    enable_visualization: true # Enable or disable all ROS and OpenCV visualizations
+  logging:
+    enable_logging: true # Enable or disable data logging
+
 perception:
-<<<<<<< HEAD
-  camera_cone_detection:
-    min_bbox_area: 50
-    target_image_height: 240
-    target_image_width: 320
-    visualize_lidar_on_camera: false
-  camera_extrinsics:
-=======
   # ===========================================
   # LiDAR Perception Parameters
   # ===========================================
@@ -154,86 +46,38 @@ perception:
     translation_y: 0.0
     translation_z: 0.1
     rotation_roll: 0.0
->>>>>>> f7f97a8... [control] 251025 @Doyeop-knut | 최대한 최적화
     rotation_pitch: 0.0
-    rotation_roll: 0.0
     rotation_yaw: 0.0
-    translation_x: -0.43
-    translation_y: -0.15
-    translation_z: 0.82
-  camera_hsv_blue:
-    hue_max: 110
-    hue_min: 95
-    saturation_min: 75
-    value_min: 100
-  camera_hsv_orange:
-    hue_max: 20
-    hue_min: 10
-    saturation_min: 100
-    value_min: 100
-  camera_hsv_window_size:
-    window_size: 10
-  camera_hsv_yellow:
-    hue_max: 40
-    hue_min: 18
-    saturation_min: 36
-    value_min: 100
-  camera_image_processing:
-    bilateral_filter_diameter: 9
-    enable_preprocessing: true
-    gaussian_blur_sigma: 1.0
+
+  # ===========================================
+  # Camera Parameters
+  # ===========================================
+
   camera_intrinsics:
+    # Camera intrinsic parameters (pixels)
+    # 640x480, horizontal FOV: 90 deg: focal length = 320.0
     focal_length_x: 320.0
     focal_length_y: 320.0
     principal_point_x: 320.0
     principal_point_y: 240.0
-  camera_right_extrinsics:
-    rotation_pitch: 0.0
+
+  camera_extrinsics:
+    # Camera position relative to vehicle base (meters, degrees)
+    translation_x: -0.43
+    translation_y: -0.15
+    translation_z: 0.82
     rotation_roll: 0.0
+    rotation_pitch: 0.0
     rotation_yaw: 0.0
+
+  camera_right_extrinsics:
+    # Camera position relative to vehicle base (meters, degrees)
     translation_x: -0.43
     translation_y: 0.15
     translation_z: 0.82
-  lidar_clustering:
-    dbscan_eps: 0.7
-    dbscan_min_points: 2
-  lidar_cone_detection:
-    cone_max_radius: 0.7
-    cone_min_points: 1
-    cone_min_radius: 0.0
-  lidar_extrinsics:
-    rotation_pitch: 0.0
     rotation_roll: 0.0
+    rotation_pitch: 0.0
     rotation_yaw: 0.0
-<<<<<<< HEAD
-    translation_x: 0.6
-    translation_y: 0.0
-    translation_z: 0.1
-  lidar_ground_removal:
-    ransac_distance_threshold: 0.01
-    ransac_iterations: 50
-  lidar_roi_extraction:
-    x_max: 75.0
-    x_min: 0.0
-    y_max: 50.0
-    y_min: -50.0
-    z_max: 10.0
-    z_min: -10.0
-planning:
-  path_planner:
-    max_edge_length: 50.0
-    max_path_distance: 100.0
-    path_obstacle_threshold: 1.5
-    spline_smoothing_factor: 1.0
-    weight_angle: 0.7
-    weight_dist: 0.3
-system:
-  logging:
-    enable_logging: false
-  main_loop_rate: 1000.0
-  visualization:
-    enable_visualization: true
-=======
 
   camera_image_processing:
     # Image preprocessing settings
@@ -391,4 +235,3 @@ control:
     min_accel : -20.0 #m/s^2
     max_accel : 20.0 #m/s^2
     max_steer_angle : 40.0 #radians
->>>>>>> f7f97a8... [control] 251025 @Doyeop-knut | 최대한 최적화
