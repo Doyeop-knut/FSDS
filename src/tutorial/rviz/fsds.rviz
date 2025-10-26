@@ -9,9 +9,13 @@ Panels:
         - /TF1
         - /Path2
 <<<<<<< HEAD
+<<<<<<< HEAD
         - /PointCloud21
 =======
 >>>>>>> [control] 251026 @Doyeop-knut | 잘 안됨
+=======
+        - /PointCloud21
+>>>>>>> [control] 251026 @Doyeop-knut | 동역학 기반 ltv MPC 제어기 파라미터 수정 (예선 최종)
       Splitter Ratio: 0.5
     Tree Height: 549
   - Class: rviz/Selection
@@ -32,10 +36,14 @@ Panels:
     Name: Time
     SyncMode: 0
 <<<<<<< HEAD
+<<<<<<< HEAD
     SyncSource: PointCloud2
 =======
     SyncSource: ""
 >>>>>>> [control] 251026 @Doyeop-knut | 잘 안됨
+=======
+    SyncSource: PointCloud2
+>>>>>>> [control] 251026 @Doyeop-knut | 동역학 기반 ltv MPC 제어기 파라미터 수정 (예선 최종)
 Preferences:
   PromptSaveOnExit: true
 Toolbars:
@@ -180,6 +188,9 @@ Visualization Manager:
       Unreliable: false
       Value: true
 <<<<<<< HEAD
+<<<<<<< HEAD
+=======
+>>>>>>> [control] 251026 @Doyeop-knut | 동역학 기반 ltv MPC 제어기 파라미터 수정 (예선 최종)
     - Alpha: 1
       Autocompute Intensity Bounds: true
       Autocompute Value Bounds:
@@ -208,8 +219,11 @@ Visualization Manager:
       Use Fixed Frame: true
       Use rainbow: true
       Value: true
+<<<<<<< HEAD
 =======
 >>>>>>> [control] 251026 @Doyeop-knut | 잘 안됨
+=======
+>>>>>>> [control] 251026 @Doyeop-knut | 동역학 기반 ltv MPC 제어기 파라미터 수정 (예선 최종)
   Enabled: true
   Global Options:
     Background Color: 48; 48; 48

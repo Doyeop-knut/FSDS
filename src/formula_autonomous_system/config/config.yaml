@@ -1,6 +1,7 @@
 <<<<<<< HEAD
 <<<<<<< HEAD
 <<<<<<< HEAD
+<<<<<<< HEAD
 =======
 >>>>>>> [control] 251025 @Doyeop-knut | 최대한 최적화 (롤백)
 # Formula Autonomous System Configuration
@@ -90,6 +91,8 @@ perception:
     translation_z: 0.1
     rotation_roll: 0.0
 =======
+=======
+>>>>>>> [control] 251026 @Doyeop-knut | 동역학 기반 ltv MPC 제어기 파라미터 수정 (예선 최종)
 behavior_planning:
   default: {}
 control:
@@ -204,6 +207,7 @@ mapping:
   provisional cone:
     confirmation_threshold: 2
     ttl: 15
+<<<<<<< HEAD
 perception:
   time_sync:
     slop: 0.1
@@ -384,9 +388,25 @@ perception:
 >>>>>>> [control] 251025 @Doyeop-knut | 최대한 최적화
 =======
 >>>>>>> [control] 251025 @Doyeop-knut | 최대한 최적화 (롤백)
+=======
+perception:
+  time_sync:
+    slop: 0.1
+    time_offset : 0.08
+  camera_cone_detection:
+    min_bbox_area: 10
+    target_image_height: 240
+    target_image_width: 320
+    visualize_lidar_on_camera: false
+  camera_extrinsics:
+>>>>>>> [control] 251026 @Doyeop-knut | 동역학 기반 ltv MPC 제어기 파라미터 수정 (예선 최종)
     rotation_pitch: 0.0
+    rotation_roll: 0.0
     rotation_yaw: 0.0
 <<<<<<< HEAD
+<<<<<<< HEAD
+=======
+>>>>>>> [control] 251026 @Doyeop-knut | 동역학 기반 ltv MPC 제어기 파라미터 수정 (예선 최종)
     translation_x: -0.43
     translation_y: -0.15
     translation_z: 0.82
@@ -403,6 +423,9 @@ perception:
   camera_hsv_window_size:
 <<<<<<< HEAD
 <<<<<<< HEAD
+<<<<<<< HEAD
+=======
+>>>>>>> [control] 251026 @Doyeop-knut | 동역학 기반 ltv MPC 제어기 파라미터 수정 (예선 최종)
     window_size: 25
   camera_hsv_yellow:
     hue_max: 50
@@ -413,6 +436,7 @@ perception:
     bilateral_filter_diameter: 15
     enable_preprocessing: true
     gaussian_blur_sigma: 2.0
+<<<<<<< HEAD
 =======
     window_size: 20
 =======
@@ -435,28 +459,21 @@ perception:
   # ===========================================
 
 >>>>>>> [control] 251025 @Doyeop-knut | 최대한 최적화 (롤백)
+=======
+>>>>>>> [control] 251026 @Doyeop-knut | 동역학 기반 ltv MPC 제어기 파라미터 수정 (예선 최종)
   camera_intrinsics:
-    # Camera intrinsic parameters (pixels)
-    # 640x480, horizontal FOV: 90 deg: focal length = 320.0
     focal_length_x: 320.0
     focal_length_y: 320.0
     principal_point_x: 320.0
     principal_point_y: 240.0
-
-  camera_extrinsics:
-    # Camera position relative to vehicle base (meters, degrees)
-    translation_x: -0.43
-    translation_y: -0.15
-    translation_z: 0.82
-    rotation_roll: 0.0
-    rotation_pitch: 0.0
-    rotation_yaw: 0.0
-
   camera_right_extrinsics:
-    # Camera position relative to vehicle base (meters, degrees)
+    rotation_pitch: 0.0
+    rotation_roll: 0.0
+    rotation_yaw: 0.0
     translation_x: -0.43
     translation_y: 0.15
     translation_z: 0.82
+<<<<<<< HEAD
 <<<<<<< HEAD
   lidar_clustering:
 <<<<<<< HEAD
@@ -466,17 +483,27 @@ perception:
     dbscan_eps: 0.7
     dbscan_min_points: 2
 >>>>>>> [control] 251026 @Doyeop-knut | 잘 안됨
+=======
+  lidar_clustering:
+    dbscan_eps: 1.0
+    dbscan_min_points: 3
+>>>>>>> [control] 251026 @Doyeop-knut | 동역학 기반 ltv MPC 제어기 파라미터 수정 (예선 최종)
   lidar_cone_detection:
     cone_max_radius: 0.7
     cone_min_points: 1
     cone_min_radius: 0.0
   lidar_extrinsics:
+<<<<<<< HEAD
     rotation_pitch: 0.0
 =======
 >>>>>>> [control] 251025 @Doyeop-knut | 최대한 최적화 (롤백)
     rotation_roll: 0.0
+=======
+>>>>>>> [control] 251026 @Doyeop-knut | 동역학 기반 ltv MPC 제어기 파라미터 수정 (예선 최종)
     rotation_pitch: 0.0
+    rotation_roll: 0.0
     rotation_yaw: 0.0
+<<<<<<< HEAD
 <<<<<<< HEAD
 <<<<<<< HEAD
 <<<<<<< HEAD
@@ -1077,6 +1104,8 @@ control:
     # 저속에서 곡률 튜닝의 영향을 줄이는 속도 계수 (0~1, 1에 가까울수록 속도 영향 큼)
     speed_influence_factor: 0.3
 =======
+=======
+>>>>>>> [control] 251026 @Doyeop-knut | 동역학 기반 ltv MPC 제어기 파라미터 수정 (예선 최종)
     translation_x: 0.6
     translation_y: 0.0
     translation_z: 0.1
@@ -1090,6 +1119,7 @@ control:
     y_min: -18.0
     z_max: 10.0
     z_min: -10.0
+<<<<<<< HEAD
 planning:
   path_planner:
     max_edge_length: 40.0
@@ -1417,3 +1447,19 @@ control:
 >>>>>>> [control] 251025 @Doyeop-knut | 최대한 최적화
 =======
 >>>>>>> [control] 251025 @Doyeop-knut | 최대한 최적화 (롤백)
+=======
+planning:
+  path_planner:
+    max_edge_length: 40.0
+    max_path_distance: 60.0
+    path_obstacle_threshold: 1.5
+    spline_smoothing_factor: 1.2
+    weight_angle: 1.2
+    weight_dist: 0.5
+system:
+  logging:
+    enable_logging: true
+  main_loop_rate: 1000.0
+  visualization:
+    enable_visualization: true
+>>>>>>> [control] 251026 @Doyeop-knut | 동역학 기반 ltv MPC 제어기 파라미터 수정 (예선 최종)
