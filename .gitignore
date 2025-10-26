@@ -1,5 +1,10 @@
-build/*
-devel/*
+<<<<<<< HEAD
+**/build/
+**/devel/
+=======
+**/build/*
+**/devel/*
+>>>>>>> test
 
 *.avi
 *.csv
@@ -7,5 +12,9 @@ devel/*
 *.pyc
 *.xlsx
 *.o
-*cmake
+*.cmake
 
+*.pt
+*.Identifier
+
+*.zip
