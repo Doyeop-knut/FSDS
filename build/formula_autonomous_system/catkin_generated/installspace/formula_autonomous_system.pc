@@ -1,8 +1,0 @@
-prefix=/home/user/FSDS/install
-
-Name: formula_autonomous_system
-Description: Description of formula_autonomous_system
-Version: 1.0.0
-Cflags: 
-Libs: -L${prefix}/lib 
-Requires: geometry_msgs nav_msgs roscpp rospy sensor_msgs std_msgs tf tf2 tf2_ros visualization_msgs fs_msgs pcl_conversions pcl_ros
