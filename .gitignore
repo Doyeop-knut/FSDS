@@ -46,4 +46,8 @@ devel/
 =======
 *.Identifier
 
+<<<<<<< HEAD
 >>>>>>> [gitignore] gitignore update
+=======
+*.zip
+>>>>>>> [control] 251026 @Doyeop-knut | 잘 안됨
