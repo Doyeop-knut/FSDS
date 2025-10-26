@@ -212,7 +212,7 @@ control:
   MPC:
     dt: 0.05
     fallback_mode:
-      w_ax: 2.0
+      w_ax: 5.0
       w_dax: 8.0
       w_ddelta: 10.0
       w_delta: 20.0
@@ -220,20 +220,18 @@ control:
       w_ey: 10.0
       w_r: 6.0
       w_v: 15.0
-      w_vy: 6.0
+      w_vy: 10.0
     horizon: 15
     mapping_mode:
-      w_ax: 2.982196641925232
-      w_dax: 9.675798289399344
-      w_ddelta: 15.176043435222345
-      w_delta: 4.372158493374405
-      w_epsi: 5.284155601821578
-      w_ey: 19.07466122946364
-      w_r: 7.90837849376483
-      w_v: 17.418816121853357
-      w_vy: 1.8532592988784566
-    max_speed_for_scaling: 10.0
-    mpc_speed_scaling_factor: 1.0
+      w_ax: 4.0
+      w_dax: 15.0
+      w_ddelta: 30.0
+      w_delta: 10.0
+      w_epsi: 8.0
+      w_ey: 20.0
+      w_r: 6.7
+      w_v: 12.0
+      w_vy: 10.0
     racing_mode:
       w_ax: 0.2
       w_dax: 2.0
@@ -259,15 +257,15 @@ control:
       target_speed: 15.0
     pre_loop_closure:
       curvature_lookahead: 3
-      curvature_speed_factor: 0.1
-      min_speed: 7.0
+      curvature_speed_factor: 30
+      min_speed: 5.0
       target_speed: 10.0
   Stanley:
     k_gain: 1.1
   Vehicle:
     Cd: 0.3
     Crr: 0.014
-    Iz: 150.0
+    Iz: 1500000.0
     a_lat_max: 16.0
     ax_max: 12.0
     ax_min: -12.0
@@ -275,11 +273,11 @@ control:
     delta_dot_max: 350.0
     delta_max: 40.0
     friction_scale: 1.4
-    front_axle_distance: 0.465
+    front_axle_distance: 0.45
     frontal_area: 1.2
     h_cg: 0.25
-    lat_stiff_coeff: 38.546460393889774
-    max_steer_angle: 40.0
+    lat_stiff_coeff: 40.0
+    max_steer_angle: 25.0
     rho_air: 1.2
     wheel_base: 1.55
 local_planning:
@@ -293,7 +291,7 @@ local_planning:
     num_waypoints: 20
     planner_clustering_eps: 6.0
     planner_roi_angle: 180.0
-    planner_roi_distance: 7.0
+    planner_roi_distance: 10.0
     poly_degree: 3
     safety_margin: 0.5
     spline_smoothing_factor: 0.5
@@ -348,6 +346,7 @@ perception:
     value_min: 100
   camera_hsv_window_size:
 <<<<<<< HEAD
+<<<<<<< HEAD
     window_size: 25
   camera_hsv_yellow:
     hue_max: 50
@@ -360,6 +359,9 @@ perception:
     gaussian_blur_sigma: 2.0
 =======
     window_size: 20
+=======
+    window_size: 10
+>>>>>>> [control] 251026 @Doyeop-knut | 코드 추가 (미완)
   camera_hsv_yellow:
     hue_max: 40
     hue_min: 18
@@ -1150,7 +1152,7 @@ system:
     z_min: -10.0
 planning:
   path_planner:
-    max_edge_length: 10.0
+    max_edge_length: 50.0
     max_path_distance: 100.0
     path_obstacle_threshold: 1.5
     spline_smoothing_factor: 1.0
@@ -1161,5 +1163,9 @@ system:
     enable_logging: false
   main_loop_rate: 1000.0
   visualization:
+<<<<<<< HEAD
     enable_visualization: false
 >>>>>>> [control] 251026 @Doyeop-knut | 잘 안됨
+=======
+    enable_visualization: true
+>>>>>>> [control] 251026 @Doyeop-knut | 코드 추가 (미완)
