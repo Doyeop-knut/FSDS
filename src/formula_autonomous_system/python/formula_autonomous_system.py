@@ -255,8 +255,8 @@ class FormulaAutonomousSystem:
         raw_predictions1 = [raw_predictions[0]] # Extract predictions for image1
         raw_predictions2 = [raw_predictions[1]] # Extract predictions for image2
 
-        rendered_img1, left_bbox, left_conf = self.camera_util._process_and_draw_detections(image1, raw_predictions1)
-        rendered_img2, right_bbox, right_conf = self.camera_util._process_and_draw_detections(image2, raw_predictions2)
+        rendered_img1, left_bbox, left_conf = self.camera_util._process_and_draw_detections(processed_img1, raw_predictions1)
+        rendered_img2, right_bbox, right_conf = self.camera_util._process_and_draw_detections(processed_img2, raw_predictions2)
         
         if cluster.size > 0:
             try:
@@ -908,7 +908,7 @@ class CameraProcessor:
                 
                 # 신뢰도 점수 = 픽셀 수 * (평균 채도 + 평균 명도)
                 # 이렇게 하면 흐릿한 색상의 넓은 영역보다 뚜렷한 색상의 작은 영역이 더 높은 점수를 받을 수 있음
-                color_scores[color] = pixel_count * (avg_saturation + avg_value)
+                color_scores[color] = pixel_count * (avg_saturation + avg_value) /roi.size
                 # print(f"from LiDAR - All score = {color_scores}")
 
         # 가장 높은 점수를 받은 색상을 선택
@@ -1048,7 +1048,7 @@ class CameraProcessor:
                  dominant_color = "unknown"
 
         if debug_image is not None and dominant_color != "unknown":
-            cv2.putText(debug_image, dominant_color, (x1, y1 - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+            cv2.putText(debug_image, f"color = {dominant_color}, score = {max_score:.2f}", (x1, y1 - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
             # print(f"from bbox - {color_scores}, color = {dominant_color} \n")
 
     
@@ -1253,7 +1253,64 @@ class TrackMap:
         
         # Keep track of which provisional cones get updated in this cycle
         updated_prov_indices = set()
+         # --- NEW: Contextual Color Refinement (콘텍스트 기반 색상 보정) ---
+         # 새로운 관측치와 기존 지도 콘이 모두 있을 때만 실행
+        if processed_observations.size > 0 and self.cones:
+            map_cone_positions = np.array([[c['x'], c['y']] for c in self.cones])
+            map_cone_colors = np.array([c['color_id'] for c in self.cones]) # 1: Blue, 2: Yellow, 3: Orange
 
+            for i, obs_cone in enumerate(processed_observations):
+                obs_pos = obs_cone[:2] # 관측된 콘의 (x, y) 위치
+                obs_color_id = int(obs_cone[3]) # 카메라가 분류한 색상 ID
+                obs_color_score = obs_cone[4] # 카메라 분류의 신뢰도 점수
+
+                # 주변 지도 콘 찾기 (association_threshold보다 약간 넓은 반경)
+                distances = np.linalg.norm(map_cone_positions - obs_pos, axis=1)
+                nearby_map_cone_indices = np.where(distances < self.association_threshold * 1.5)[0]
+
+                if len(nearby_map_cone_indices) > 0:
+                    nearby_colors = map_cone_colors[nearby_map_cone_indices]
+
+                    # 주변에 파란색(1)과 노란색(2) 콘이 몇 개 있는지 세기
+                    num_blue_neighbors = np.sum(nearby_colors == 1)
+                    num_yellow_neighbors = np.sum(nearby_colors == 2)
+                    num_orange_neighbors = np.sum(nearby_colors == 3) # 오렌지 콘도 고려
+
+                    # --- 콘텍스트 기반 색상 결정 로직 ---
+                    # 1. 주변에 압도적인 다수의 색상이 있을 경우
+                    if num_blue_neighbors > num_yellow_neighbors + num_orange_neighbors and num_blue_neighbors > 0:
+                        # 주변에 파란색 콘이 많고, 현재 관측치가 파란색이 아니거나 신뢰도가 낮을 경우 파란색으로 보정
+                        if obs_color_id != 1 and obs_color_score < 0.7: # 너무 강하게 다른 색으로 분류된 경우는 제외
+                            processed_observations[i][3] = 1 # 파란색으로 할당
+                            processed_observations[i][4] = max(obs_color_score, 0.1) # 신뢰도 점수 보정 (최소 0.3)
+                            rospy.logdebug(f"Contextual: Cone {i} changed to Blue due to neighbors.")
+                    elif num_yellow_neighbors > num_blue_neighbors + num_orange_neighbors and num_yellow_neighbors > 0:
+                        # 주변에 노란색 콘이 많고, 현재 관측치가 노란색이 아니거나 신뢰도가 낮을 경우 노란색으로 보정
+                        if obs_color_id != 2 and obs_color_score < 0.7:
+                            processed_observations[i][3] = 2 # 노란색으로 할당
+                            processed_observations[i][4] = max(obs_color_score, 0.1)
+                            rospy.logdebug(f"Contextual: Cone {i} changed to Yellow due to neighbors.")
+                    elif num_orange_neighbors > num_blue_neighbors + num_yellow_neighbors and num_orange_neighbors > 0:
+                        # 주변에 오렌지 콘이 많고, 현재 관측치가 오렌지색이 아니거나 신뢰도가 낮을 경우 오렌지색으로 보정
+                        if obs_color_id != 3 and obs_color_score < 0.7:
+                            processed_observations[i][3] = 3 # 오렌지색으로 할당
+                            processed_observations[i][4] = max(obs_color_score, 0.1)
+                            rospy.logdebug(f"Contextual: Cone {i} changed to Orange due to neighbors.")
+
+                    # 2. 카메라가 "unknown" (0)으로 분류했지만 주변에 확실한 색상이 있을 경우
+                    elif obs_color_id == 0:
+                        if num_blue_neighbors > 0 and num_yellow_neighbors == 0 and num_orange_neighbors == 0:
+                            processed_observations[i][3] = 1 # 파란색으로 할당
+                            processed_observations[i][4] = max(obs_color_score, 0.2) # 낮은 신뢰도로 할당
+                            rospy.logdebug(f"Contextual: Cone {i} (unknown) assigned Blue due to neighbors.")
+                        elif num_yellow_neighbors > 0 and num_blue_neighbors == 0 and num_orange_neighbors == 0:
+                            processed_observations[i][3] = 2 # 노란색으로 할당
+                            processed_observations[i][4] = max(obs_color_score, 0.2)
+                            rospy.logdebug(f"Contextual: Cone {i} (unknown) assigned Yellow due to neighbors.")
+                        elif num_orange_neighbors > 0 and num_blue_neighbors == 0 and num_yellow_neighbors == 0:
+                            processed_observations[i][3] = 3 # 오렌지색으로 할당
+                            processed_observations[i][4] = max(obs_color_score, 0.2)
+                            rospy.logdebug(f"Contextual: Cone {i} (unknown) assigned Orange due to neighbors.")
         if processed_observations.size == 0:
             # If no observations, just decrement TTL for all provisional cones
             for prov_cone in self.provisional_cones:
@@ -1342,7 +1399,7 @@ class TrackMap:
         car_pos = vehicle_state[:2]
         dist_to_start = np.linalg.norm(car_pos - self.start_line_center)
 
-        if dist_to_start > self.lc_trigger_distance:
+        if dist_to_start < self.lc_trigger_distance:
             return new_observations
 
         rospy.loginfo_throttle(1.0, f"TrackMap: Loop closure check triggered (dist to start: {dist_to_start:.2f}m)")
@@ -1916,11 +1973,11 @@ class PathPlanner:
         for p in corrected_path:
             if np.linalg.norm(p - current_car_pos) < self.max_path_distance:
                 filtered_path.append(p)
-        
+        raw_curvatures = self._calculate_path_curvature(filtered_path, lookahead=5)
+
         # --- Conditional Racing Line ---
         if is_loop_closed:
             rospy.loginfo_throttle(1.0, "PathPlanner: Loop is closed, generating racing line.")
-            raw_curvatures = self._calculate_path_curvature(filtered_path, lookahead=5)
             final_path_points = self._generate_racing_line(np.array(filtered_path), raw_curvatures, self.racing_line_tension)
         else:
             final_path_points = filtered_path
@@ -2609,7 +2666,6 @@ class Control:
         self.rel_alpha      = rospy.get_param("/control/SpeedControl/reliability/lpf_alpha", 0.3)
         self._rel_scale_flt = None
 
-
         # --- Assign the compute function based on selected type ---
         if self.controller_type == "PurePursuit":
             self.compute_control = self._compute_pure_pursuit
@@ -2711,7 +2767,7 @@ class Control:
         return float(np.mean(self._kappa_buf))
     
     def _smooth_vref(self, vref):
-        alpha = 0.1
+        alpha = 0.3
         if self._vref_filt is None: self._vref_filt = vref
         self._vref_filt = (1-alpha)*self._vref_filt + alpha*vref
         return self._vref_filt
@@ -2743,7 +2799,7 @@ class Control:
         if U_ref > 12.0 and kappa_abs < 0.02:  # 고속 직선: 입력/레이트 더 억제
             Wde *= 1.5; Wdde *= 1.5; Wdax *= 1.3
         if kappa_abs > 0.08:                   # 급코너: 상태 오차 더 강하게
-            Wy  *= 1.3; Wpsi *= 1.3
+            Wy  *= 1.5; Wpsi *= 1.5
         return Wy, Wpsi, Wvy, Wr, Wax, Wde, Wdax, Wdde
 
     def _cornering_stiffness(self, ax_cmd=0.0):
@@ -2810,13 +2866,13 @@ class Control:
         # v_y 추정: a_y ≈ v_y_dot + U*r → v_y_dot ≈ a_y - U*r
         if imu_ay is not None:
             vy_dot = float(imu_ay) - U * self._r
-            alpha = 0.4  # 1차 LPF 계수(튜닝)
+            alpha = 0.6  # 1차 LPF 계수(튜닝)
             self._vy = (1-alpha)*self._vy + alpha*(self._vy + vy_dot*self.dt_ctrl)
 
         return self._vy, self._r
     # === [DYN MPC] curvature-based v_ref cap BEGIN ===
     def _cap_speed_by_curvature(self, U_cmd, kappa):
-        eps = 1e-4
+        eps = 1e-6
         U_cap = math.sqrt(max(self.a_lat_max, 0.0)/max(abs(kappa), eps))
         return min(U_cmd, U_cap)
     # === [DYN MPC] curvature-based v_ref cap END ===
@@ -2981,14 +3037,14 @@ class Control:
         Wv = self.w_v # w_v is not part of the profile function, get it directly
 
         if is_fallback:
-            Wv = 0.5 * Wv
+            Wv = 0.8 * Wv
 
         # 시작 램프(기존 로직 재사용)
         t_since = (rospy.Time.now() - self.start_time).to_sec()
         if t_since < self.start_ramp_sec:
             fac = 0.2 + 0.8*(t_since/self.start_ramp_sec)
             Wy *= self.start_w_cte_gain; Wpsi *= self.start_w_heading_gain
-            Wdde *= 1.2; Wdax *= 1.1
+            Wdde *= 1.5; Wdax *= 1.5
             U_ref *= fac
 
         # Xref: ey=0, epsi=0, vy=0, r=0, v=U_ref
@@ -3127,19 +3183,21 @@ class Control:
         epsi = self.normalize_angle(veh_yaw - path_yaw)
         
         # Get reference curvature from the *lookahead* point to pull the car forward
-        path_curvatures = self.path_planner._calculate_path_curvature(path, 5)
+        path_curvatures = self.path_planner._calculate_path_curvature(path, 3)
         kappa_ref = path_curvatures[lookahead_idx] if path_curvatures and lookahead_idx < len(path_curvatures) else 0.0
-
+        path = self.path_planner._stitch_fallback(path, veh_x, veh_y, veh_yaw)
+        path = self.path_planner._resample_path(path, ds=0.25, kappa_max=0.5)
         # 3. Select weights and parameters based on mode
         saved_ddot = self.delta_dot_max
         if is_fallback:
             weights = self.mpc_weights_fallback
-            horizon = 8
+            horizon = 10
             dt = 0.05
-            base_target_speed = min(self.pre_lc_target_speed, 4.0)
-            self.delta_dot_max = min(self.delta_dot_max, np.deg2rad(300.0))
-            path = self.path_planner._stitch_fallback(path, veh_x, veh_y, veh_yaw)
-            path = self.path_planner._resample_path(path, ds=0.25, kappa_max=0.22)
+            base_target_speed = min(self.pre_lc_target_speed, 6.0)
+            self.delta_dot_max = min(self.delta_dot_max, np.deg2rad(100.0))
+            self.ax_max = 10.0
+            self.ax_min = -10.0
+            self.a_lat_max = 10.0
         else:
             if self.track_map.is_loop_closed:
                 weights = self.mpc_weights_racing
@@ -3163,11 +3221,11 @@ class Control:
         # 4. Prepare inputs for the MPC solver
         vy_hat, r_hat = self._observe_states(imu_r, imu_ay, current_speed)
         x0 = np.array([vy_hat, r_hat, ey, epsi, current_speed], dtype=np.float64)
-        
-        vref_base = base_target_speed / (1.0 + self.curvature_speed_factor * abs(kappa_ref))
+        kappa_ref_s = self._smooth_kappa(kappa_ref)
+
+        vref_base = base_target_speed / (1.0 + self.curvature_speed_factor * abs(kappa_ref_s))
         vref_base = np.clip(vref_base, self.min_speed, base_target_speed)
         
-        kappa_ref_s = self._smooth_kappa(kappa_ref)
         # vref_base 계산 이후, kappa_ref_s 계산된 시점에서:
         reliab = getattr(self.path_planner, "recent_reliability", 1.0)  # 없으면 1.0
         U_ref = self._apply_speed_policies(
@@ -3178,10 +3236,10 @@ class Control:
 
         # 5. Solve MPC
         ax_cmd, delta_cmd = self._solve_ltv_mpc(x0, U_ref, kappa_ref_s, horizon, dt, is_fallback)
+        # print(ax_cmd, delta_cmd)
         
         # Restore any temporarily changed parameters
         self.delta_dot_max = saved_ddot
-
         self._ax_prev = ax_cmd
         self._delta_prev = delta_cmd
 
