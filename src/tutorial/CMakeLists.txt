@@ -19,18 +19,18 @@ find_package(catkin REQUIRED COMPONENTS
 #)
 
 ## Generate added messages and services with any dependencies listed here
-generate_messages(
-  DEPENDENCIES
-  geometry_msgs
-  fs_msgs
-)
+#generate_messages(
+#  DEPENDENCIES
+#  geometry_msgs
+#  fs_msgs
+#)
 
 ## catkin specific configuration
-catkin_package(
-  INCLUDE_DIRS include
-  LIBRARIES tutorial
-  CATKIN_DEPENDS fs_msgs roscpp rospy std_msgs geometry_msgs message_runtime
-)
+#catkin_package(
+#  INCLUDE_DIRS include
+#  LIBRARIES tutorial
+#  CATKIN_DEPENDS fs_msgs roscpp rospy std_msgs geometry_msgs message_runtime
+#)
 
 ## Build
 include_directories(
