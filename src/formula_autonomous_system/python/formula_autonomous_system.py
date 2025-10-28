@@ -1434,11 +1434,9 @@ class MidpointMap:
 
 class PathPlanner:
     def __init__(self):
-        self.max_edge_length = rospy.get_param("/planning/path_planner/max_edge_length", 7.0)
+        self.path_planning_algorithm = rospy.get_param("/planning/path_planner/path_planning_algorithm", "Delaunay")
+        self.max_edge_length = rospy.get_param("/planning/path_planner/max_edge_length", 50.0)
         self.spline_smoothing_factor = rospy.get_param("/planning/path_planner/spline_smoothing_factor", 0.5)
-        self.w_dist = rospy.get_param("/planning/path_planner/weight_dist", 0.3)
-        self.w_angle = rospy.get_param("/planning/path_planner/weight_angle", 0.7)
-        self.max_path_distance = rospy.get_param("/planning/path_planner/max_path_distance", 20.0)
 
 
     def _normalize_angle(self, angle):

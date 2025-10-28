@@ -157,6 +157,7 @@ local_planning:
 
 planning:
   path_planner:
+    path_planning_algorithm: "Delaunay" # Options: "Delaunay", "RRTStar"
     weight_dist: 0.2
     weight_angle: 0.8
     max_path_distance: 200.0 # Max distance for the planned path
