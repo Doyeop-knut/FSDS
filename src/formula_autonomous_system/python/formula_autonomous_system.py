@@ -1759,12 +1759,10 @@ class MidpointMap:
         return [[p['x'], p['y']] for p in sorted_midpoints]
 
 class PathPlanner:
-<<<<<<< HEAD
     def __init__(self):
         self.path_planning_algorithm = rospy.get_param("/planning/path_planner/path_planning_algorithm", "Delaunay")
         self.max_edge_length = rospy.get_param("/planning/path_planner/max_edge_length", 50.0)
         self.spline_smoothing_factor = rospy.get_param("/planning/path_planner/spline_smoothing_factor", 0.5)
-=======
     def __init__(self, device):
         self.device = device
         self.max_edge_length = rospy.get_param("/planning/path_planner/max_edge_length", 7.0)
@@ -1789,8 +1787,6 @@ class PathPlanner:
         # --- GPU Path Smoothing Parameters ---
         self.path_smoothing_kernel_size = rospy.get_param("/planning/path_planner/path_smoothing_kernel_size", 5)
         self.path_smoothing_sigma = rospy.get_param("/planning/path_planner/path_smoothing_sigma", 1.0)
->>>>>>> 5969398c7d0e79a39200146d11b230ba4be93326
-
 
     def _normalize_angle(self, angle):
         """Normalize an angle to [-pi, pi]."""
