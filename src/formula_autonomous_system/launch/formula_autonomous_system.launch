@@ -23,6 +23,6 @@
           respawn_delay="1.0" >
     </node>
     
-    <node type="rviz" name="rviz" pkg="rviz" args="-d $(find tutorial)/rviz/fsds.rviz" />
+    <!-- <node type="rviz" name="rviz" pkg="rviz" args="-d $(find tutorial)/rviz/fsds.rviz" /> -->
 
 </launch>

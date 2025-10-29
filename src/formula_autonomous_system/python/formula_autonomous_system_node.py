@@ -29,8 +29,6 @@ import tf2_ros
 from tf2_geometry_msgs import tf2_geometry_msgs
 import tf2_py
 from rospy import *
-
-import traceback
 # FS messages
 from fs_msgs.msg import ControlCommand, FinishedSignal, GoSignal
 
@@ -141,7 +139,6 @@ class FormulaAutonomousSystemNode:
             
         except Exception as e:
             rospy.logerr(f"FormulaAutonomousSystemNode: Initialization failed: {e}")
-            rospy.logerr(traceback.format_exc()) # Print the full traceback
             return False
 
     def get_parameters(self):
@@ -211,8 +208,6 @@ class FormulaAutonomousSystemNode:
                 loop_rate.sleep()
             except Exception as e:
                 rospy.logerr(f"Error in main loop: {e}")
-                rospy.logerr(traceback.format_exc())
-                break
         
         rospy.loginfo("FormulaAutonomousSystemNode: Main thread terminated")
 
