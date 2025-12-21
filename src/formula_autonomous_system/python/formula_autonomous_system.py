@@ -283,7 +283,7 @@ class FormulaAutonomousSystem:
         if self.device.type == 'cuda' and next(self.model.parameters()).is_cuda and next(self.model.parameters()).dtype == torch.float16:
             batched_input = [img.half() for img in batched_input]
         with torch.inference_mode():
-                with torch.cuda.amp.autocast(enabled=(self.device.type == 'cuda')):
+                with torch.amp.autocast('cuda'):
                     raw_predictions = self.model(batched_input) 
                 raw_predictions1 = [raw_predictions[0]] # Extract predictions for image1
                 raw_predictions2 = [raw_predictions[1]] # Extract predictions for image2
@@ -324,6 +324,7 @@ class FormulaAutonomousSystem:
 
             except Exception as e:
                 rospy.logwarn_throttle(1.0, f"Could not perform time compensation: {e}")
+                rospy.logerr(traceback.format_exc()) # Print the full traceback
                 compensated_cluster = cluster
         else:
             compensated_cluster = cluster
