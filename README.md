@@ -1,7 +1,10 @@
 # 2025 FSDS Korea - (Korea National University of Transportation / SMAC)
 ---
+2025년 KSAE 주관 포뮬러 자율주행 경진대회에 사용된 코드입니다. (한국교통대학교 SMAC팀)
 
-### 코드 변경사항
+---
+
+> 코드 변경사항
 - [Optimal Trajectory] @Doyeop-knut | 250814 Debug 기능 추가 및 Cone 좌표점 출력
 - [RRT*] @Doyeop-knut | 250814 Debug 함수 추가 및 좌표 출력
 - [기타] 250819 @Doyeop-knut | TEST1 (VSCODE 연동)
